@@ -1,6 +1,6 @@
 # Ubuntu 22.04 完整手动部署手册
 
-本文以 NUC 地址 `192.168.61.169` 为例，说明不使用 Docker 时如何从零手工部署售后仓库系统，并解释每一步的作用。执行一键脚本前也建议先读本文，以理解脚本实际修改了哪些系统资源。
+本文以一台 Ubuntu 22.04 服务器（地址记为 `<SERVER_IP>`）为例，说明不使用 Docker 时如何从零手工部署售后仓库系统，并解释每一步的作用。执行一键脚本前也建议先读本文，以理解脚本实际修改了哪些系统资源。
 
 ## 一、最终架构和请求链路
 
@@ -26,14 +26,14 @@ Cloudflare Quick Tunnel（可选）
 
 ### 1. 固定网络地址
 
-建议在公司路由器或 DHCP 服务器中为 NUC 网卡保留 `192.168.61.169`。固定地址的作用是让 Web 入口、Nginx 主机名和用户收藏地址保持稳定。
+建议在公司路由器或 DHCP 服务器中为服务器网卡保留固定地址（记为 `<SERVER_IP>`）。固定地址的作用是让 Web 入口、Nginx 主机名和用户收藏地址保持稳定。
 
 确认地址：
 
 ```bash
 ip -br address
 ip route
-ping -c 3 192.168.61.1
+ping -c 3 <GATEWAY_IP>
 ```
 
 ### 2. 检查系统和架构
@@ -44,7 +44,7 @@ dpkg --print-architecture
 uname -a
 ```
 
-Ubuntu 22.04 的 x86 NUC 应显示 `amd64`。Ubuntu 自带 Python 3.10，因此项目固定使用 Django 5.2 LTS，而不是要求 Python 3.12 的 Django 6.x。
+Ubuntu 22.04 的 x86 服务器应显示 `amd64`。Ubuntu 自带 Python 3.10，因此项目固定使用 Django 5.2 LTS，而不是要求 Python 3.12 的 Django 6.x。
 
 ### 3. 处理失效 APT 源
 
@@ -84,13 +84,13 @@ sudo bash deploy/ubuntu22/preflight.sh
 
 ## 三、复制和校验部署包
 
-将 `nuc-package.zip` 复制到 NUC，例如 `~/Cloudwarehouse-package/`，然后执行：
+将部署包（如 `release.zip`）复制到服务器，例如 `~/app-release/`，然后执行：
 
 ```bash
-cd ~/Cloudwarehouse-package
-sha256sum nuc-package.zip
-unzip nuc-package.zip -d Cloudwarehouse
-cd Cloudwarehouse
+cd ~/app-release
+sha256sum release.zip
+unzip release.zip -d app
+cd app
 ```
 
 SHA256 用来确认复制过程中压缩包没有损坏。纯净部署包不应包含 `db.sqlite3*`、`.env`、`media` 或开发机缓存。
@@ -165,7 +165,7 @@ sudo -u warehouse /opt/after-sales-warehouse/venv/bin/pip install \
   -r /opt/after-sales-warehouse/backend/requirements.txt
 ```
 
-已经完整部署过的 NUC 如临时无法访问软件源，可在项目根目录执行 `sudo bash deploy/ubuntu22/install.sh --host 192.168.61.169 --offline-update`。该模式不下载系统包或 Python 包，只验证现有依赖并完成代码、迁移、静态文件和服务更新；不能用于首次安装或依赖清单发生变化的版本。
+已经完整部署过的服务器如临时无法访问软件源，可在项目根目录执行 `sudo bash deploy/ubuntu22/install.sh --host <SERVER_IP> --offline-update`。该模式不下载系统包或 Python 包，只验证现有依赖并完成代码、迁移、静态文件和服务更新；不能用于首次安装或依赖清单发生变化的版本。
 
 虚拟环境将本项目依赖与 Ubuntu 系统 Python 隔离。检查：
 
@@ -220,7 +220,7 @@ sudo -u warehouse nano /opt/after-sales-warehouse/backend/.env
 ```dotenv
 DEBUG=0
 SECRET_KEY=替换为刚生成的SECRET_KEY
-ALLOWED_HOSTS=192.168.61.169,127.0.0.1,localhost
+ALLOWED_HOSTS=<SERVER_IP>,127.0.0.1,localhost
 TIME_ZONE=Asia/Shanghai
 
 DB_ENGINE=django.db.backends.postgresql
@@ -334,7 +334,7 @@ curl -i http://127.0.0.1:8000/health/
 生成实际配置：
 
 ```bash
-sed 's/__SERVER_NAME__/192.168.61.169/g' \
+sed 's/__SERVER_NAME__/<SERVER_IP>/g' \
   deploy/ubuntu22/nginx-after-sales-warehouse.conf \
   | sudo tee /etc/nginx/sites-available/after-sales-warehouse >/dev/null
 sudo ln -sfn /etc/nginx/sites-available/after-sales-warehouse \
@@ -349,13 +349,13 @@ sudo systemctl reload nginx
 
 ```bash
 curl -i http://127.0.0.1/health/
-curl -i http://192.168.61.169/health/
+curl -i http://<SERVER_IP>/health/
 ```
 
 两者都应由系统返回健康信息，而不是 Nginx 默认 404。浏览器访问：
 
 ```text
-http://192.168.61.169/
+http://<SERVER_IP>/
 ```
 
 ## 十四、安装定时任务和备份
@@ -448,7 +448,7 @@ sudo systemctl status after-sales-warehouse-quick-tunnel --no-pager
 sudo /usr/local/sbin/after-sales-warehouse-quick-tunnel-url
 ```
 
-NUC 上的 `cloudflared` 主动建立出站连接，外部手机不需要安装任何客户端。临时域名变化不会影响 PostgreSQL 或媒体数据。
+服务器上的 `cloudflared` 主动建立出站连接，外部手机不需要安装任何客户端。临时域名变化不会影响 PostgreSQL 或媒体数据。
 
 配置地址变化通知：
 
@@ -465,7 +465,7 @@ sudo /usr/local/sbin/after-sales-warehouse-quick-tunnel-dingtalk-test
 
 ```bash
 sudo ufw allow OpenSSH
-sudo ufw allow from 192.168.61.0/24 to any port 80 proto tcp
+sudo ufw allow from <SUBNET_CIDR> to any port 80 proto tcp
 sudo ufw enable
 sudo ufw status verbose
 ```
@@ -481,7 +481,7 @@ sudo systemctl status postgresql nginx after-sales-warehouse --no-pager
 sudo systemctl list-timers --all | grep after-sales-warehouse
 sudo nginx -t
 curl -i http://127.0.0.1/health/
-curl -i http://192.168.61.169/health/
+curl -i http://<SERVER_IP>/health/
 sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
   /opt/after-sales-warehouse/backend/manage.py check --deploy
 ```
@@ -518,7 +518,7 @@ sudo systemctl restart after-sales-warehouse
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-已有 NUC 更新时绝对不要再次执行 SQLite 初始导入。
+已有服务器更新时绝对不要再次执行 SQLite 初始导入。
 
 ## 二十、备份、异机副本和恢复
 
@@ -530,7 +530,7 @@ ls -lah /srv/after-sales-warehouse/backups/
 sudo systemctl list-timers after-sales-warehouse-backup.timer --no-pager
 ```
 
-本机备份不能防止 NUC 被盗、硬盘损坏或整机格式化。至少每周把备份复制到另一台 NAS、电脑或受控存储。
+本机备份不能防止服务器被盗、硬盘损坏或整机格式化。至少每周把备份复制到另一台 NAS、电脑或受控存储。
 
 先恢复到独立测试库验证，默认完成后自动删除测试库：
 
@@ -553,7 +553,7 @@ sudo tar -C /srv/after-sales-warehouse -xzf \
 sudo systemctl start after-sales-warehouse
 ```
 
-必须先在测试机演练恢复，再把流程用于正式 NUC。
+必须先在测试机演练恢复，再把流程用于正式服务器。
 
 ## 二十一、健康监控、钉钉告警与日志
 
@@ -618,7 +618,7 @@ Quick Tunnel 脚本应自动加入 `https://*.trycloudflare.com` 信任来源，
 ## 二十三、一键脚本与手工步骤的对应关系
 
 ```bash
-sudo bash deploy/ubuntu22/install.sh --host 192.168.61.169
+sudo bash deploy/ubuntu22/install.sh --host <SERVER_IP>
 ```
 
 该脚本依次完成本文第四至第十四章，并安装备份 timer、健康监控、钉钉运维发送器、日志保留与恢复演练脚本。手工手册用于理解、审计和故障恢复；日常正常发布仍建议使用已测试的一键脚本，减少漏步骤。

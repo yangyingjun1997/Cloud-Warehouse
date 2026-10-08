@@ -13,7 +13,7 @@ IMPORT_SQLITE=0
 OFFLINE_UPDATE=0
 # Web 入口按用途区分：
 #   日常访问走 Wi-Fi 内网地址和 Tunnel 域名（current-url 记录的地址）；
-#   调试链路（例如 192.168.123.101）不一定处于连接状态，用 --extra-host 常驻白名单；
+#   调试链路（例如临时调试网段地址）不一定处于连接状态，用 --extra-host 常驻白名单；
 #   只用于 git 的网口不提供 Web 访问，用 --exclude-iface 排除，避免被登记成用户入口。
 EXCLUDED_IFACES=()
 EXTRA_HOSTS=()
@@ -29,7 +29,7 @@ Usage: sudo bash deploy/ubuntu22/install.sh [options]
   --import-sqlite           首次部署时导入 backend/db.sqlite3
   --offline-update          不下载系统包与 Python 包，只更新代码和依赖校验
   --exclude-iface name      该网卡的地址不作为 Web 入口（可重复，例如只用 git 的网口）
-  --extra-host host         额外登记的访问地址（可重复，例如调试地址 192.168.123.101）
+  --extra-host host         额外登记的访问地址（可重复，例如调试网段地址）
 EOF
 }
 

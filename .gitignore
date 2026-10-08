@@ -42,6 +42,10 @@ Thumbs.db
 # ---- 项目内部协作数据（非代码资产） ----
 .codebuddy/
 
+# ---- 内部工具与文档（含内网拓扑/历史运维记录，不入库） ----
+tools-private/
+docs-internal/
+
 # ---- 业务数据文件（真实客户/库存/供应商数据，绝不入库） ----
 import_output/
 *清单.txt
