@@ -1,0 +1,24 @@
+{% extends "admin/base.html" %}
+{% load i18n %}
+
+{% block title %}{% if subtitle %}{{ subtitle }} | {% endif %}{{ title }} | {{ site_title }}{% endblock %}
+
+{% block branding %}
+  <div id="site-name"><a href="{% url 'admin:index' %}">{{ site_header }}</a></div>
+  {% if user.is_anonymous %}{% include "admin/color_theme_toggle.html" %}{% endif %}
+{% endblock %}
+
+{% block usertools %}
+  {% if has_permission %}
+    <div id="user-tools">
+      当前登录：<strong>{% firstof user.get_short_name user.get_username %}</strong>
+      （{% if user.is_superuser %}系统管理员{% elif user.groups.all.0.name == 'warehouse_admin' %}仓库管理员{% elif user.groups.all.0.name == 'warehouse_staff' %}仓库人员{% else %}后台人员{% endif %}）
+      <a href="{% url 'home' %}">返回工作台</a> /
+      <a href="{% url 'request_list' %}">我的申请</a> /
+      {% if global_user_is_operator or user.is_superuser %}<a href="{% url 'approval_queue' %}">我的审批</a> /{% endif %}
+      {% if user.has_usable_password %}<a href="{% url 'admin:password_change' %}">修改密码</a> /{% endif %}
+      <form id="logout-form" method="post" action="{% url 'admin:logout' %}">{% csrf_token %}<button type="submit">退出登录</button></form>
+      {% include "admin/color_theme_toggle.html" %}
+    </div>
+  {% endif %}
+{% endblock %}

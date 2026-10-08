@@ -1,0 +1,157 @@
+{% extends "web_base.html" %}
+{% block title %}成品设备 - 售后仓库管理系统{% endblock %}
+{% block crumb %}仓库管理 / 成品设备{% endblock %}
+{% block content %}
+<style>
+  .unit-row.selected { background: var(--teal-soft, #e6f5f3); box-shadow: inset 3px 0 0 var(--teal, #1f7a70); }
+  .unit-row.selected td { font-weight: 600; }
+  .unit-row:hover { background: #f4f8f8; }
+  .unit-layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 960px) { .unit-layout { grid-template-columns: 1fr; } }
+  /* 左列只在自然高度内粘住顶部，避免短面板拉出大段空白 */
+  .unit-sticky { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; }
+  /* 右列：筛选在上、列表在下，纵向紧密排列，避免网格自动换行错位 */
+  .unit-right { display: grid; gap: 14px; align-content: start; min-width: 0; }
+  /* 页面级紧凑化：压缩面板、表格、表单的留白，让一屏内容更满 */
+  .unit-page .panel { padding: 14px 16px; }
+  .unit-page .panel-head { margin-bottom: 10px; }
+  .unit-page .form-grid { gap: 10px; margin-top: 10px; }
+  .unit-page .form-field { gap: 4px; }
+  .unit-page .data-table th, .unit-page .data-table td { padding: 7px 6px; }
+  .unit-page .management-form .form-actions, .unit-page .form-actions { margin-top: 10px; }
+  .history-toggle { cursor: pointer; user-select: none; color: var(--teal, #1f7a70); font-weight: 600; }
+  .history-toggle:hover { text-decoration: underline; }
+  .danger-zone { margin-top: 14px; padding: 12px 14px; border: 1px dashed #d98a8a; border-radius: 8px; background: #fdf6f6; }
+  .unit-filter-form { grid-template-columns: minmax(220px, 1fr) minmax(160px, .6fr) auto; gap: 15px; }
+  .unit-filter-form .form-field input,
+  .unit-filter-form .form-field select { min-height: 38px; padding: 9px 10px; }
+  .inline-filter-form { display: flex; align-items: end; gap: 10px; }
+  .inline-filter-form .form-field { flex: 1; }
+  .inline-filter-form .form-field input { min-height: 38px; padding: 9px 10px; }
+</style>
+<div class="page-heading"><div><h1>成品设备</h1><p class="page-copy">多个资产组装成一台整机出库；归还后可拆散，组件回到在库并可再次组装。借用、售出、归还在“新建申请”中走审批流。已拆散的历史成品默认不显示。</p></div><a class="button button-secondary" href="{% url 'warehouse_management' %}">返回仓库管理</a></div>
+
+<div class="unit-page">
+<div class="unit-layout">
+  <section class="panel unit-sticky">
+    <div class="panel-head"><h2>新建成品设备</h2><span>先创建空壳，再装入组件</span></div>
+    <form method="post" class="form-card management-form">{% csrf_token %}<input type="hidden" name="action" value="create_unit">
+      <div class="form-grid">
+        <div class="form-field full"><label>成品名称 <span class="required">*</span></label><input name="name" required maxlength="120" placeholder="例如：G1 巡检整机"></div>
+        <div class="form-field full"><label>成品编码</label><input name="unit_code" maxlength="80" placeholder="行政赋码后填写，可留空"></div>
+        <div class="form-field full"><label>型号</label><input name="model" maxlength="120"></div>
+        <div class="form-field full"><label>备注</label><input name="remarks" maxlength="255"></div>
+      </div>
+      <div class="form-actions"><button class="button button-primary" type="submit">创建</button></div>
+    </form>
+
+    <div class="panel-head" style="margin-top:20px"><h2>BOM 批量导入</h2><a href="?download=bom_template">下载模板</a></div>
+    <form method="post" enctype="multipart/form-data">{% csrf_token %}<input type="hidden" name="action" value="import_bom">
+      <div class="form-field"><label>Excel 文件（.xlsx，≤10MB）</label><input type="file" name="workbook" accept=".xlsx" required></div>
+      <p class="field-help" style="margin:8px 0">同一成品名称的连续多行视为同一台设备的多个组件；组件资产编码须已在库。导入整体成功或整体回滚。</p>
+      <div class="form-actions"><button class="button button-secondary" type="submit">导入 BOM</button></div>
+    </form>
+  </section>
+
+  <div class="unit-right">
+    <section class="panel">
+      <div class="panel-head"><h2>筛选成品设备</h2><span>按名称、编码、型号或状态过滤</span></div>
+      <form method="get" class="management-filter-form unit-filter-form">
+        <div class="form-field"><label for="unit-query">检索</label><input id="unit-query" name="q" value="{{ query }}" placeholder="名称、编码或型号"></div>
+        <div class="form-field"><label for="unit-status">状态</label><select id="unit-status" name="status"><option value="">进行中（隐藏已拆散）</option>{% for value, label in status_choices %}<option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+        <button class="button button-secondary" type="submit">筛选</button>
+      </form>
+    </section>
+
+    <section class="panel standalone-table">
+      <div class="panel-head"><h2>成品设备列表</h2><span>点击行查看组件并操作</span></div>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>成品编码</th><th>名称</th><th>型号</th><th>状态</th><th>在装组件</th><th>客户</th><th>创建时间</th></tr></thead><tbody>
+        {% for unit in units %}<tr class="unit-row {% if selected and selected.id == unit.id %}selected{% endif %}" onclick="location.href='?unit={{ unit.id }}'" style="cursor:pointer">
+          <td class="code">{{ unit.unit_code|default:'未赋码' }}</td><td>{{ unit.name }}</td><td>{{ unit.model|default:'—' }}</td>
+          <td><span class="tag {% if unit.status == 'assembled' %}success{% elif unit.status == 'disassembled' %}neutral{% else %}warning{% endif %}">{{ unit.get_status_display }}</span></td>
+          <td>{{ unit.active_component_count }}</td><td>{{ unit.customer.name|default:'—' }}</td><td>{{ unit.created_at|date:'Y-m-d H:i' }}</td>
+        </tr>{% empty %}<tr><td colspan="7"><div class="empty-state">暂无成品设备，先在左侧创建</div></td></tr>{% endfor %}
+      </tbody></table></div>
+    </section>
+  </div>
+</div>
+
+{% if selected %}
+<section class="panel">
+  <div class="panel-head"><h2>当前选择：{{ selected.name }}（{{ selected.get_status_display }}）</h2><span>{{ selected.unit_code|default:'未赋码' }}</span></div>
+  {% if selected.remarks %}<div class="notice info">备注：{{ selected.remarks }}</div>{% endif %}
+
+  <h3 style="margin:12px 0 6px">当前组件（{{ active_links|length }} 件）</h3>
+  <div class="table-scroll"><table class="data-table"><thead><tr><th>资产编码</th><th>名称</th><th>SN</th><th>仓库/库位</th><th>装入时间</th><th>履历</th><th>操作</th></tr></thead><tbody>
+    {% for link in active_links %}<tr>
+      <td class="code">{{ link.asset.asset_code|default:'未编号' }}</td><td>{{ link.asset.name }}</td><td>{{ link.asset.serial_number|default:'—' }}</td>
+      <td>{{ link.asset.warehouse.name|default:'未定位' }}/{{ link.asset.location.code|default:'未定位' }}</td>
+      <td>{{ link.assembled_at|date:'Y-m-d H:i' }}</td>
+      <td><a class="text-action" href="{% url 'asset_lifecycle' link.asset_id %}">履历</a></td>
+      <td>{% if selected.status == 'draft' or selected.status == 'assembled' %}<form method="post" style="display:inline" onsubmit="return confirm('确认把该组件拆出回到在库吗？')">{% csrf_token %}<input type="hidden" name="action" value="remove_component"><input type="hidden" name="unit_id" value="{{ selected.id }}"><input type="hidden" name="asset_id" value="{{ link.asset_id }}"><button class="text-action danger" type="submit">拆出</button></form>{% else %}—{% endif %}</td>
+    </tr>{% empty %}<tr><td colspan="7"><div class="empty-state">尚未装入组件</div></td></tr>{% endfor %}
+  </tbody></table></div>
+
+  {% if inactive_links %}
+  <div style="margin-top:12px">
+    <span class="history-toggle" onclick="var el=document.getElementById('history-links');el.style.display=el.style.display==='none'?'':'none';this.querySelector('b').textContent=el.style.display==='none'?'▸':'▾'"><b>▸</b> 历史组件履历（{{ inactive_links|length }} 条，曾装入后拆出）</span>
+    <div id="history-links" style="display:none;margin-top:8px">
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>资产编码</th><th>名称</th><th>SN</th><th>装入时间</th><th>拆出时间</th><th>备注</th><th>履历</th></tr></thead><tbody>
+        {% for link in inactive_links %}<tr>
+          <td class="code">{{ link.asset.asset_code|default:'未编号' }}</td><td>{{ link.asset.name }}</td><td>{{ link.asset.serial_number|default:'—' }}</td>
+          <td>{{ link.assembled_at|date:'Y-m-d H:i' }}</td><td>{{ link.disassembled_at|date:'Y-m-d H:i' }}</td>
+          <td>{{ link.note|default:'—' }}</td>
+          <td><a class="text-action" href="{% url 'asset_lifecycle' link.asset_id %}">履历</a></td>
+        </tr>{% endfor %}
+      </tbody></table></div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if candidate_assets is not None %}
+  <div style="margin-top:16px">
+    <h3 style="margin:0 0 6px">装入组件（只有在库资产可选）</h3>
+    {% if not asset_query and candidate_total > candidate_assets|length %}
+    <div class="notice info" style="margin:0 0 8px">在库资产共 {{ candidate_total }} 件，此处仅显示前 {{ candidate_assets|length }} 件；请先用下方筛选缩小范围再勾选。</div>
+    {% endif %}
+    <form method="get" class="inline-filter-form">
+      <input type="hidden" name="unit" value="{{ selected.id }}">
+      <div class="form-field"><label for="asset-query">筛选组件</label><input id="asset-query" name="aq" value="{{ asset_query }}" placeholder="名称 / 编号 / 类型 / SN / 厂家 / 备注"></div>
+      <button class="button button-secondary" type="submit">筛选</button>
+      {% if asset_query %}<a class="text-action" href="?unit={{ selected.id }}" style="padding-bottom:9px">清除</a>{% endif %}
+    </form>
+    <form method="post" class="form-card management-form" style="margin-top:10px">{% csrf_token %}<input type="hidden" name="action" value="add_components"><input type="hidden" name="unit_id" value="{{ selected.id }}">
+      <div class="compact-choice-list">
+        {% for asset in candidate_assets %}<label class="compact-choice"><input type="checkbox" name="asset_ids" value="{{ asset.id }}"><span><strong>{{ asset.name }}</strong><small>{{ asset.asset_code|default:'未编号' }} · {{ asset.item_type.name }} · {{ asset.warehouse.name|default:'未定位' }}/{{ asset.location.code|default:'未定位' }}{% if asset.serial_number %} · SN {{ asset.serial_number }}{% endif %}</small></span></label>{% empty %}<div class="empty-state">没有匹配的在库资产</div>{% endfor %}
+      </div>
+      <div class="form-grid" style="margin-top:10px"><div class="form-field full"><label>装入备注</label><input name="note" maxlength="255" placeholder="选填"></div></div>
+      <div class="form-actions"><button class="button button-primary" type="submit">装入所选组件</button></div>
+    </form>
+  </div>
+  {% endif %}
+
+  {% if selected.status == 'draft' or selected.status == 'assembled' %}
+  <form method="post" style="margin-top:16px" onsubmit="return confirm('确认拆散整台成品设备吗？全部组件将回到在库，成品编码作废。')">{% csrf_token %}<input type="hidden" name="action" value="disassemble"><input type="hidden" name="unit_id" value="{{ selected.id }}">
+    <div class="inline-filter-form"><div class="form-field"><label>拆散原因（选填）</label><input name="reason" placeholder="将写入审计"></div><button class="button button-secondary" type="submit">拆散整机</button></div>
+  </form>
+  {% endif %}
+
+  {% if selected.status == 'draft' or selected.status == 'disassembled' %}
+  <form method="post" style="margin-top:12px" onsubmit="return confirm('确认删除该成品设备吗？此操作不可恢复，会写入操作审计。')">{% csrf_token %}<input type="hidden" name="action" value="delete"><input type="hidden" name="unit_id" value="{{ selected.id }}">
+    <div class="inline-filter-form"><div class="form-field"><label>删除原因（选填）</label><input name="reason" placeholder="将写入审计"></div><button class="text-action danger" type="submit" style="padding-bottom:9px">删除该成品</button></div>
+  </form>
+  {% else %}
+  <div class="notice info" style="margin-top:12px">该成品已出库，组件配置冻结，不可删除。归还请在“新建申请”发起“归还”审批。</div>
+  {% endif %}
+
+  {% if can_force_delete %}
+  <div class="danger-zone">
+    <form method="post" onsubmit="return confirm('管理员强制删除：将删除该成品及全部组件履历，仍在装的组件会释放回在库，关联申请单保留但解除关联。确定继续吗？')">{% csrf_token %}<input type="hidden" name="action" value="delete"><input type="hidden" name="unit_id" value="{{ selected.id }}"><input type="hidden" name="force" value="1">
+      <div class="inline-filter-form"><div class="form-field"><label style="color:#a33">管理员专区 · 强制删除原因（建议填写，将写入审计）</label><input name="reason"></div><button class="text-action danger" type="submit" style="padding-bottom:9px">强制删除（含履历）</button></div>
+    </form>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+</div>
+{% endblock %}

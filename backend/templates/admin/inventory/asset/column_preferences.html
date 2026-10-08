@@ -1,0 +1,26 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div id="content-main">
+  <form method="post">
+    {% csrf_token %}
+    <fieldset class="module aligned">
+      <h2>资产列表显示列</h2>
+      <p>勾选需要显示的列，并用排序号决定从左到右顺序。系统资产编号始终保留。</p>
+      {% for key, label in column_options %}
+        <div class="form-row">
+          <label for="id_{{ key }}">
+            <input id="id_{{ key }}" type="checkbox" name="columns" value="{{ key }}" {% if key in selected_columns %}checked{% endif %} {% if key == 'system_asset_no' %}disabled{% endif %}>
+            {{ label }}
+          </label>
+          <input type="number" min="1" name="order_{{ key }}" value="{% if key in selected_columns %}{{ forloop.counter }}{% else %}999{% endif %}" style="width: 72px" aria-label="{{ label }}排序号">
+        </div>
+      {% endfor %}
+    </fieldset>
+    <div class="submit-row">
+      <input type="submit" value="保存列配置" class="default">
+      <a href="{% url 'admin:inventory_asset_changelist' %}" class="button cancel-link">取消</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

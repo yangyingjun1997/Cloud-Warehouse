@@ -1,0 +1,9 @@
+{% extends "web_base.html" %}
+
+{% block title %}打印资产二维码 - 仓库管理{% endblock %}
+{% block crumb %}仓库管理 / 二维码打印{% endblock %}
+
+{% block content %}
+  <div class="page-heading print-toolbar"><div><h1>资产二维码标签</h1><p class="page-copy">共 {{ labels|length }} 项。点击打印后选择本机打印机。</p></div><div class="page-actions"><a class="button button-secondary no-print" href="{% url 'warehouse_management' %}">返回仓库管理</a><button class="button button-primary no-print" type="button" onclick="window.print()">打印标签</button></div></div>
+  <section class="qr-label-sheet">{% for label in labels %}<article class="qr-label"><img src="data:image/png;base64,{{ label.qr_image }}" alt="{{ label.asset.system_asset_no }} 二维码"><div><strong>{{ label.asset.name }}</strong><span>仓库系统编号：{{ label.asset.system_asset_no }}</span>{% if label.asset.asset_code %}<small>公司 ERP 资产编码：{{ label.asset.asset_code }}</small>{% endif %}{% if label.asset.serial_number %}<small>生产厂家 SN：{{ label.asset.serial_number }}</small>{% else %}<small>{{ label.asset.item_type.name }}</small>{% endif %}</div></article>{% endfor %}</section>
+{% endblock %}

@@ -1,0 +1,27 @@
+<view class="page">
+  <view class="topbar"><view><view class="title">新建申请</view><view class="subtitle">选择资产并填写可追溯的使用信息</view></view></view>
+  <view class="card">
+    <view class="field-label required">申请类型</view>
+    <picker mode="selector" range="{{typeOptions}}" range-key="label" value="{{typeIndex}}" bindchange="onTypeChange"><view class="picker-row">{{typeOptions[typeIndex].label}}<text>选择</text></view></picker>
+  </view>
+  <view class="card">
+    <view class="section-title required">选择资产</view>
+    <view class="search-row"><input class="search-input" placeholder="名称、编码、SN 或拼音首字母" value="{{query}}" bindinput="onSearchInput" confirm-type="search" bindconfirm="searchAssets"/><button class="search-button" bindtap="searchAssets">检索</button></view>
+    <view class="tool-row"><button class="scan-button" bindtap="scanAsset">扫码选择</button><view class="filter-toggle" bindtap="toggleAvailable"><view class="check {{availableOnly ? 'checked' : ''}}">{{availableOnly ? '✓' : ''}}</view><text>仅看可申请</text></view></view>
+    <view wx:if="{{selectedAsset}}" class="selected-asset"><view><view class="selected-name">{{selectedAsset.name}}</view><view class="muted">{{selectedAsset.asset_code}}<text wx:if="{{selectedAsset.serial_number}}"> · {{selectedAsset.serial_number}}</text></view></view><text class="tag">{{selectedAsset.statusText}}</text></view>
+    <view wx:for="{{visibleAssets}}" wx:key="id" class="candidate {{item.available ? '' : 'unavailable'}}" bindtap="selectAsset" data-id="{{item.id}}"><view><view class="candidate-name">{{item.name}}</view><view class="muted">{{item.asset_code}} · {{item.serial_number || '无原厂SN'}}</view></view><text class="tag">{{item.statusText}}</text></view>
+  </view>
+  <view class="card">
+    <view class="section-title">申请信息</view>
+    <view class="field-label required">申请说明</view><textarea class="field-textarea" maxlength="300" placeholder="请填写用途、故障情况或归还说明" value="{{reason}}" data-field="reason" bindinput="onFieldInput"/>
+    <view wx:if="{{typeValue === 'borrow'}}" class="field-block"><view class="field-label">预计归还日期</view><picker mode="date" value="{{expectedReturnDate}}" bindchange="onDateChange"><view class="picker-row">{{expectedReturnDate || '请选择日期'}}<text>选择</text></view></picker></view>
+    <view wx:if="{{typeValue === 'borrow' || typeValue === 'issue'}}" class="trace-fields">
+      <view class="trace-title">使用与接收信息</view>
+      <view class="field-block"><view class="field-label">实际使用人</view><input class="field-input" placeholder="可填写无系统账号的实际使用人" value="{{recipientName}}" data-field="recipientName" bindinput="onFieldInput"/></view>
+      <view class="field-block"><view class="field-label">使用部门或单位</view><input class="field-input" placeholder="选填" value="{{recipientCompany}}" data-field="recipientCompany" bindinput="onFieldInput"/></view>
+      <view class="field-block"><view class="field-label">联系电话</view><input class="field-input" type="number" placeholder="选填" value="{{recipientPhone}}" data-field="recipientPhone" bindinput="onFieldInput"/></view>
+      <view class="field-block"><view class="field-label required">使用地点</view><input class="field-input" placeholder="例如：客户现场、研发三楼" value="{{usageLocation}}" data-field="usageLocation" bindinput="onFieldInput"/></view>
+    </view>
+  </view>
+  <button class="primary-button submit-button" loading="{{loading}}" bindtap="submit">提交申请</button>
+</view>

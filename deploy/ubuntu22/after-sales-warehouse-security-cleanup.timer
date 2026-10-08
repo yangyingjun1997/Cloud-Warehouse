@@ -1,0 +1,10 @@
+[Unit]
+Description=Run After-sales Warehouse security state cleanup daily
+
+[Timer]
+OnCalendar=*-*-* 03:45:00
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

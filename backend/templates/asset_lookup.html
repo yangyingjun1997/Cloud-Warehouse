@@ -1,0 +1,156 @@
+{% extends "web_base.html" %}
+{% load static %}
+
+{% block title %}资产检索 - 售后仓库管理系统{% endblock %}
+{% block crumb %}资产检索{% endblock %}
+
+{% block content %}
+  <div class="page-heading"><div><p class="eyebrow">统一入口</p><h1>综合检索</h1><p class="page-copy">输入任意一段资产信息或人员信息，系统会从可见业务记录中匹配。</p></div></div>
+  <section class="lookup-card">
+    <h2>输入关键词</h2>
+    <form class="lookup-form" method="get"><input id="asset-query" name="q" value="{{ query }}" autofocus placeholder="资产名称、编号、SN，或人员姓名 / 工号" aria-label="资产或人员关键词"><button id="mobile-scan-button" class="button button-secondary mobile-scan-button" type="button">扫码</button><button class="button button-primary" type="submit">开始检索</button><span id="asset-scan-message" class="scan-message" role="status"></span></form>
+    {% if query and not assets and not person_results and not unit_results and not request_results %}<p class="page-copy" style="color:var(--coral); margin-top:14px">未找到匹配记录，请换一个资产关键词、姓名或工号。</p>{% endif %}
+    {% if unit_results %}
+      <div class="lookup-section-head"><h2>成品设备</h2><span>{{ unit_results|length }} 台匹配成品</span></div>
+      <div class="lookup-results">
+        {% for unit in unit_results %}
+          <a class="lookup-result" href="{% url 'composite_unit_management' %}?unit={{ unit.id }}" style="text-decoration:none;color:inherit">
+            <div>
+              <div class="code">{{ unit.unit_code|default:'未赋码' }}</div>
+              <div class="result-name">{{ unit.name }}</div>
+              <div class="result-meta"><span>型号：{{ unit.model|default:'未填写' }}</span><span>客户：{{ unit.customer.name|default:'—' }}</span><span>创建：{{ unit.created_at|date:'Y-m-d' }}</span></div>
+            </div>
+            <div class="availability">{{ unit.get_status_display }}</div>
+          </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% if request_results %}
+      <div class="lookup-section-head"><h2>申请单据</h2><span>{{ request_results|length }} 条匹配单据</span></div>
+      <div class="lookup-results">
+        {% for workflow_request in request_results %}
+          <a class="lookup-result" href="{% url 'workflow_detail' workflow_request.id %}" style="text-decoration:none;color:inherit">
+            <div>
+              <div class="code">{{ workflow_request.request_no }}</div>
+              <div class="result-name">{{ workflow_request.get_request_type_display }} · {{ workflow_request.applicant.get_username }}</div>
+              <div class="result-meta"><span>申请日期：{{ workflow_request.application_date|date:'Y-m-d' }}</span><span>部门：{{ workflow_request.department.name|default:'—' }}</span><span>原因：{{ workflow_request.reason|truncatechars:40 }}</span></div>
+            </div>
+            <div class="availability">{{ workflow_request.get_status_display }}</div>
+          </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% if person_results %}
+      <div class="lookup-section-head"><h2>人员与持有设备</h2><span>{{ person_results|length }} 位匹配人员</span></div>
+      <div class="person-results">
+        {% for person in person_results %}
+          <section class="person-result">
+            <div class="person-result-head"><div><h3>{{ person.name }}</h3>{% if person.username %}<p>{{ person.username }}{% if person.employee_no %} · 工号 {{ person.employee_no }}{% endif %}</p>{% else %}<p>外部收件人</p>{% endif %}</div><span class="tag neutral">申请 {{ person.requests|length }} 条 · 在手设备 {{ person.assets|length }} 件</span></div>
+            <div class="person-result-grid">
+              <div><h4>申请记录</h4><div class="person-request-list">{% for workflow_request in person.requests %}<a class="person-request-row" href="{% url 'workflow_detail' workflow_request.id %}"><span><strong>{{ workflow_request.get_request_type_display }} · {{ workflow_request.request_no }}</strong><small>{{ workflow_request.application_date|date:'Y-m-d' }} · {% for line in workflow_request.lines.all %}{% if line.asset %}{{ line.asset.name }}{% elif line.stock_item %}{{ line.stock_item.name }} × {{ line.quantity }}{% endif %}{% if not forloop.last %}；{% endif %}{% endfor %}</small></span><span class="tag {% if workflow_request.status == 'pending' %}pending{% elif workflow_request.status == 'waiting_warehouse' %}waiting{% else %}neutral{% endif %}">{{ workflow_request.get_status_display }}</span></a>{% empty %}<div class="empty-state">暂无申请记录</div>{% endfor %}</div></div>
+              <div><h4>当前在手设备</h4><div class="person-asset-list">{% for asset in person.assets %}<a class="person-asset-row" href="{% url 'asset_lifecycle' asset.id %}"><span><strong>{{ asset.name }}</strong><small class="code">{{ asset.system_asset_no }}{% if asset.asset_code %} · ERP {{ asset.asset_code }}{% endif %}{% if asset.serial_number %} · SN {{ asset.serial_number }}{% endif %}</small></span><span class="tag {{ asset.status }}">{{ asset.get_status_display }}</span></a>{% empty %}<div class="empty-state">当前没有登记在手的设备</div>{% endfor %}</div></div>
+            </div>
+          </section>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% if asset_results %}
+      <div class="lookup-section-head"><h2>资产结果</h2><span>找到 {{ asset_results|length }} 条匹配资产</span></div>
+      <div class="lookup-results">
+        {% for result in asset_results %}
+          {% with asset=result.asset %}
+            <div class="lookup-result">
+              <div>
+                <div class="code">仓库系统编号：{{ asset.system_asset_no }}</div>
+                <div class="result-name">{{ asset.name }}</div>
+                <div class="result-meta">
+                  <span>物品类型：{{ asset.item_type.name }}</span>
+                  <span>公司 ERP 编码：{{ asset.asset_code|default:'未录入' }}</span><span>生产厂家 SN：{{ asset.serial_number|default:'未录入' }}</span>
+                  {% if user_is_operator %}
+                    <span>状态：{{ asset.get_status_display }}</span>
+                    <span>仓库 / 库位：{{ asset.warehouse.name|default:'未分配仓库' }} / {{ asset.location.code|default:'未分配库位' }}</span>
+                    <span>持有人：{{ asset.current_holder.username|default:'无' }}</span>
+                    <span class="lookup-result-actions"><a href="{% url 'warehouse_asset_edit' asset.id %}">查看资产详情</a><a href="{% url 'asset_lifecycle' asset.id %}">查看全生命周期</a></span>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="availability {% if result.availability == '暂不可申请' %}unavailable{% endif %}">{{ result.availability }}</div>
+            </div>
+          {% endwith %}
+        {% endfor %}
+      </div>
+    {% endif %}
+  </section>
+  <section id="mobile-scan-panel" class="mobile-scan-panel" hidden aria-label="扫描二维码">
+    <video id="mobile-scan-video" autoplay playsinline muted></video>
+    <div class="scan-panel-actions"><span id="asset-camera-status">正在启动摄像头</span><div class="scan-panel-controls"><button id="asset-scan-torch" type="button" hidden>开启手电筒</button><button id="asset-scan-switch" type="button">切换镜头</button><button id="mobile-scan-close" type="button">关闭</button></div></div>
+  </section>
+  <script src="{% static 'warehouse/vendor/zxing-browser-0.1.5.min.js' %}"></script>
+  <script src="{% static 'warehouse/scanner.js' %}"></script>
+  <script>
+    (() => {
+      const scanButton = document.getElementById('mobile-scan-button');
+      const closeButton = document.getElementById('mobile-scan-close');
+      const panel = document.getElementById('mobile-scan-panel');
+      const video = document.getElementById('mobile-scan-video');
+      const queryInput = document.getElementById('asset-query');
+      const scanMessage = document.getElementById('asset-scan-message');
+      const cameraStatus = document.getElementById('asset-camera-status');
+      const torchButton = document.getElementById('asset-scan-torch');
+      if (!scanButton || !closeButton || !panel || !video || !queryInput) return;
+      let scannerController = null;
+      let facingMode = 'environment';
+      let torchEnabled = false;
+
+      const stopScanning = () => {
+        if (scannerController) scannerController.stop();
+        scannerController = null;
+        torchEnabled = false;
+        torchButton.hidden = true;
+        torchButton.textContent = '开启手电筒';
+        panel.hidden = true;
+      };
+
+      const startScanning = async () => {
+        stopScanning();
+        try {
+          panel.hidden = false;
+          cameraStatus.textContent = '正在启动摄像头';
+          scannerController = await WarehouseScanner.start({
+            video,
+            facingMode,
+            onStatus: (message) => { cameraStatus.textContent = message; },
+            onResult: async (value) => {
+              queryInput.value = value;
+              await WarehouseScanner.feedback();
+              stopScanning();
+              queryInput.form.requestSubmit();
+            },
+          });
+          torchButton.hidden = !scannerController.torchSupported;
+        } catch (error) {
+          stopScanning();
+          scanMessage.textContent = WarehouseScanner.readableError(error);
+        }
+      };
+
+      scanButton.addEventListener('click', startScanning);
+      document.getElementById('asset-scan-switch').addEventListener('click', async () => {
+        facingMode = facingMode === 'environment' ? 'user' : 'environment';
+        await startScanning();
+      });
+      torchButton.addEventListener('click', async () => {
+        try {
+          torchEnabled = !torchEnabled;
+          await scannerController.setTorch(torchEnabled);
+          torchButton.textContent = torchEnabled ? '关闭手电筒' : '开启手电筒';
+        } catch (error) {
+          torchEnabled = false;
+          scanMessage.textContent = WarehouseScanner.readableError(error);
+        }
+      });
+      closeButton.addEventListener('click', stopScanning);
+      window.addEventListener('pagehide', stopScanning);
+    })();
+  </script>
+{% endblock %}

@@ -1,0 +1,19 @@
+{
+  "name": "售后仓库管理系统",
+  "short_name": "售后仓库",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f2f5f5",
+  "theme_color": "#173239",
+  "description": "机器人售后资产与出入库管理",
+  "icons": [
+    {
+      "src": "/static/warehouse/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

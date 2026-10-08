@@ -1,0 +1,11 @@
+# Ubuntu 22.04 ships Python 3.10; Django 5.2 is the compatible LTS release.
+Django>=5.2,<5.3
+djangorestframework>=3.18
+django-cors-headers>=4.9
+pillow>=12.3
+python-dotenv>=1.2
+gunicorn>=23.0
+psycopg[binary]>=3.2
+qrcode[pil]>=8.2
+openpyxl>=3.1
+pypinyin>=0.55

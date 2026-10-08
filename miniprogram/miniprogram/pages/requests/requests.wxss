@@ -1,0 +1,11 @@
+.create-button { min-width: 150rpx; height: 68rpx; padding: 0 18rpx; color: #fff; background: #176b4d; font-size: 24rpx; line-height: 68rpx; }
+.segment { display: flex; margin-bottom: 22rpx; padding: 6rpx; background: #e9eeeb; border-radius: 10rpx; }
+.segment-item { flex: 1; padding: 15rpx 8rpx; color: #69756f; border-radius: 7rpx; font-size: 25rpx; text-align: center; }
+.segment-item.active { color: #176b4d; background: #fff; font-weight: 700; }
+.request-card { padding: 26rpx; }
+.request-head { display: flex; justify-content: space-between; gap: 16rpx; }
+.request-no { color: #17201c; font-size: 28rpx; font-weight: 700; }
+.request-meta { margin-top: 13rpx; color: #69756f; font-size: 23rpx; }
+.asset-summary { margin-top: 22rpx; color: #17201c; font-size: 27rpx; }
+.request-reason, .location-text { margin-top: 12rpx; color: #69756f; font-size: 24rpx; line-height: 1.55; }
+.location-text { color: #3f4b45; }

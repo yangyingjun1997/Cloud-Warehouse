@@ -1,0 +1,37 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div id="content-main">
+  <form method="post">
+    {% csrf_token %}
+    <fieldset class="module">
+      <h2>批量调整物品分类</h2>
+      <p>变更物品类型的分类后，关联资产和耗材配件会自动归入新分类。</p>
+      <table id="result_list">
+        <thead><tr><th>物品类型</th><th>管理方式</th><th>目标分类</th></tr></thead>
+        <tbody>
+          {% for item_type in item_types %}
+            <tr>
+              <td>{{ item_type.name }}</td>
+              <td>{% if item_type.is_serialized %}单件序列化管理{% else %}数量库存管理{% endif %}</td>
+              <td>
+                <select name="category_{{ item_type.id }}">
+                  {% for category in categories %}
+                    <option value="{{ category.id }}" {% if category.id == item_type.category_id %}selected{% endif %}>{{ category.name }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="3">暂无物品类型</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </fieldset>
+    <div class="submit-row">
+      <input type="submit" value="保存分类调整" class="default">
+      <a href="{% url 'admin:inventory_itemtype_changelist' %}" class="button cancel-link">取消</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <style>
+    .label-toolbar { display: flex; gap: 10px; margin: 0 0 18px; }
+    .labels { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+    .asset-label { display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: center; min-height: 112px; padding: 10px; border: 1px solid #2f3e46; border-radius: 2px; background: #fff; color: #111; break-inside: avoid; }
+    .asset-label img { width: 88px; height: 88px; image-rendering: pixelated; }
+    .asset-label strong, .asset-label span { display: block; overflow-wrap: anywhere; }
+    .asset-label strong { font-size: 14px; line-height: 1.35; }
+    .asset-label span { margin-top: 5px; color: #333; font-size: 11px; line-height: 1.4; }
+    .asset-label .code { font-family: ui-monospace, Consolas, monospace; font-weight: 700; }
+    @media print { #header, .breadcrumbs, .label-toolbar, #footer { display: none; } #content { padding: 0; } .labels { grid-template-columns: repeat(2, 1fr); gap: 5mm; } .asset-label { min-height: 34mm; padding: 3mm; border-color: #000; } }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div id="content-main">
+    <div class="label-toolbar"><button class="default" type="button" onclick="window.print()">打印二维码标签</button><a class="button" href="{% url 'admin:inventory_asset_changelist' %}">返回资产列表</a></div>
+    <div class="labels">
+      {% for label in labels %}
+        <section class="asset-label">
+          <img src="data:image/png;base64,{{ label.qr_image }}" alt="{{ label.asset.system_asset_no }} 二维码">
+          <div><strong>{{ label.asset.name }}</strong><span class="code">仓库系统编号：{{ label.asset.system_asset_no }}</span>{% if label.asset.asset_code %}<span>公司 ERP 资产编码：{{ label.asset.asset_code }}</span>{% endif %}<span>物品类型：{{ label.asset.item_type.name }}</span><span>本系统二维码：{{ label.asset.qr_value }}</span>{% if label.asset.serial_number %}<span>生产厂家 SN：{{ label.asset.serial_number }}</span>{% endif %}</div>
+        </section>
+      {% endfor %}
+    </div>
+  </div>
+{% endblock %}

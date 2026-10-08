@@ -1,0 +1,10 @@
+{% extends "web_base.html" %}
+
+{% block title %}{% if instance %}编辑{% else %}新建{% endif %}{{ section_title }} - 仓库管理{% endblock %}
+{% block crumb %}仓库管理 / {{ section_title }}{% endblock %}
+
+{% block content %}
+  <div class="page-heading"><div><h1>{% if instance %}编辑{% else %}新建{% endif %}{{ section_title }}</h1><p class="page-copy">带 * 的字段为必填。编码应保持稳定，避免随意修改已关联的基础资料。</p></div><a class="button button-secondary" href="{% url 'warehouse_setup' section %}">返回{{ section_title }}</a></div>
+  <nav class="management-tabs" aria-label="基础资料分类">{% for key, title in setup_sections %}<a class="management-tab {% if section == key %}active{% endif %}" href="{% url 'warehouse_setup' key %}">{{ title }}</a>{% endfor %}</nav>
+  <form method="post" class="form-card management-form">{% csrf_token %}{% if form.non_field_errors %}<div class="notice error">{{ form.non_field_errors }}</div>{% endif %}<div class="form-grid">{% for field in form %}<div class="form-field {% if field.name == 'location_desc' or field.name == 'description' %}full{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <span class="required">*</span>{% endif %}</label>{{ field }}{% for error in field.errors %}<span class="field-error">{{ error }}</span>{% endfor %}</div>{% endfor %}</div><div class="form-actions"><a class="button button-secondary" href="{% url 'warehouse_setup' section %}">取消</a><button class="button button-primary" type="submit">保存{{ section_title }}</button></div></form>
+{% endblock %}

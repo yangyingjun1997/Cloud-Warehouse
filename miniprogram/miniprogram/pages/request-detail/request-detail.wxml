@@ -1,0 +1,48 @@
+<view class="page" wx:if="{{request}}">
+  <view class="request-summary">
+    <view class="summary-head"><view><view class="request-no">{{request.request_no}}</view><view class="summary-meta">{{request.requestTypeText}} · {{request.createdAtText}}</view></view><text class="tag">{{request.statusText}}</text></view>
+    <view class="summary-applicant">申请人：{{request.applicant_name || '-'}}</view>
+  </view>
+
+  <view class="card">
+    <view class="section-title">申请物品</view>
+    <view wx:for="{{request.lines}}" wx:key="id" class="line-item" bindtap="openAsset" data-id="{{item.asset}}">
+      <view><view class="line-name">{{item.asset_name || item.asset_code || item.stock_item_name || '物品明细'}}</view><view class="line-code">{{item.asset_code || item.stock_item_name || ''}}</view></view>
+      <view class="line-side"><text wx:if="{{item.asset_status}}" class="tag">{{item.statusText}}</text><text wx:else>数量 {{item.quantity}}</text></view>
+      <view wx:if="{{isOperator && (item.warehouse_name || item.location_code)}}" class="line-location">{{item.warehouse_name || '-'}} / {{item.location_code || '-'}}</view>
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="section-title">申请信息</view>
+    <view class="info-row"><text>申请说明</text><text>{{request.reason || '-'}}</text></view>
+    <view wx:if="{{request.expected_return_date}}" class="info-row"><text>预计归还</text><text>{{request.expected_return_date}}</text></view>
+    <view wx:if="{{request.recipient_name || request.recipient_company || request.recipient_phone || request.usage_location}}" class="traceability">
+      <view class="trace-title">使用与接收信息</view>
+      <view wx:if="{{request.recipient_name}}" class="info-row"><text>实际使用人</text><text>{{request.recipient_name}}</text></view>
+      <view wx:if="{{request.recipient_company}}" class="info-row"><text>使用单位</text><text>{{request.recipient_company}}</text></view>
+      <view wx:if="{{request.recipient_phone}}" class="info-row"><text>联系电话</text><text>{{request.recipient_phone}}</text></view>
+      <view wx:if="{{request.usage_location}}" class="info-row"><text>使用地点</text><text>{{request.usage_location}}</text></view>
+    </view>
+    <view wx:if="{{request.target_warehouse_name || request.target_location_code}}" class="traceability"><view class="trace-title">目标入库位置</view><view class="info-row"><text>仓库 / 库位</text><text>{{request.target_warehouse_name || '-'}} / {{request.target_location_code || '-'}}</text></view></view>
+  </view>
+
+  <view class="card">
+    <view class="section-title">处理记录</view>
+    <view wx:for="{{request.approval_logs}}" wx:key="id" class="log-row"><view><view class="log-action">{{item.action_label}}</view><view class="muted">{{item.actor_name || '系统'}} · {{item.createdAtText}}</view></view><view wx:if="{{item.comment}}" class="log-comment">{{item.comment}}</view></view>
+    <view wx:if="{{!request.approval_logs.length}}" class="muted">尚未产生处理记录</view>
+  </view>
+
+  <view class="action-block">
+    <button wx:if="{{canApprove}}" class="primary-button" bindtap="approve">审核通过</button>
+    <button wx:if="{{canApprove}}" class="danger-button action-gap" bindtap="startReject">驳回申请</button>
+    <view wx:if="{{canProcess}}" class="process-date-row">
+      <text class="process-date-label">出入库日期</text>
+      <picker mode="date" value="{{processDate}}" bindchange="onProcessDateChange"><view class="process-date-value">{{processDate}}</view></picker>
+    </view>
+    <button wx:if="{{canProcess}}" class="primary-button" bindtap="process">确认完成出入库</button>
+    <button wx:if="{{canWithdraw}}" class="secondary-button" bindtap="withdraw">撤回申请</button>
+    <button wx:if="{{canHide}}" class="danger-button" bindtap="hide">从我的记录中删除</button>
+  </view>
+  <view wx:if="{{rejecting}}" class="reject-mask"><view class="reject-dialog"><view class="section-title">驳回申请</view><textarea class="field-textarea" maxlength="300" placeholder="请填写驳回原因" value="{{rejectComment}}" bindinput="onRejectInput"/><view class="dialog-actions"><button class="secondary-button" bindtap="cancelReject">取消</button><button class="danger-button" bindtap="confirmReject">确认驳回</button></view></view></view>
+</view>

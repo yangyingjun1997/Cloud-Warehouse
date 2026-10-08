@@ -1,0 +1,10 @@
+{% extends "web_base.html" %}
+{% block title %}新增物品 - 售后仓库管理系统{% endblock %}
+{% block crumb %}仓库管理 / 新增物品{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>新增物品</h1><p class="page-copy">先选择实际管理方式，后续仍可通过受控转换调整。</p></div><a class="button button-secondary" href="{% url 'warehouse_management' %}">返回仓库管理</a></div>
+<div class="choice-card-grid">
+  <a class="choice-card" href="{% url 'warehouse_asset_create' %}"><span class="choice-card-mark">单</span><div><h2>录入单件资产</h2><p>适合机器人、雷达、电脑等需要独立编号、二维码和全生命周期追踪的物品。</p></div><strong>开始录入</strong></a>
+  <a class="choice-card" href="{% url 'warehouse_stock_item_create' %}"><span class="choice-card-mark secondary">耗</span><div><h2>录入耗材配件</h2><p>适合线材、螺丝、接插件等按总数量出入库、不逐件编号的物品。</p></div><strong>开始录入</strong></a>
+</div>
+{% endblock %}

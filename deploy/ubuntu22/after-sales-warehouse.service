@@ -1,0 +1,19 @@
+[Unit]
+Description=After-sales Warehouse Django application
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=warehouse
+Group=warehouse
+WorkingDirectory=/opt/after-sales-warehouse/backend
+EnvironmentFile=/opt/after-sales-warehouse/backend/.env
+ExecStart=/opt/after-sales-warehouse/venv/bin/gunicorn warehouse_backend.wsgi:application --bind 127.0.0.1:8000 --workers 3 --timeout 60 --access-logfile - --error-logfile -
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

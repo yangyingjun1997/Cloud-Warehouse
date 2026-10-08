@@ -1,0 +1,9 @@
+<view class="login-page">
+  <view class="brand"><view class="brand-mark">仓</view><view class="login-title">售后仓库</view><view class="login-subtitle">内部资产与出入库管理</view></view>
+  <view class="login-card">
+    <view class="field-label required">账号</view><input class="field-input" placeholder="请输入内部账号" value="{{username}}" bindinput="onUsernameInput"/>
+    <view class="field-label required password-label">密码</view><input class="field-input" password placeholder="请输入密码" value="{{password}}" bindinput="onPasswordInput"/>
+    <button class="primary-button login-button" loading="{{loading}}" bindtap="login">登录</button>
+    <view class="login-tip">请使用管理员创建的内部账号登录</view>
+  </view>
+</view>

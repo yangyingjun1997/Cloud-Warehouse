@@ -1,0 +1,8 @@
+[Unit]
+Description=Backup After-sales Warehouse database and media
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/after-sales-warehouse-backup

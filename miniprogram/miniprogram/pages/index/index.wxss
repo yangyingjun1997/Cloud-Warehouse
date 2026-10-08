@@ -1,0 +1,18 @@
+.avatar { display: flex; align-items: center; justify-content: center; width: 76rpx; height: 76rpx; color: #176b4d; background: #e8f4ed; border-radius: 50%; font-size: 32rpx; font-weight: 700; }
+.search-card { margin-bottom: 24rpx; padding: 30rpx; background: #174f3b; border-radius: 12rpx; color: #fff; }
+.search-title { font-size: 34rpx; font-weight: 700; }
+.search-row { display: flex; gap: 14rpx; margin-top: 22rpx; }
+.search-input { flex: 1; min-width: 0; height: 78rpx; padding: 0 18rpx; color: #17201c; background: #fff; border-radius: 8rpx; font-size: 24rpx; }
+.search-button { width: 118rpx; color: #174f3b; background: #c8f0db; font-size: 24rpx; line-height: 78rpx; }
+.scan-button { margin-top: 16rpx; color: #fff; background: rgba(255, 255, 255, 0.16); font-size: 25rpx; line-height: 74rpx; }
+.result-block { margin-bottom: 22rpx; background: #fff; border: 1rpx solid #e2e7e4; border-radius: 12rpx; overflow: hidden; }
+.result-label { padding: 22rpx 26rpx 12rpx; color: #69756f; font-size: 24rpx; }
+.asset-row { display: flex; align-items: center; justify-content: space-between; gap: 18rpx; padding: 22rpx 26rpx; border-top: 1rpx solid #eef1ef; }
+.asset-main { min-width: 0; }
+.asset-name { overflow: hidden; color: #17201c; font-size: 29rpx; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.asset-code { margin-top: 7rpx; overflow: hidden; color: #69756f; font-size: 23rpx; text-overflow: ellipsis; white-space: nowrap; }
+.quick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20rpx; margin-bottom: 22rpx; }
+.quick-item { display: flex; flex-direction: column; padding: 26rpx; background: #fff; border: 1rpx solid #e2e7e4; border-radius: 12rpx; }
+.quick-number { color: #17201c; font-size: 42rpx; font-weight: 700; }
+.quick-label { margin-top: 8rpx; color: #69756f; font-size: 24rpx; }
+.tip-card { line-height: 1.7; }

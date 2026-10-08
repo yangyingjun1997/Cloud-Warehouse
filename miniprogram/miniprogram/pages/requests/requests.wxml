@@ -1,0 +1,32 @@
+<view class="page">
+  <view class="topbar">
+    <view><view class="title">申请与审批</view><view class="subtitle">查看进度并处理与您有关的任务</view></view>
+    <button class="create-button" bindtap="createRequest">新建申请</button>
+  </view>
+  <view class="segment">
+    <view class="segment-item {{selectedSection === 'mine' ? 'active' : ''}}" data-section="mine" bindtap="selectSection">我的申请</view>
+    <view wx:if="{{isOperator}}" class="segment-item {{selectedSection === 'tasks' ? 'active' : ''}}" data-section="tasks" bindtap="selectSection">待审批与执行</view>
+  </view>
+  <view wx:if="{{selectedSection === 'mine'}}">
+    <view wx:if="{{myRequests.length}}">
+      <view wx:for="{{myRequests}}" wx:key="id" class="card request-card" bindtap="openRequest" data-id="{{item.id}}">
+        <view class="request-head"><view class="request-no">{{item.request_no}}</view><text class="tag {{item.statusClass}}">{{item.statusText}}</text></view>
+        <view class="request-meta">{{item.requestTypeText}} · {{item.createdAtText}}</view>
+        <view class="asset-summary">{{item.assetSummary}}</view>
+        <view class="request-reason">{{item.reason || '未填写申请说明'}}</view>
+      </view>
+    </view>
+    <view wx:else class="empty">暂无申请记录</view>
+  </view>
+  <view wx:if="{{selectedSection === 'tasks'}}">
+    <view wx:if="{{tasks.length}}">
+      <view wx:for="{{tasks}}" wx:key="id" class="card request-card" bindtap="openRequest" data-id="{{item.id}}">
+        <view class="request-head"><view class="request-no">{{item.request_no}}</view><text class="tag {{item.statusClass}}">{{item.statusText}}</text></view>
+        <view class="request-meta">{{item.applicant_name}} · {{item.requestTypeText}} · {{item.createdAtText}}</view>
+        <view class="asset-summary">{{item.assetSummary}}</view>
+        <view wx:if="{{item.usage_location}}" class="location-text">使用地点：{{item.usage_location}}</view>
+      </view>
+    </view>
+    <view wx:else class="empty">暂无待处理的审批或仓库任务</view>
+  </view>
+</view>

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run After-sales Warehouse backup every day
+
+[Timer]
+OnCalendar=*-*-* 02:15:00
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

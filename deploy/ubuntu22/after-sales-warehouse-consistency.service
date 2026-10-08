@@ -1,0 +1,14 @@
+[Unit]
+Description=After-sales Warehouse data consistency check
+After=network-online.target postgresql.service after-sales-warehouse.service after-sales-warehouse-backup.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=warehouse
+Group=warehouse
+WorkingDirectory=/opt/after-sales-warehouse/backend
+EnvironmentFile=/opt/after-sales-warehouse/backend/.env
+ExecStart=/opt/after-sales-warehouse/venv/bin/python manage.py check_data_consistency --notify
+NoNewPrivileges=true
+PrivateTmp=true

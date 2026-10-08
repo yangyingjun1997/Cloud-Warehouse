@@ -1,0 +1,370 @@
+{% extends "web_base.html" %}
+{% load static %}
+
+{% block title %}{% if draft %}编辑申请草稿{% else %}新建申请{% endif %} - 售后仓库管理系统{% endblock %}
+{% block crumb %}我的申请 / {% if draft %}编辑草稿{% else %}新建申请{% endif %}{% endblock %}
+
+{% block content %}
+  <div class="page-heading">
+    <div><h1>{% if draft %}编辑申请草稿{% else %}新建出入库申请{% endif %}</h1><p class="page-copy">一张申请可以选择多个物品；提交后立即预占，保存草稿不会占用库存。</p></div>
+  </div>
+  <div class="request-template-bar">
+    <form method="get"><label for="template-select">套用常用模板</label><select id="template-select" name="template" onchange="this.form.submit()"><option value="">请选择</option>{% for item in request_templates %}<option value="{{ item.id }}" {% if selected_template.id == item.id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></form>
+    {% if selected_template %}<form method="post" action="{% url 'request_template_delete' selected_template.id %}">{% csrf_token %}<button class="text-action danger" type="submit" onclick="return confirm('确认删除这个常用模板吗？')">删除当前模板</button></form>{% endif %}
+  </div>
+  <div class="request-workspace">
+    <section class="panel request-candidates">
+      <div class="panel-head"><h2>候选物品</h2><span>最多显示 24 条匹配结果</span></div>
+      <form id="candidate-search-form" class="request-search unified-item-search" method="get" role="search">
+        <input id="item-query" name="q" value="{{ query }}" autocomplete="off" placeholder="输入名称、编码、SN，或使用扫码枪" aria-label="搜索或扫描物品">
+        <select name="availability" aria-label="库存状态"><option value="">全部状态</option><option value="available" {% if availability == 'available' %}selected{% endif %}>仅显示可办理</option></select>
+        <input id="search-request-type" type="hidden" name="request_type" value="{{ selected_request_type }}">
+        <button id="item-search" class="button button-secondary" type="submit">搜索</button>
+        <button id="scan-start" class="button button-secondary" type="button">扫码</button>
+        <span id="scan-message" role="status"></span>
+      </form>
+      <div class="candidate-list">
+        {% if query %}
+          {% for asset in assets %}
+            <button class="candidate-row candidate-add" type="button" data-kind="asset" data-id="{{ asset.id }}" data-name="{{ asset.name }}" data-code="{{ asset.system_asset_no }}" data-meta="{{ asset.item_type.name }}{% if asset.manufacturer or asset.model %} · {{ asset.manufacturer }} {{ asset.model }}{% endif %}{% if asset.serial_number %} · SN {{ asset.serial_number }}{% endif %}" data-status-label="{{ asset.request_status_label }}" data-allowed-types="{{ asset.allowed_request_types }}">
+              <span class="candidate-main"><strong>{{ asset.name }}</strong><small>{{ asset.item_type.name }}{% if asset.manufacturer or asset.model %} · {{ asset.manufacturer }} {{ asset.model }}{% endif %}</small><small class="candidate-identifiers">仓库系统编号 {{ asset.system_asset_no }}{% if asset.asset_code %} · ERP 编码 {{ asset.asset_code }}{% endif %}{% if asset.serial_number %} · 生产厂家 SN {{ asset.serial_number }}{% endif %}</small>{% if user_is_operator %}<small>{{ asset.warehouse.name|default:'未分配仓库' }} / {{ asset.location.code|default:'未分配库位' }} · {{ asset.get_status_display }}{% if asset.current_holder %} · 持有人 {{ asset.current_holder.username }}{% elif asset.external_holder_name %} · 持有人 {{ asset.external_holder_name }}{% endif %}</small>{% endif %}</span>
+              <span class="availability {% if not asset.allowed_request_types %}unavailable{% endif %}">{% if asset.is_reserved %}已预约{% elif asset.status == 'in_stock' %}可申请{% elif asset.current_holder_id == request.user.id %}可归还{% else %}当前不可办理{% endif %}</span>
+            </button>
+          {% endfor %}
+          {% for stock_item in stock_items %}
+            <button class="candidate-row candidate-add" type="button" data-kind="stock" data-id="{{ stock_item.id }}" data-name="{{ stock_item.name }}" data-code="{{ stock_item.code }}" data-unit="{{ stock_item.unit }}" data-meta="{{ stock_item.item_type.name|default:'未分类' }} · {{ stock_item.unit }}" data-status-label="{{ stock_item.request_status_label }}" data-allowed-types="{{ stock_item.allowed_request_types }}">
+              <span class="candidate-main"><strong>{{ stock_item.name }}</strong><small>{{ stock_item.item_type.name|default:'未分类' }} · 单位 {{ stock_item.unit }}</small><small class="candidate-identifiers">物料编码 {{ stock_item.code }}{% if stock_item.supplier %} · 供应商 {{ stock_item.supplier }}{% endif %}</small>{% if user_is_operator %}<small>{{ stock_item.warehouse.name|default:'未分配仓库' }} / {{ stock_item.location.code|default:'未分配库位' }} · 实存 {{ stock_item.quantity }} · 已预约 {{ stock_item.reserved_quantity }} · 可申请 {{ stock_item.available_quantity }} {{ stock_item.unit }}</small>{% endif %}{% if stock_item.held_quantity %}<small>本人尚未归还 {{ stock_item.held_quantity }} {{ stock_item.unit }}</small>{% endif %}</span>
+              <span class="availability {% if not stock_item.allowed_request_types %}unavailable{% endif %}">{% if stock_item.available_quantity %}可申请{% elif stock_item.held_quantity %}可归还{% else %}已约完/缺货{% endif %}</span>
+            </button>
+          {% endfor %}
+          {% for unit in units %}
+            <button class="candidate-row candidate-add" type="button" data-kind="unit" data-id="{{ unit.id }}" data-name="{{ unit.name }}" data-code="{{ unit.unit_code|default:'未赋码' }}" data-meta="成品设备 · {{ unit.component_links.all|length }} 件组件" data-status-label="{{ unit.request_status_label }}" data-allowed-types="{{ unit.allowed_request_types }}">
+              <span class="candidate-main"><strong>{{ unit.name }}</strong><small>成品设备 · {{ unit.model|default:'—' }}</small><small class="candidate-identifiers">成品编码 {{ unit.unit_code|default:'未赋码' }}</small><small>{{ unit.component_links.all|length }} 件组件 · {{ unit.request_status_label }}</small></span>
+              <span class="availability {% if not unit.allowed_request_types %}unavailable{% endif %}">{% if unit.status == 'assembled' %}可出库{% elif unit.status == 'borrowed' and unit.allowed_request_types %}可归还{% else %}当前不可办理{% endif %}</span>
+            </button>
+          {% empty %}
+            {% if not assets and not stock_items %}<div class="empty-state">未找到匹配物品</div>{% endif %}
+          {% endfor %}
+        {% else %}<div class="empty-state">输入编码、中文名或序列号后显示候选物品</div>{% endif %}
+      </div>
+    </section>
+
+    <form id="request-form" class="panel request-form" method="post" data-offline-mode="draft" data-offline-actions="save_draft" data-offline-title="申请草稿" data-offline-auto-sync="true">
+      {% csrf_token %}
+      <input type="hidden" name="item_query" value="{{ query }}"><input type="hidden" name="availability" value="{{ availability }}">
+      <div class="panel-head"><h2>申请信息</h2><span>带 * 为必填</span></div>
+      <div class="form-grid request-form-grid request-type-row">
+        <div class="form-field full"><label for="request_type">申请类型 <span class="required">*</span></label><select id="request_type" name="request_type" required>{% for value, label in request_types %}<option value="{{ value }}" {% if selected_request_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+      </div>
+
+      <div class="selected-list-head"><strong>已选物品</strong><span id="selected-count">0 项</span></div>
+      <div id="selected-items" class="selected-items">
+        {% for asset in selected_assets %}
+          <div class="selected-line" data-kind="asset" data-id="{{ asset.id }}" data-status-label="{{ asset.request_status_label }}" data-allowed-types="{{ asset.allowed_request_types }}"><input type="hidden" name="asset_ids" value="{{ asset.id }}"><span><strong>{{ asset.name }}</strong><small>{{ asset.asset_code }} · {{ asset.item_type.name }} · 单件资产固定 1 件</small><small class="selected-eligibility"></small></span><span class="selected-line-side"><span class="tag neutral">1 件</span><button type="button" class="remove-selected" aria-label="移除 {{ asset.name }}">×</button></span></div>
+        {% endfor %}
+        {% for stock_item in selected_stock_items %}
+          <div class="selected-line" data-kind="stock" data-id="{{ stock_item.id }}" data-status-label="{{ stock_item.request_status_label }}" data-allowed-types="{{ stock_item.allowed_request_types }}"><input type="hidden" name="stock_item_ids" value="{{ stock_item.id }}"><span><strong>{{ stock_item.name }}</strong><small>{{ stock_item.code }} · {{ stock_item.item_type.name|default:'未分类' }}</small><small class="selected-eligibility"></small></span><span class="selected-line-side"><label>数量 <input class="selected-quantity" name="stock_quantity_{{ stock_item.id }}" type="number" min="1" value="{{ stock_item.selected_quantity }}" required> {{ stock_item.unit }}</label><button type="button" class="remove-selected" aria-label="移除 {{ stock_item.name }}">×</button></span></div>
+        {% endfor %}
+        {% for unit in selected_units %}
+          <div class="selected-line" data-kind="unit" data-id="{{ unit.id }}" data-status-label="{{ unit.request_status_label }}" data-allowed-types="{{ unit.allowed_request_types }}"><input type="hidden" name="unit_ids" value="{{ unit.id }}"><span><strong>{{ unit.name }}</strong><small>{{ unit.unit_code|default:'未赋码' }} · 成品设备 · {{ unit.component_links.all|length }} 件组件</small><small class="selected-eligibility"></small></span><span class="selected-line-side"><span class="tag neutral">整台</span><button type="button" class="remove-selected" aria-label="移除 {{ unit.name }}">×</button></span></div>
+        {% endfor %}
+        <div id="selection-empty" class="selection-empty">请从左侧加入至少一项物品。</div>
+      </div>
+      <div id="selection-warning" class="selection-warning" hidden>红色物品可以保存草稿，但提交前必须移除，或切换为可办理的申请类型。</div>
+
+      <div class="form-grid request-form-grid">
+        <div class="form-field" data-types="borrow,issue" data-required-types="borrow,issue"><label for="recipient_name">实际使用人/接收人 <span class="required">*</span></label><input id="recipient_name" name="recipient_name" value="{{ form_values.recipient_name }}" maxlength="120"></div>
+        <div class="form-field" data-types="borrow,issue" data-required-types="borrow,issue"><label for="recipient_phone">联系电话 <span class="required">*</span></label><input id="recipient_phone" name="recipient_phone" type="tel" value="{{ form_values.recipient_phone }}" maxlength="32"></div>
+        <div class="form-field" data-types="borrow,issue"><label for="customer_ref">客户资料</label><select id="customer_ref" name="customer_ref"><option value="">未选择客户资料</option>{% for customer in customers %}<option value="{{ customer.id }}" data-name="{{ customer.name }}" {% if form_values.customer_ref == customer.id|stringformat:'s' %}selected{% endif %}>{{ customer.name }}（{{ customer.code }}）</option>{% endfor %}</select></div>
+        <div class="form-field" data-types="borrow,issue"><label for="recipient_company">使用部门/单位</label><input id="recipient_company" name="recipient_company" value="{{ form_values.recipient_company }}" maxlength="120" placeholder="未建档时可手工填写"></div>
+        <div class="form-field" data-types="borrow,issue" data-required-types="borrow,issue"><label for="usage_location">使用地点 <span class="required">*</span></label><input id="usage_location" name="usage_location" value="{{ form_values.usage_location }}" maxlength="160"></div>
+        <div class="form-field"><label for="project_ref">项目资料</label><select id="project_ref" name="project_ref"><option value="">未选择项目资料</option>{% for project in projects %}<option value="{{ project.id }}" data-code="{{ project.code }}" data-customer="{{ project.customer_id|default:'' }}" {% if form_values.project_ref == project.id|stringformat:'s' %}selected{% endif %}>{{ project.name }}（{{ project.code }}）</option>{% endfor %}</select></div>
+        <div class="form-field"><label for="project_code">项目编号</label><input id="project_code" name="project_code" value="{{ form_values.project_code }}" maxlength="80" placeholder="未建档时可手工填写"></div>
+        <div class="form-field"><label for="work_order_ref">工单资料</label><select id="work_order_ref" name="work_order_ref"><option value="">未选择工单资料</option>{% for work_order in work_orders %}<option value="{{ work_order.id }}" data-code="{{ work_order.code }}" data-project="{{ work_order.project_id|default:'' }}" data-customer="{{ work_order.customer_id|default:'' }}" {% if form_values.work_order_ref == work_order.id|stringformat:'s' %}selected{% endif %}>{{ work_order.name }}（{{ work_order.code }}）</option>{% endfor %}</select></div>
+        <div class="form-field"><label for="work_order_no">工单编号</label><input id="work_order_no" name="work_order_no" value="{{ form_values.work_order_no }}" maxlength="80" placeholder="未建档时可手工填写"></div>
+        <div class="form-field"><label for="application_date">申请日期 <span class="required">*</span></label><input id="application_date" name="application_date" type="date" value="{{ default_application_date }}" required></div>
+        <div class="form-field" data-types="borrow" data-required-types="borrow"><label for="expected_return_date">预计归还日期 <span class="required">*</span></label><input id="expected_return_date" name="expected_return_date" type="date" value="{{ default_expected_return_date }}"></div>
+        <div class="form-field"><label for="designated_approver">指定审批人</label><select id="designated_approver" name="designated_approver"><option value="">由审批任务池处理</option>{% for approver in approver_choices %}<option value="{{ approver.id }}" {% if form_values.designated_approver == approver.id|stringformat:'s' %}selected{% endif %}>{{ approver.username }}</option>{% endfor %}</select></div>
+        <div class="form-field full"><label for="reason"><span data-reason-label>申请原因</span> <span class="required">*</span></label><textarea id="reason" name="reason" placeholder="例如：现场故障排查、项目交付、测试验证">{{ form_values.reason }}</textarea></div>
+      </div>
+      <div class="template-save-row"><input name="template_name" maxlength="80" placeholder="模板名称"><button class="button button-secondary" name="action" value="save_template" type="submit" formnovalidate>保存为常用模板</button></div>
+      <div class="form-actions"><a class="button button-secondary" href="{% url 'request_list' %}">取消</a><button class="button button-secondary" name="action" value="save_draft" type="submit" formnovalidate>保存草稿</button><button class="button button-primary" name="action" value="submit" type="submit">提交并预占</button></div>
+    </form>
+  </div>
+
+  <div id="continuous-scan-panel" class="continuous-scan-panel" hidden>
+    <video id="scan-video" playsinline muted></video>
+    <div class="scan-panel-actions"><span id="camera-scan-status">摄像头准备中</span><div class="scan-panel-controls"><button id="scan-torch" type="button" hidden>开启手电筒</button><button id="scan-switch" type="button">切换镜头</button><button id="scan-stop" type="button">停止扫码</button></div></div>
+    <div class="scan-session-results"><div class="scan-session-head"><strong>本次扫码结果</strong><span id="scan-result-count">已加入 0 项</span></div><div id="scan-result-list" class="scan-result-list"><div id="scan-result-empty" class="scan-result-empty">识别结果会逐条显示在这里</div></div></div>
+  </div>
+
+  <script src="{% static 'warehouse/vendor/zxing-browser-0.1.5.min.js' %}"></script>
+  <script src="{% static 'warehouse/scanner.js' %}"></script>
+  <script>
+    (() => {
+      const requestForm = document.getElementById('request-form');
+      const searchForm = document.getElementById('candidate-search-form');
+      const type = document.getElementById('request_type');
+      const searchType = document.getElementById('search-request-type');
+      const selectedItems = document.getElementById('selected-items');
+      const empty = document.getElementById('selection-empty');
+      const count = document.getElementById('selected-count');
+      const warning = document.getElementById('selection-warning');
+      const queryInput = document.getElementById('item-query');
+      const scanMessage = document.getElementById('scan-message');
+      const scanPanel = document.getElementById('continuous-scan-panel');
+      const scanVideo = document.getElementById('scan-video');
+      const cameraStatus = document.getElementById('camera-scan-status');
+      const torchButton = document.getElementById('scan-torch');
+      const scanResults = WarehouseScanner.createSessionResults({
+        list: document.getElementById('scan-result-list'),
+        counter: document.getElementById('scan-result-count'),
+        empty: document.getElementById('scan-result-empty'),
+      });
+      let scannerController = null;
+      let facingMode = 'environment';
+      let torchEnabled = false;
+      let lastScannedValue = '';
+      let lastScannedAt = 0;
+      const typeLabels = {borrow: '借用', return: '归还', issue: '领用'};
+      const allowed = (element) => (element.dataset.allowedTypes || '').split(',').filter(Boolean);
+      const selectedRows = () => [...selectedItems.querySelectorAll('.selected-line')];
+      const exists = (kind, id) => selectedRows().some((row) => row.dataset.kind === kind && row.dataset.id === id);
+
+      function refresh() {
+        const currentType = type.value;
+        searchType.value = currentType;
+        document.querySelectorAll('[data-types]').forEach((field) => {
+          const visible = field.dataset.types.split(',').includes(currentType);
+          field.hidden = !visible;
+          field.querySelectorAll('input, select, textarea').forEach((input) => {
+            input.disabled = !visible;
+            input.required = visible && (field.dataset.requiredTypes || '').split(',').includes(currentType);
+          });
+        });
+        document.querySelectorAll('.candidate-add').forEach((button) => {
+          const incompatible = !allowed(button).includes(currentType);
+          button.classList.toggle('incompatible', incompatible);
+          button.disabled = incompatible || exists(button.dataset.kind, button.dataset.id);
+        });
+        let hasInvalid = false;
+        selectedRows().forEach((row) => {
+          const invalid = !allowed(row).includes(currentType);
+          row.classList.toggle('invalid', invalid);
+          const statusLabel = row.dataset.statusLabel || '当前状态未知';
+          const eligibility = row.querySelector('.selected-eligibility');
+          if (eligibility) eligibility.textContent = invalid
+            ? `当前状态：${statusLabel} · 不能办理${typeLabels[currentType] || '当前申请'}`
+            : `当前状态：${statusLabel} · 可办理${typeLabels[currentType] || '当前申请'}`;
+          hasInvalid ||= invalid;
+        });
+        const total = selectedRows().length;
+        empty.hidden = total > 0;
+        count.textContent = `${total} 项`;
+        warning.hidden = !hasInvalid;
+        document.querySelector('[data-reason-label]').textContent = currentType === 'return' ? '归还说明' : '申请原因';
+      }
+
+      function addItem(button) {
+        const itemId = String(button.dataset.id || '');
+        if (!itemId || exists(button.dataset.kind, itemId)) return false;
+        const row = document.createElement('div');
+        row.className = 'selected-line';
+        row.dataset.kind = button.dataset.kind;
+        row.dataset.id = itemId;
+        row.dataset.statusLabel = button.dataset.statusLabel || '当前状态未知';
+        row.dataset.allowedTypes = button.dataset.allowedTypes;
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = {asset: 'asset_ids', stock: 'stock_item_ids', unit: 'unit_ids'}[button.dataset.kind] || 'asset_ids';
+        hidden.value = itemId;
+        hidden.setAttribute('value', itemId);
+        const info = document.createElement('span');
+        const name = document.createElement('strong');
+        name.textContent = button.dataset.name;
+        const meta = document.createElement('small');
+        meta.textContent = `${button.dataset.code} · ${button.dataset.meta}${button.dataset.kind === 'asset' ? ' · 单件资产固定 1 件' : ''}${button.dataset.kind === 'unit' ? ' · 整台办理' : ''}`;
+        const eligibility = document.createElement('small');
+        eligibility.className = 'selected-eligibility';
+        info.append(name, meta, eligibility);
+        const side = document.createElement('span');
+        side.className = 'selected-line-side';
+        if (button.dataset.kind === 'asset' || button.dataset.kind === 'unit') {
+          const fixed = document.createElement('span');
+          fixed.className = 'tag neutral';
+          fixed.textContent = button.dataset.kind === 'unit' ? '整台' : '1 件';
+          side.append(fixed);
+        } else {
+          const label = document.createElement('label');
+          label.append('数量 ');
+          const quantity = document.createElement('input');
+          quantity.className = 'selected-quantity';
+          quantity.name = `stock_quantity_${button.dataset.id}`;
+          quantity.type = 'number';
+          quantity.min = '1';
+          quantity.value = '1';
+          quantity.required = true;
+          label.append(quantity, ` ${button.dataset.unit}`);
+          side.append(label);
+        }
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'remove-selected';
+        remove.setAttribute('aria-label', `移除 ${button.dataset.name}`);
+        remove.textContent = '×';
+        side.append(remove);
+        row.append(hidden, info, side);
+        selectedItems.insertBefore(row, empty);
+        refresh();
+        return true;
+      }
+
+      function addPayload(item) {
+        const source = document.createElement('button');
+        source.dataset.kind = item.kind;
+        source.dataset.id = item.id;
+        source.dataset.name = item.name;
+        source.dataset.code = item.code;
+        source.dataset.unit = item.unit || '件';
+        source.dataset.meta = item.meta;
+        source.dataset.statusLabel = item.status_label || '当前状态未知';
+        source.dataset.allowedTypes = item.allowed_types;
+        return addItem(source);
+      }
+
+      async function scanAndAdd(value, quietFailure = false) {
+        const normalized = value.trim();
+        if (!normalized) return {state: 'error', message: '请输入扫码内容。'};
+        scanMessage.textContent = '正在识别...';
+        const url = new URL('{% url "request_candidate_scan" %}', window.location.origin);
+        url.searchParams.set('value', normalized);
+        url.searchParams.set('request_type', type.value);
+        try {
+          const response = await fetch(url, {headers: {'Accept': 'application/json'}});
+          const result = await response.json();
+          if (response.status === 409 && result.item) {
+            const added = addPayload(result.item);
+            const state = added ? 'invalid' : 'existing';
+            const message = added ? result.message : `已在清单中；${result.message}`;
+            scanMessage.textContent = added
+              ? `已加入待修正：${result.item.name}。${result.message}`
+              : `${result.item.name} 已在清单中。${result.message}`;
+            queryInput.value = '';
+            return {state, item: result.item, message};
+          }
+          if (!response.ok || !result.ok) throw new Error(result.message || '扫码内容无法加入。');
+          const added = addPayload(result.item);
+          const state = added ? 'added' : 'existing';
+          const message = added ? '已加入申请清单' : '已在申请清单中';
+          scanMessage.textContent = added ? `已加入：${result.item.name}` : `${result.item.name} 已在清单中`;
+          queryInput.value = '';
+          return {state, item: result.item, message};
+        } catch (error) {
+          if (!quietFailure) scanMessage.textContent = error.message;
+          return {state: 'error', message: error.message};
+        }
+      }
+
+      function stopScan(showSummary = false) {
+        if (scannerController) scannerController.stop();
+        scannerController = null;
+        torchEnabled = false;
+        torchButton.hidden = true;
+        torchButton.textContent = '开启手电筒';
+        scanPanel.hidden = true;
+        if (showSummary) {
+          const addedCount = scanResults.getAddedCount();
+          scanMessage.textContent = addedCount
+            ? `扫码已停止，本次已加入 ${addedCount} 项，已保存在下方“已选物品”中。`
+            : '扫码已停止，本次没有新增物品。';
+          if (addedCount) window.requestAnimationFrame(() => selectedItems.scrollIntoView({behavior: 'smooth', block: 'center'}));
+        }
+      }
+
+      async function startScan(resetResults = false) {
+        stopScan(false);
+        if (resetResults) scanResults.reset();
+        try {
+          scanPanel.hidden = false;
+          cameraStatus.textContent = '正在启动摄像头';
+          scannerController = await WarehouseScanner.start({
+            video: scanVideo,
+            facingMode,
+            onStatus: (message) => { cameraStatus.textContent = message; },
+            onResult: async (value) => {
+              const now = Date.now();
+              if (value === lastScannedValue && now - lastScannedAt <= 1500) return;
+              lastScannedValue = value;
+              lastScannedAt = now;
+              const outcome = await scanAndAdd(value);
+              scanResults.record(value, outcome);
+              if (outcome.state === 'added') await WarehouseScanner.feedback();
+              cameraStatus.textContent = outcome.state === 'added'
+                ? `已加入：${outcome.item.name}`
+                : outcome.state === 'invalid' ? `已加入待修正：${outcome.item.name}`
+                  : outcome.state === 'existing' ? `已存在：${outcome.item.name}` : `未加入：${value}`;
+            },
+          });
+          torchButton.hidden = !scannerController.torchSupported;
+        } catch (error) {
+          stopScan(false);
+          scanMessage.textContent = WarehouseScanner.readableError(error);
+        }
+      }
+
+      document.querySelectorAll('.candidate-add').forEach((button) => button.addEventListener('click', () => addItem(button)));
+      selectedItems.addEventListener('click', (event) => {
+        const remove = event.target.closest('.remove-selected');
+        if (!remove) return;
+        remove.closest('.selected-line').remove();
+        refresh();
+      });
+      type.addEventListener('change', refresh);
+      queryInput.addEventListener('keydown', async (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        const exactMatch = await scanAndAdd(queryInput.value, true);
+        if (exactMatch.state === 'error') searchForm.requestSubmit(document.getElementById('item-search'));
+      });
+      document.getElementById('scan-start').addEventListener('click', () => startScan(true));
+      document.getElementById('scan-stop').addEventListener('click', () => stopScan(true));
+      document.getElementById('scan-switch').addEventListener('click', async () => {
+        facingMode = facingMode === 'environment' ? 'user' : 'environment';
+        await startScan(false);
+      });
+      torchButton.addEventListener('click', async () => {
+        try {
+          torchEnabled = !torchEnabled;
+          await scannerController.setTorch(torchEnabled);
+          torchButton.textContent = torchEnabled ? '关闭手电筒' : '开启手电筒';
+        } catch (error) {
+          torchEnabled = false;
+          scanMessage.textContent = WarehouseScanner.readableError(error);
+        }
+      });
+      searchForm.addEventListener('submit', () => {
+        searchForm.querySelectorAll('.preserved-selection').forEach((input) => input.remove());
+        selectedRows().forEach((row) => {
+          row.querySelectorAll('input').forEach((source) => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = source.name;
+            input.value = source.value;
+            input.className = 'preserved-selection';
+            searchForm.append(input);
+          });
+        });
+      });
+      requestForm.addEventListener('submit', (event) => {
+        refresh();
+        const action = event.submitter?.value || 'submit';
+        if (action === 'submit' && (!selectedRows().length || selectedRows().some((row) => row.classList.contains('invalid')))) {
+          event.preventDefault();
+          warning.hidden = false;
+        }
+      });
+      window.addEventListener('pagehide', () => stopScan(false));
+      refresh();
+    })();
+  </script>
+{% endblock %}

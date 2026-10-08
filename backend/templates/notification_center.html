@@ -1,0 +1,21 @@
+{% extends "web_base.html" %}
+
+{% block title %}通知中心 - 售后仓库管理系统{% endblock %}
+{% block crumb %}通知中心{% endblock %}
+
+{% block content %}
+  <div class="page-heading">
+    <div><h1>通知中心</h1><p class="page-copy">未读 {{ unread_count }} 条</p></div>
+    {% if unread_count %}<form method="post">{% csrf_token %}<button class="button button-secondary" type="submit">全部标记为已读</button></form>{% endif %}
+  </div>
+  <section class="notification-list">
+    {% for notice in notifications %}
+      <a class="notification-item {% if notice.is_read %}is-read{% else %}is-unread{% endif %}" href="{% url 'notification_open' notice.id %}">
+        <div><h2>{{ notice.title }}</h2><p>{{ notice.content }}</p><span>{{ notice.created_at|date:'Y-m-d H:i' }}</span></div>
+        <span class="tag {{ notice.level }}">{% if notice.is_read %}已读{% else %}未读{% endif %}</span>
+      </a>
+    {% empty %}
+      <div class="empty-state">暂无通知</div>
+    {% endfor %}
+  </section>
+{% endblock %}

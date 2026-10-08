@@ -1,0 +1,11 @@
+[Unit]
+Description=Expire pending warehouse inventory reservations hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5m
+Unit=after-sales-warehouse-reservation-expiry.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,9 @@
+.unread-label { color: #176b4d; font-size: 24rpx; }
+.notification-card { padding: 26rpx; }
+.notification-card.unread { border-left: 6rpx solid #176b4d; }
+.notification-head { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
+.notification-title { color: #17201c; font-size: 29rpx; font-weight: 700; }
+.unread-dot { width: 14rpx; height: 14rpx; background: #d92d20; border-radius: 50%; }
+.notification-content { margin-top: 16rpx; color: #3f4b45; line-height: 1.6; }
+.notification-time { margin-top: 16rpx; color: #8a9690; font-size: 22rpx; }
+.go-detail { margin-top: 15rpx; color: #176b4d; font-size: 23rpx; }

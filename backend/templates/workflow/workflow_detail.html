@@ -1,0 +1,58 @@
+{% extends "web_base.html" %}
+
+{% block title %}出入库申请 - 售后仓库管理系统{% endblock %}
+{% block crumb %}出入库申请{% endblock %}
+
+{% block content %}
+  <div class="page-heading">
+    <div>
+      <h1>{% if workflow_request.is_quick_process %}快速出入库单{% else %}出入库申请{% endif %}</h1>
+      <p class="page-copy"><span class="code">{{ workflow_request.request_no }}</span>{% if workflow_request.inventory_no %} · <span class="code">{{ workflow_request.inventory_no }}</span>{% endif %} · {{ workflow_request.get_request_type_display }} · {{ workflow_request.get_status_display }} · 申请日期 {{ workflow_request.application_date|date:'Y-m-d' }}</p>
+    </div>
+    <a class="button button-secondary" href="{% if user_is_operator %}{% url 'approval_queue' %}{% else %}{% url 'request_list' %}{% endif %}">返回列表</a>
+  </div>
+
+  <div class="workflow-grid">
+    <section class="panel">
+      <div class="panel-head"><h2>{% if workflow_request.is_quick_process %}处理信息{% else %}申请信息{% endif %}</h2><span class="tag neutral">{{ workflow_request.get_status_display }}</span></div>
+      <dl class="detail-list">
+        <div><dt>{% if workflow_request.is_quick_process %}操作人{% else %}申请人{% endif %}</dt><dd>{{ workflow_request.applicant.username|default:'未指定' }}</dd></div>
+        <div><dt>申请类型</dt><dd>{{ workflow_request.get_request_type_display }}</dd></div>
+        <div><dt>申请日期</dt><dd>{{ workflow_request.application_date|date:'Y-m-d' }}</dd></div>
+        <div><dt>出入库日期</dt><dd>{{ workflow_request.transaction_date|date:'Y-m-d' }}</dd></div>
+        <div><dt>出入库单号</dt><dd class="code">{{ workflow_request.inventory_no|default:'待实际执行后生成' }}</dd></div>
+        <div><dt>关联申请单</dt><dd>{% if workflow_request.is_quick_process %}无（快速出入库登记）{% else %}<a class="code" href="{% url 'workflow_detail' workflow_request.id %}">{{ workflow_request.request_no }}</a>{% endif %}</dd></div>
+        <div><dt>实际使用人/接收人</dt><dd>{{ workflow_request.recipient_name|default:'未填写' }}</dd></div>
+        <div><dt>联系电话</dt><dd>{{ workflow_request.recipient_phone|default:'未填写' }}</dd></div>
+        {% if workflow_request.recipient_company %}<div><dt>使用部门/单位</dt><dd>{{ workflow_request.recipient_company }}</dd></div>{% endif %}
+        {% if workflow_request.usage_location %}<div><dt>使用地点</dt><dd>{{ workflow_request.usage_location }}</dd></div>{% endif %}
+        {% if workflow_request.project_code %}<div><dt>项目编号</dt><dd>{{ workflow_request.project_code }}</dd></div>{% endif %}
+        {% if workflow_request.work_order_no %}<div><dt>工单编号</dt><dd>{{ workflow_request.work_order_no }}</dd></div>{% endif %}
+        {% if workflow_request.is_quick_process %}<div><dt>沟通来源</dt><dd>{{ workflow_request.contact_source }}</dd></div>{% endif %}
+        {% if workflow_request.expected_return_date %}<div><dt>预计归还日</dt><dd>{{ workflow_request.expected_return_date|date:'Y-m-d' }}</dd></div>{% endif %}
+        {% if workflow_request.designated_approver %}<div><dt>指定审批人</dt><dd>{{ workflow_request.designated_approver.username }}</dd></div>{% endif %}
+        <div class="wide"><dt>{% if workflow_request.is_quick_process %}处理原因{% else %}申请原因{% endif %}</dt><dd>{{ workflow_request.reason }}</dd></div>
+      </dl>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>审批信息</h2></div>
+      {% if approval_task %}<dl class="detail-list"><div><dt>审批状态</dt><dd>{{ approval_task.get_status_display }}</dd></div><div><dt>审批人</dt><dd>{{ approval_task.approver.username|default:'待当前处理人操作后自动记录' }}</dd></div>{% if approval_task.assigned_to %}<div><dt>任务指定给</dt><dd>{{ approval_task.assigned_to.username }}</dd></div>{% endif %}{% if approval_task.comment %}<div class="wide"><dt>审批备注</dt><dd>{{ approval_task.comment }}</dd></div>{% endif %}</dl>{% else %}<div class="empty-state">快速出入库无需审批。</div>{% endif %}
+    </section>
+  </div>
+
+  <section class="panel" style="margin-top:14px">
+    <div class="panel-head"><h2>本申请包含的物品</h2><span>审批和执行时可据此定位实物</span></div>
+    <div class="table-scroll"><table class="data-table"><thead><tr><th>物品</th><th>仓库系统编号 / 识别编码</th><th>物品类型</th>{% if user_is_operator %}<th>当前仓库 / 库位</th><th>当前状态 / 可用量</th>{% endif %}<th>申请数量</th><th>备注</th></tr></thead><tbody>{% for line in workflow_request.lines.all %}<tr><td>{% if line.asset %}{{ line.asset.name }}{% else %}{{ line.stock_item.name }}{% endif %}</td><td class="code">{% if line.asset %}{{ line.asset.system_asset_no }}{% if line.asset.asset_code %}<div class="queue-meta">ERP：{{ line.asset.asset_code }}</div>{% endif %}{% else %}{{ line.stock_item.code }}{% endif %}</td><td>{% if line.asset %}{{ line.asset.item_type.name }}{% else %}{{ line.stock_item.item_type.name|default:'未分类' }}{% endif %}</td>{% if user_is_operator %}<td>{% if line.asset %}{{ line.asset.warehouse.name|default:'未分配仓库' }} / {{ line.asset.location.code|default:'未分配库位' }}{% else %}{{ line.stock_item.warehouse.name|default:'未分配仓库' }} / {{ line.stock_item.location.code|default:'未分配库位' }}{% endif %}</td><td>{% if line.asset %}{{ line.asset.get_status_display }}{% else %}库存 {{ line.stock_item.quantity }} {{ line.stock_item.unit }}{% endif %}</td>{% endif %}<td>{{ line.quantity }}</td><td>{{ line.note|default:'-' }}</td></tr>{% endfor %}</tbody></table></div>
+  </section>
+
+  {% if can_approve or can_process or can_withdraw or can_hide %}<section class="workflow-actions">
+    {% if can_approve %}<form method="post" class="action-form approve-form">{% csrf_token %}<input type="hidden" name="action" value="approve"><span><strong>当前审批人：{{ request.user.username }}</strong><small>系统将在同意后自动记录当前登录账号。</small></span><textarea name="comment" placeholder="审批备注（可选）"></textarea><button class="button button-primary" type="submit">同意</button></form><form method="post" class="action-form reject-form">{% csrf_token %}<input type="hidden" name="action" value="reject"><span><strong>拒绝申请</strong><small>必须填写拒绝原因，申请人会收到通知。</small></span><textarea name="comment" required placeholder="拒绝原因 *"></textarea><button class="button button-danger" type="submit">拒绝</button></form>{% endif %}
+    {% if can_process %}<form method="post" class="action-form process-form">{% csrf_token %}<input type="hidden" name="action" value="process"><span><strong>执行出入库</strong><small>系统会更新资产/数量库存并写入不可修改的库存动作台账。</small></span><div class="form-field"><label for="transaction-date">出入库日期 <span class="required">*</span></label><input id="transaction-date" name="transaction_date" type="date" value="{{ workflow_request.transaction_date|date:'Y-m-d' }}" required></div>{% if workflow_request.request_type == 'return' and workflow_request.lines.all %}<div class="form-field full"><label>归还验收（勾选实际收回的物品，未勾选记为差异并保持借出）</label><div class="compact-choice-list">{% for line in workflow_request.lines.all %}{% if line.asset %}<label class="compact-choice"><input type="checkbox" name="return_received_lines" value="{{ line.id }}" checked><span><strong>{{ line.asset.name }}</strong><small>{{ line.asset.asset_code }} · {{ line.asset.get_status_display }}</small></span></label>{% endif %}{% endfor %}</div></div>{% endif %}<textarea name="comment" placeholder="执行备注（可选）"></textarea><button class="button button-primary" type="submit">确认执行</button></form>{% endif %}
+    {% if can_withdraw %}<form method="post" class="action-form">{% csrf_token %}<input type="hidden" name="action" value="withdraw"><span><strong>撤回申请</strong><small>仅待审批状态可撤回，仓库人员会收到通知。</small></span><textarea name="comment" placeholder="撤回说明（可选）"></textarea><button class="button button-secondary" type="submit" onclick="return confirm('确认撤回该申请吗？')">撤回</button></form>{% endif %}
+    {% if can_hide %}<form method="post" class="action-form">{% csrf_token %}<input type="hidden" name="action" value="hide"><span><strong>删除个人记录</strong><small>仅从“我的申请”中移除，管理员审计记录将保留。</small></span><span></span><button class="button button-danger" type="submit" onclick="return confirm('确认删除个人申请记录吗？')">删除记录</button></form>{% endif %}
+  </section>{% endif %}
+
+  {% if workflow_request.inventory_transactions.all %}<section class="panel" style="margin-top:14px"><div class="panel-head"><h2>出入库明细</h2><span>关联申请单：<span class="code">{{ workflow_request.request_no }}</span></span></div><div class="table-scroll"><table class="data-table"><thead><tr><th>出入库单号</th><th>出入库日期</th><th>处理类型</th><th>物品</th><th>数量</th><th>执行人</th><th>系统操作时间</th></tr></thead><tbody>{% for transaction in workflow_request.inventory_transactions.all %}<tr><td class="code">{{ workflow_request.inventory_no|default:'-' }}</td><td>{{ transaction.business_date|date:'Y-m-d' }}</td><td>{{ transaction.get_action_display }}</td><td>{% if transaction.asset %}{{ transaction.asset.name }} / {{ transaction.asset.asset_code }}{% else %}{{ transaction.stock_item.name }} / {{ transaction.stock_item.code }}{% endif %}</td><td>{{ transaction.quantity }}</td><td>{{ transaction.actor.username|default:'-' }}</td><td>{{ transaction.created_at|date:'Y-m-d H:i:s' }}</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
+
+  <section class="panel" style="margin-top:14px"><div class="panel-head"><h2>操作记录</h2></div><div class="task-list">{% for log in workflow_request.approval_logs.all %}<div class="task-row"><span><strong>{{ log.action_label }}</strong><small>{{ log.actor.username|default:'系统' }} · {{ log.created_at|date:'Y-m-d H:i' }}{% if log.comment %} · {{ log.comment }}{% endif %}</small></span></div>{% empty %}<div class="empty-state">暂无操作记录</div>{% endfor %}</div></section>
+{% endblock %}

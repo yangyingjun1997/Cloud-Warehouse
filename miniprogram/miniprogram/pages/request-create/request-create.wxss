@@ -1,0 +1,17 @@
+.picker-row { display: flex; align-items: center; justify-content: space-between; min-height: 78rpx; padding: 0 20rpx; color: #17201c; background: #fafbfa; border: 1rpx solid #d9e2dd; border-radius: 8rpx; }
+.picker-row text { color: #176b4d; font-size: 23rpx; }
+.search-row { display: flex; gap: 14rpx; }
+.search-input { flex: 1; min-width: 0; height: 76rpx; padding: 0 16rpx; background: #fafbfa; border: 1rpx solid #d9e2dd; border-radius: 8rpx; font-size: 23rpx; }
+.search-button { width: 112rpx; color: #fff; background: #176b4d; font-size: 23rpx; line-height: 76rpx; }
+.tool-row { display: flex; align-items: center; justify-content: space-between; margin-top: 18rpx; }
+.scan-button { width: 180rpx; color: #176b4d; background: #e8f4ed; font-size: 24rpx; line-height: 70rpx; }
+.filter-toggle { display: flex; align-items: center; gap: 9rpx; color: #3f4b45; font-size: 24rpx; }
+.check { display: flex; align-items: center; justify-content: center; width: 30rpx; height: 30rpx; color: #fff; border: 2rpx solid #9bac9f; border-radius: 5rpx; font-size: 21rpx; }
+.check.checked { background: #176b4d; border-color: #176b4d; }
+.selected-asset, .candidate { display: flex; align-items: center; justify-content: space-between; gap: 14rpx; padding: 20rpx 0; border-top: 1rpx solid #eef1ef; }
+.selected-asset { margin-top: 20rpx; padding: 20rpx; background: #edf8f1; border: 1rpx solid #bde0c9; border-radius: 8rpx; }
+.selected-name, .candidate-name { color: #17201c; font-size: 27rpx; font-weight: 700; }
+.candidate.unavailable { opacity: 0.52; }
+.trace-fields { margin-top: 28rpx; padding-top: 24rpx; border-top: 1rpx solid #eef1ef; }
+.trace-title { color: #176b4d; font-size: 27rpx; font-weight: 700; }
+.submit-button { margin-top: 32rpx; }

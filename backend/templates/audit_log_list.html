@@ -1,0 +1,37 @@
+{% extends "web_base.html" %}
+{% block title %}审计日志 - 售后仓库管理系统{% endblock %}
+{% block crumb %}系统设置 / 审计日志{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><p class="eyebrow">只读查询</p><h1>审计日志</h1><p class="page-copy">查看账号、单据和库存操作的留痕。日志只允许新增，不能在页面修改或删除。</p></div>
+  <span class="tag neutral">当前筛选 {{ audit_logs.paginator.count }} 条</span>
+</section>
+
+<section class="panel management-filter">
+  <form method="get" class="management-filter-form">
+    <div class="form-field"><label for="audit-query">关键词</label><input id="audit-query" name="q" value="{{ query }}" placeholder="摘要、动作、对象或操作人"></div>
+    <div class="form-field"><label for="audit-actor">操作人</label><select id="audit-actor" name="actor"><option value="">全部操作人</option>{% for actor in actors %}<option value="{{ actor.username }}" {% if selected_actor == actor.username %}selected{% endif %}>{{ actor.username }}</option>{% endfor %}</select></div>
+    <div class="form-field"><label for="audit-action">操作动作</label><select id="audit-action" name="action"><option value="">全部动作</option>{% for value in actions %}<option value="{{ value }}" {% if selected_action == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+    <div class="form-field"><label for="audit-target-model">业务对象</label><select id="audit-target-model" name="target_model"><option value="">全部对象</option>{% for value in target_models %}<option value="{{ value }}" {% if selected_target_model == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+    <div class="form-field"><label for="audit-target-id">对象编号</label><input id="audit-target-id" name="target_id" value="{{ target_id }}" placeholder="UUID"></div>
+    <div class="form-field"><label for="audit-start-date">开始日期</label><input id="audit-start-date" type="date" name="start_date" value="{{ start_date }}"></div>
+    <div class="form-field"><label for="audit-end-date">结束日期</label><input id="audit-end-date" type="date" name="end_date" value="{{ end_date }}"></div>
+    <button class="button button-secondary" type="submit">筛选</button>
+  </form>
+</section>
+
+<section class="panel table-panel">
+  <div class="panel-head"><h2>操作记录</h2><span>第 {{ audit_logs.number }} / {{ audit_logs.paginator.num_pages }} 页</span></div>
+  <div class="table-scroll"><table class="data-table"><thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>业务对象</th><th>对象编号</th><th>摘要</th><th>详情</th></tr></thead><tbody>
+    {% for log in audit_logs %}
+      <tr>
+        <td>{{ log.created_at|date:'Y-m-d H:i:s' }}</td><td>{{ log.actor.username|default:'系统' }}</td><td><span class="tag neutral">{{ log.action }}</span></td><td>{{ log.target_model }}</td><td class="code">{{ log.target_id|default:'-' }}</td><td>{{ log.summary|default:'-' }}</td>
+        <td><details><summary>查看变更</summary><div class="audit-detail"><strong>变更前</strong><pre>{{ log.before_json }}</pre><strong>变更后</strong><pre>{{ log.after_json }}</pre></div></details></td>
+      </tr>
+    {% empty %}<tr><td colspan="7"><div class="empty-state">没有匹配的审计记录。</div></td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if audit_logs.paginator.num_pages > 1 %}
+    <div class="form-actions"><a class="button button-secondary" {% if audit_logs.has_previous %}href="?q={{ query|urlencode }}&actor={{ selected_actor|urlencode }}&action={{ selected_action|urlencode }}&target_model={{ selected_target_model|urlencode }}&target_id={{ target_id|urlencode }}&start_date={{ start_date }}&end_date={{ end_date }}&page={{ audit_logs.previous_page_number }}"{% else %}aria-disabled="true"{% endif %}>上一页</a><span>第 {{ audit_logs.number }} / {{ audit_logs.paginator.num_pages }} 页</span><a class="button button-secondary" {% if audit_logs.has_next %}href="?q={{ query|urlencode }}&actor={{ selected_actor|urlencode }}&action={{ selected_action|urlencode }}&target_model={{ selected_target_model|urlencode }}&target_id={{ target_id|urlencode }}&start_date={{ start_date }}&end_date={{ end_date }}&page={{ audit_logs.next_page_number }}"{% else %}aria-disabled="true"{% endif %}>下一页</a></div>
+  {% endif %}
+</section>
+{% endblock %}

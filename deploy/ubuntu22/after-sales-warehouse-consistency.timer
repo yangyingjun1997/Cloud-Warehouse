@@ -1,0 +1,11 @@
+[Unit]
+Description=Run After-sales Warehouse data consistency check every day
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=5min
+Persistent=true
+Unit=after-sales-warehouse-consistency.service
+
+[Install]
+WantedBy=timers.target

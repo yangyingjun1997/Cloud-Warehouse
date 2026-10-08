@@ -1,0 +1,49 @@
+# ---- 数据库与业务数据（绝不入库） ----
+backend/db.sqlite3
+backend/backups/
+backend/media/
+backend/staticfiles/
+
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# ---- 虚拟环境 ----
+.venv/
+.venv*/
+venv/
+
+# ---- 前端构建 ----
+node_modules/
+dist/
+
+# ---- 环境变量与密钥 ----
+.env
+.env.*
+!.env.example
+
+# ---- 部署产物 ----
+after-sales-warehouse-*.zip
+*.sha256
+
+# ---- 工具运行产物 ----
+artifacts/
+
+# ---- IDE / 系统 ----
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- 项目内部协作数据（非代码资产） ----
+.codebuddy/
+
+# ---- 业务数据文件（真实客户/库存/供应商数据，绝不入库） ----
+import_output/
+*清单.txt
+*明细*.xlsx
+仓库导入模板.xlsx

@@ -1,0 +1,28 @@
+{% extends "web_base.html" %}
+{% block title %}补货建议 - 售后仓库管理系统{% endblock %}
+{% block crumb %}仓库管理 / 补货建议{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><h1>补货建议</h1><p class="page-copy">根据当前可用量与最低库存提醒值生成。建议仅供仓管确认，不会自动改库存或生成采购订单。</p></div>
+  <div class="page-actions"><a class="button button-primary" href="{% url 'purchase_draft_list' %}">采购草稿</a><a class="button button-secondary" href="?q={{ query|urlencode }}&download=csv">导出补货建议</a><a class="button button-secondary" href="{% url 'warehouse_management' %}">返回仓库管理</a></div>
+</div>
+<section class="panel management-filter">
+  <form method="get" class="search-inline"><div class="form-field"><label for="replenishment-query">筛选</label><input id="replenishment-query" name="q" value="{{ query }}" placeholder="物品名称、编码、类型或供应商"></div><button class="button button-secondary" type="submit">筛选</button></form>
+</section>
+<section class="metric-grid">
+  <article class="metric"><div class="metric-label">待补货项目</div><div class="metric-value">{{ rows|length }}</div><div class="metric-note">按物品类型或耗材配件计算</div></article>
+  <article class="metric"><div class="metric-label">建议补货总量</div><div class="metric-value">{{ total_suggested_quantity }}</div><div class="metric-note">不同单位仅做数量汇总参考</div></article>
+  <article class="metric"><div class="metric-label">耗材参考金额</div><div class="metric-value">{{ reference_cost_total|floatformat:2 }}</div><div class="metric-note">仅按已填写单价估算，单位：元</div></article>
+</section>
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="action" value="create_purchase_draft">
+<section class="panel table-panel standalone-table">
+  <div class="panel-head"><h2>补货清单</h2><span>{{ rows|length }} 项</span></div>
+  <div class="table-scroll"><table class="data-table"><thead><tr><th>选择</th><th>物品</th><th>管理方式</th><th>当前可用</th><th>提醒值</th><th>建议补货</th><th>实际采购数量</th><th>供应商</th><th>仓库 / 库位</th><th>参考金额</th></tr></thead><tbody>
+  {% for row in rows %}<tr><td><input type="checkbox" name="selected_item" value="{{ row.source_type }}:{{ row.source_id }}" aria-label="选择 {{ row.name }}"></td><td><strong>{{ row.name }}</strong><div class="queue-meta code">{{ row.code }}</div></td><td>{{ row.kind }}</td><td>{{ row.current }} {{ row.unit }}</td><td>{{ row.safety_stock }} {{ row.unit }}</td><td><span class="tag pending">补 {{ row.suggested_quantity }} {{ row.unit }}</span></td><td><input type="number" name="purchase_quantity_{{ row.source_type }}_{{ row.source_id }}" value="{{ row.suggested_quantity }}" min="1" step="1" class="table-number-input" aria-label="{{ row.name }}实际采购数量"></td><td>{{ row.supplier }}</td><td>{% for location in row.locations %}<div>{{ location }}</div>{% endfor %}</td><td>{% if row.reference_cost is not None %}{{ row.reference_cost|floatformat:2 }} 元{% else %}<span class="queue-meta">{{ row.reference_cost_label }}</span>{% endif %}</td></tr>{% empty %}<tr><td colspan="10"><div class="empty-state">当前没有需要补货的物品</div></td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% if rows %}<section class="panel form-panel"><div class="form-grid"><div class="form-field form-field-wide"><label for="purchase-reason">采购原因</label><textarea id="purchase-reason" name="reason" rows="2" placeholder="例如：补足安全库存，保障下月维修任务"></textarea></div><div class="form-field form-field-wide"><label for="purchase-note">补充说明</label><textarea id="purchase-note" name="note" rows="2" placeholder="可填写项目、工单、交期等信息"></textarea></div></div><div class="page-actions"><button class="button button-primary" type="submit">生成采购草稿</button></div></section>{% endif %}
+</form>
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "web_base.html" %}
+
+{% block title %}{{ section_title }} - 仓库管理{% endblock %}
+{% block crumb %}仓库管理 / {{ section_title }}{% endblock %}
+
+{% block content %}
+  <div class="page-heading"><div><h1>{{ section_title }}</h1><p class="page-copy">基础资料由仓库管理员维护。修改后会影响后续资产录入和库存定位。</p></div><div class="page-actions"><a class="button button-secondary" href="{% url 'warehouse_management' %}">返回仓库管理</a><a class="button button-primary" href="{% url 'warehouse_setup_create' section %}">新建{{ section_title }}</a></div></div>
+  <nav class="management-tabs" aria-label="基础资料分类">{% for key, title in setup_sections %}<a class="management-tab {% if section == key %}active{% endif %}" href="{% url 'warehouse_setup' key %}">{{ title }}</a>{% endfor %}</nav>
+  <section class="panel" style="margin-top:14px"><div class="table-scroll"><table class="data-table">
+    <thead>
+      {% if section == 'warehouses' %}<tr><th>仓库名称</th><th>仓库编码</th><th>位置说明</th><th>状态</th><th></th></tr>
+      {% elif section == 'locations' %}<tr><th>所属仓库</th><th>库位名称</th><th>库位编码</th><th>库位说明</th><th></th></tr>
+      {% elif section == 'categories' %}<tr><th>分类名称</th><th>分类编码</th><th></th></tr>
+      {% elif section == 'item-types' %}<tr><th>物品类型</th><th>类型编码</th><th>管理方式</th><th>单位</th><th>安全库存</th><th></th></tr>
+      {% elif section == 'projects' %}<tr><th>项目名称</th><th>项目编号</th><th>客户</th><th>状态</th><th></th></tr>
+      {% elif section == 'work-orders' %}<tr><th>工单名称</th><th>工单编号</th><th>项目</th><th>客户</th><th>状态</th><th></th></tr>
+      {% else %}<tr><th>名称</th><th>编码</th><th>联系人</th><th>联系电话</th><th>状态</th><th></th></tr>{% endif %}
+    </thead>
+    <tbody>{% for entry in entries %}
+      {% if section == 'warehouses' %}<tr><td><strong>{{ entry.name }}</strong></td><td class="code">{{ entry.code }}</td><td>{{ entry.location_desc|default:'-' }}</td><td>{% if entry.is_active %}<span class="tag in-stock">启用</span>{% else %}<span class="tag neutral">停用</span>{% endif %}</td><td><a class="table-action" href="{% url 'warehouse_setup_edit' section entry.id %}">编辑</a></td></tr>
+      {% elif section == 'locations' %}<tr><td>{{ entry.warehouse.name }}</td><td><strong>{{ entry.name }}</strong></td><td class="code">{{ entry.code }}</td><td>{{ entry.description|default:'-' }}</td><td><a class="table-action" href="{% url 'warehouse_setup_edit' section entry.id %}">编辑</a></td></tr>
+      {% elif section == 'categories' %}<tr><td><strong>{{ entry.name }}</strong></td><td class="code">{{ entry.code }}</td><td><a class="table-action" href="{% url 'warehouse_setup_edit' section entry.id %}">编辑</a></td></tr>
+      {% elif section == 'item-types' %}<tr><td><strong>{{ entry.name }}</strong></td><td class="code">{{ entry.code }}</td><td>{% if entry.is_serialized %}单件资产{% else %}耗材配件{% endif %}</td><td>{{ entry.unit }}</td><td>{{ entry.safety_stock }}</td><td><a class="table-action" href="{% url 'warehouse_setup_edit' section entry.id %}">编辑</a></td></tr>
+      {% elif section == 'projects' %}<tr><td><strong>{{ entry.name }}</strong></td><td class="code">{{ entry.code }}</td><td>{{ entry.customer.name|default:'-' }}</td><td>{% if entry.is_active %}<span class="tag in-stock">启用</span>{% else %}<span class="tag neutral">停用</span>{% endif %}</td><td><a class="table-action" href="{% url 'warehouse_setup_edit' section entry.id %}">编辑</a></td></tr>
+      {% elif section == 'work-orders' %}<tr><td><strong>{{ entry.name }}</strong></td><td class="code">{{ entry.code }}</td><td>{{ entry.project.name|default:'-' }}</td><td>{{ entry.customer.name|default:'-' }}</td><td>{% if entry.is_active %}<span class="tag in-stock">启用</span>{% else %}<span class="tag neutral">停用</span>{% endif %}</td><td><a class="table-action" href="{% url 'warehouse_setup_edit' section entry.id %}">编辑</a></td></tr>
+      {% else %}<tr><td><strong>{{ entry.name }}</strong></td><td class="code">{{ entry.code }}</td><td>{{ entry.contact_name|default:'-' }}</td><td>{{ entry.phone|default:'-' }}</td><td>{% if entry.is_active %}<span class="tag in-stock">启用</span>{% else %}<span class="tag neutral">停用</span>{% endif %}</td><td><a class="table-action" href="{% url 'warehouse_setup_edit' section entry.id %}">编辑</a></td></tr>{% endif %}
+    {% empty %}<tr><td colspan="6"><div class="empty-state">暂无{{ section_title }}，请先新建。</div></td></tr>{% endfor %}</tbody>
+  </table></div></section>
+{% endblock %}

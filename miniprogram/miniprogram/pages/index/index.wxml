@@ -1,0 +1,26 @@
+<view class="page">
+  <view class="topbar">
+    <view><view class="title">工作台</view><view class="subtitle">{{user.full_name || user.username || '内部用户'}}</view></view>
+    <view class="avatar">{{avatarText}}</view>
+  </view>
+  <view class="search-card">
+    <view class="search-title">资产查询</view>
+    <view class="search-row">
+      <input class="search-input" placeholder="名称、编码、SN、别名或拼音首字母" value="{{query}}" bindinput="onSearchInput" confirm-type="search" bindconfirm="searchAssets" />
+      <button class="search-button" loading="{{searching}}" bindtap="searchAssets">查询</button>
+    </view>
+    <button class="scan-button" bindtap="scanAsset">扫码查询资产</button>
+  </view>
+  <view wx:if="{{assets.length}}" class="result-block">
+    <view class="result-label">匹配资产</view>
+    <view wx:for="{{assets}}" wx:key="id" class="asset-row" bindtap="goAsset" data-asset-id="{{item.id}}">
+      <view class="asset-main"><view class="asset-name">{{item.name}}</view><view class="asset-code">{{item.asset_code}}<text wx:if="{{item.serial_number}}"> · {{item.serial_number}}</text></view></view>
+      <text class="tag">{{item.statusText}}</text>
+    </view>
+  </view>
+  <view class="quick-grid">
+    <view class="quick-item" bindtap="goRequests"><text class="quick-number">{{requestCount}}</text><text class="quick-label">我的申请</text></view>
+    <view class="quick-item" bindtap="goNotifications"><text class="quick-number">{{unreadCount}}</text><text class="quick-label">未读通知</text></view>
+  </view>
+  <view class="card tip-card"><view class="section-title">流程记录</view><view class="muted">申请、审批和出入库处理均会保留可追溯记录。</view></view>
+</view>

@@ -1,0 +1,37 @@
+{% extends "web_base.html" %}
+
+{% block title %}我的借用 - 售后仓库管理系统{% endblock %}
+{% block crumb %}我的借用{% endblock %}
+
+{% block content %}
+  <div class="page-heading">
+    <div><h1>我的借用</h1><p class="page-copy">查看本人已经领走且尚未归还的单件资产和耗材配件。</p></div>
+    <a class="button button-primary" href="{% url 'request_create' %}?request_type=return">发起归还</a>
+  </div>
+
+  <section class="panel" style="margin-top:20px">
+    <div class="panel-head"><h2>单件资产</h2><span>{{ asset_loans|length }} 件未归还</span></div>
+    <div class="loan-grid">
+      {% for asset in asset_loans %}
+        <article class="loan-row {% if asset.loan_is_overdue %}overdue{% endif %}">
+          <div><h3>{{ asset.name }}</h3><p>{{ asset.asset_code }} · {{ asset.item_type.name }}</p><p>预计归还：{{ asset.loan_due_date|date:'Y-m-d'|default:'未记录' }}{% if asset.loan_is_overdue %} · 已逾期{% endif %}</p></div>
+          {% if asset.loan_request %}<div class="page-actions"><a class="text-action" href="{% url 'request_create' %}?request_type=return&amp;asset_ids={{ asset.id }}">快捷归还</a><a class="text-action" href="{% url 'workflow_detail' asset.loan_request.id %}">查看申请</a></div>{% endif %}
+          {% if asset.loan_request %}<details class="loan-extension"><summary>{% if asset.loan_extension.status == 'pending' %}延期审批中{% else %}申请延期{% endif %}</summary>{% if asset.loan_extension %}<p>最近结果：{{ asset.loan_extension.get_status_display }}，申请至 {{ asset.loan_extension.requested_return_date|date:'Y-m-d' }}{% if asset.loan_extension.review_comment %}，{{ asset.loan_extension.review_comment }}{% endif %}</p>{% endif %}{% if asset.loan_extension.status != 'pending' %}<form method="post" action="{% url 'loan_extension_create' asset.loan_request.id %}">{% csrf_token %}<input name="requested_return_date" type="date" min="{{ today|date:'Y-m-d' }}" required><input name="reason" placeholder="延期原因 *" required><button class="button button-secondary" type="submit">提交延期</button></form>{% endif %}</details>{% endif %}
+        </article>
+      {% empty %}<div class="empty-state">当前没有未归还的单件资产</div>{% endfor %}
+    </div>
+  </section>
+
+  <section class="panel" style="margin-top:14px">
+    <div class="panel-head"><h2>耗材配件借用</h2><span>按每次借用分别记录</span></div>
+    <div class="loan-grid">
+      {% for loan in stock_loans %}
+        <article class="loan-row {% if loan.expected_return_date < today %}overdue{% endif %}">
+          <div><h3>{{ loan.stock_item.name }}</h3><p>{{ loan.stock_item.code }} · 未归还 {{ loan.outstanding_quantity }} {{ loan.stock_item.unit }}</p><p>预计归还：{{ loan.expected_return_date|date:'Y-m-d' }}{% if loan.expected_return_date < today %} · 已逾期{% endif %}</p></div>
+          <div class="page-actions"><a class="text-action" href="{% url 'request_create' %}?request_type=return&amp;stock_item_ids={{ loan.stock_item.id }}&amp;stock_quantity_{{ loan.stock_item.id }}={{ loan.outstanding_quantity }}">归还这批</a><a class="text-action" href="{% url 'workflow_detail' loan.source_line.request.id %}">查看申请</a></div>
+          <details class="loan-extension"><summary>{% if loan.loan_extension.status == 'pending' %}延期审批中{% else %}申请延期{% endif %}</summary>{% if loan.loan_extension %}<p>最近结果：{{ loan.loan_extension.get_status_display }}，申请至 {{ loan.loan_extension.requested_return_date|date:'Y-m-d' }}{% if loan.loan_extension.review_comment %}，{{ loan.loan_extension.review_comment }}{% endif %}</p>{% endif %}{% if loan.loan_extension.status != 'pending' %}<form method="post" action="{% url 'loan_extension_create' loan.source_line.request.id %}">{% csrf_token %}<input name="requested_return_date" type="date" min="{{ today|date:'Y-m-d' }}" required><input name="reason" placeholder="延期原因 *" required><button class="button button-secondary" type="submit">提交延期</button></form>{% endif %}</details>
+        </article>
+      {% empty %}<div class="empty-state">当前没有未归还的耗材配件</div>{% endfor %}
+    </div>
+  </section>
+{% endblock %}

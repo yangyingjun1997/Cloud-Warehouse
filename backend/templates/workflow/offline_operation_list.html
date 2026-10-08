@@ -1,0 +1,87 @@
+{% extends "web_base.html" %}
+
+{% block title %}离线操作 - 售后仓库管理系统{% endblock %}
+{% block crumb %}出入库 / 离线操作{% endblock %}
+
+{% block content %}
+  <div class="page-heading">
+    <div><h1>离线操作</h1><p class="page-copy">本机离线记录联网后先送达这里，经复核才会真正修改库存。</p></div>
+    <div class="page-actions"><a class="button button-primary" href="{% url 'quick_inventory_process' %}">直接办理出入库</a></div>
+  </div>
+
+  <section class="panel management-filter">
+    <form method="get" class="management-filter-form">
+      <div class="form-field"><label for="offline-query">检索</label><input id="offline-query" name="q" value="{{ query }}" placeholder="登记账号、出入库单号或冲突原因"></div>
+      <div class="form-field"><label for="offline-status-filter">状态</label><select id="offline-status-filter" name="status"><option value="">全部状态</option>{% for value, label in status_choices %}<option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+      <button class="button button-secondary" type="submit">筛选</button>
+    </form>
+  </section>
+
+  <section class="panel" style="margin-top:14px">
+    <div class="panel-head"><h2>本机待同步记录</h2><span id="local-offline-summary">正在读取本机队列</span></div>
+    <div id="local-offline-list" class="compact-record-list"><div class="empty-state">正在读取...</div></div>
+  </section>
+
+  <section class="panel" style="margin-top:14px">
+    <div class="panel-head"><h2>服务器复核队列</h2><span>最多显示最近 200 条</span></div>
+    <div class="compact-record-list">
+      {% for operation in operations %}
+        <article class="compact-record-row">
+          <div>
+            <div><strong>{{ operation.request_type_label }}</strong> <span class="tag {{ operation.status }}">{{ operation.get_status_display }}</span></div>
+            <div class="queue-meta">登记人 {{ operation.operator.username }} · 客户端 {{ operation.client_created_at|date:'Y-m-d H:i:s' }} · 服务器接收 {{ operation.received_at|date:'Y-m-d H:i:s' }}</div>
+            <div class="queue-meta">接收人 {{ operation.recipient_label }} · 项目 {{ operation.project_label }} · 工单 {{ operation.work_order_label }} · 沟通来源 {{ operation.contact_source_label }}</div>
+            <div class="queue-meta">处理原因：{{ operation.reason_label }}</div>
+            <div class="offline-item-summary">{% for item in operation.item_rows %}<span><strong>{{ item.name }}</strong> · {{ item.code }} · {{ item.quantity }} · {{ item.status }} · {{ item.position }}</span>{% endfor %}</div>
+            {% if operation.error_message %}<div class="field-error">{{ operation.error_message }}</div>{% endif %}
+            {% if operation.resulting_request %}<div class="queue-meta">已生成 <a href="{% url 'workflow_detail' operation.resulting_request.id %}">{{ operation.resulting_request.inventory_no }}</a></div>{% endif %}
+          </div>
+          <div class="page-actions">
+            {% if operation.status == 'pending' or operation.status == 'conflict' %}
+              <form method="post" onsubmit="return confirm('将按服务器当前库存重新校验并执行，确认继续吗？')">{% csrf_token %}<input type="hidden" name="operation_id" value="{{ operation.id }}"><button class="button button-primary" name="action" value="apply" type="submit">复核并执行</button></form>
+              <form method="post" class="inline-reject-form">{% csrf_token %}<input type="hidden" name="operation_id" value="{{ operation.id }}"><input name="reason" required maxlength="255" placeholder="拒绝原因"><button class="button button-danger" name="action" value="reject" type="submit">拒绝</button></form>
+            {% endif %}
+          </div>
+        </article>
+      {% empty %}
+        <div class="empty-state">没有匹配的离线操作</div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <script>
+    (() => {
+      const list = document.getElementById('local-offline-list');
+      const summary = document.getElementById('local-offline-summary');
+      const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, char => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'}[char]));
+      async function renderLocalQueue() {
+        if (!window.WarehouseOffline) return;
+        const items = await window.WarehouseOffline.readAll();
+        const visible = items.filter(item => item.status !== 'synced');
+        summary.textContent = visible.length ? `${visible.length} 条需要处理` : '本机没有待同步记录';
+        if (!visible.length) {
+          list.innerHTML = '<div class="empty-state">本机没有待同步记录</div>';
+          return;
+        }
+        list.innerHTML = visible.map(item => `<article class="compact-record-row"><div><strong>${escapeHtml(item.title || '离线记录')}</strong><div class="queue-meta">${escapeHtml(new Date(item.createdAt).toLocaleString())} · ${escapeHtml(item.lastError || '等待联网同步')}</div></div><div class="page-actions"><button class="button button-secondary" data-retry="${item.id}" type="button">重新同步</button><button class="button button-danger" data-remove="${item.id}" type="button">从本机清除</button></div></article>`).join('');
+      }
+      function init() {
+        list.addEventListener('click', async event => {
+          const retry = event.target.closest('[data-retry]');
+          const remove = event.target.closest('[data-remove]');
+          try {
+            if (retry) await window.WarehouseOffline.retryItem(Number(retry.dataset.retry));
+            if (remove && confirm('仅清除本机记录，不会撤销服务器已接收的数据。确认清除吗？')) await window.WarehouseOffline.removeItem(Number(remove.dataset.remove));
+          } catch (error) {
+            window.alert(error.message);
+          }
+          await renderLocalQueue();
+        });
+        window.addEventListener('warehouse-offline-updated', renderLocalQueue);
+        renderLocalQueue().catch(error => { list.innerHTML = `<div class="field-error">${escapeHtml(error.message)}</div>`; });
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+      else init();
+    })();
+  </script>
+{% endblock %}

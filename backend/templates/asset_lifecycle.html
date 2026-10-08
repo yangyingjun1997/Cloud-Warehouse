@@ -1,0 +1,90 @@
+{% extends 'web_base.html' %}
+{% block title %}{{ asset.name }} · 生命周期与维修{% endblock %}
+{% block crumb %}仓库管理 / 资产生命周期{% endblock %}
+{% block content %}
+  <section class="page-heading lifecycle-head">
+    <div><p class="eyebrow">资产全生命周期</p><h1>{{ asset.name }}</h1><p class="page-copy">仓库系统编号 {{ asset.system_asset_no }}{% if asset.asset_code %} · 公司 ERP 编码 {{ asset.asset_code }}{% endif %}{% if asset.serial_number %} · 生产厂家 SN {{ asset.serial_number }}{% endif %}</p></div>
+    <div class="page-actions">{% if can_manage_lifecycle %}<a class="button button-secondary" href="{% url 'warehouse_asset_edit' asset.id %}">编辑基础信息</a>{% endif %}<a class="button button-secondary" href="{% url 'warehouse_management' %}?tab=assets&amp;q={{ asset.system_asset_no|urlencode }}">返回资产台账</a></div>
+  </section>
+
+  <section class="asset-lifecycle-summary">
+    <div><span>当前状态</span><strong class="status-badge">{{ asset.get_status_display }}</strong></div>
+    <div><span>当前持有人</span><strong>{{ holder_name|default:'无' }}</strong></div>
+    <div><span>仓库 / 库位</span><strong>{{ asset.warehouse|default:'未分配' }} / {{ asset.location|default:'未分配' }}</strong></div>
+    <div><span>质保到期</span><strong>{{ asset.warranty_until|date:'Y-m-d'|default:'未填写' }}</strong></div>
+    <div><span>累计维修</span><strong>{{ maintenance_records|length }} 次</strong></div>
+  </section>
+
+  <nav class="lifecycle-tabs" aria-label="资产生命周期栏目">
+    <a class="{% if tab == 'timeline' %}active{% endif %}" href="?tab=timeline">生命周期时间线</a>
+    <a class="{% if tab == 'repairs' %}active{% endif %}" href="?tab=repairs">维修台账</a>
+    <a class="{% if tab == 'handover' %}active{% endif %}" href="?tab=handover">交接确认</a>
+    <a class="{% if tab == 'attachments' %}active{% endif %}" href="?tab=attachments">附件归档</a>
+  </nav>
+
+  {% if tab == 'timeline' %}
+    <div class="lifecycle-layout timeline-layout">
+      <section class="panel lifecycle-scroll">
+        <div class="panel-head"><h2>完整轨迹</h2><span>出入库、盘点、维修、交接和附件统一展示</span></div>
+        <div class="timeline-list">
+          {% for event in timeline %}
+            <article class="timeline-row">
+              <time>{{ event.at|date:'Y-m-d H:i' }}</time><span class="timeline-dot"></span>
+              <div><small>{{ event.kind }}{% if event.actor %} · {{ event.actor.get_username }}{% endif %}</small><h3>{% if event.url %}<a href="{{ event.url }}">{{ event.title }}</a>{% else %}{{ event.title }}{% endif %}</h3>{% if event.description %}<p>{{ event.description }}</p>{% endif %}</div>
+            </article>
+          {% empty %}<div class="empty-state">该资产暂无生命周期记录。</div>{% endfor %}
+        </div>
+      </section>
+      <aside class="panel lifecycle-side">
+        <div class="panel-head"><h2>资产责任信息</h2></div>
+        <dl class="compact-details">
+          <div><dt>物品类型</dt><dd>{{ asset.item_type }}</dd></div><div><dt>生产厂家 / 型号</dt><dd>{{ asset.manufacturer|default:'-' }} / {{ asset.model|default:'-' }}</dd></div>
+          <div><dt>采购金额</dt><dd>{% if asset.purchase_amount != None %}¥{{ asset.purchase_amount }}{% else %}未填写{% endif %}</dd></div><div><dt>所属部门</dt><dd>{{ asset.department|default:'未分配' }}</dd></div>
+        </dl>
+        {% if can_manage_lifecycle and asset.status != 'scrapped' and asset.status != 'sold' and asset.status != 'returned_to_vendor' %}
+          {% if asset.status == 'borrowed' or asset.status == 'issued' %}
+          <details class="scrap-request-box"><summary>发起报损审批</summary><form method="post">{% csrf_token %}<input type="hidden" name="action" value="request_damage"><label for="{{ damage_form.reason.id_for_label }}">{{ damage_form.reason.label }} <b>*</b></label>{{ damage_form.reason }}{% for error in damage_form.reason.errors %}<div class="field-error">{{ error }}</div>{% endfor %}<button class="button button-danger" type="submit">提交审批</button></form><p class="field-help" style="margin-top:6px">归还验收差异中确认无法收回的物品，可在此直接转报损。</p></details>
+          {% endif %}
+          <details class="scrap-request-box"><summary>发起报废审批</summary><form method="post">{% csrf_token %}<input type="hidden" name="action" value="request_scrap"><label for="{{ scrap_form.reason.id_for_label }}">{{ scrap_form.reason.label }} <b>*</b></label>{{ scrap_form.reason }}{% for error in scrap_form.reason.errors %}<div class="field-error">{{ error }}</div>{% endfor %}<button class="button button-danger" type="submit">提交审批</button></form></details>
+        {% endif %}
+      </aside>
+    </div>
+  {% elif tab == 'repairs' %}
+    <div class="lifecycle-layout">
+      <section class="panel lifecycle-scroll">
+        <div class="panel-head"><h2>维修记录</h2>{% if can_manage_lifecycle %}<a href="?tab=repairs">新建维修单</a>{% endif %}</div>
+        <div class="record-list">
+          {% for record in maintenance_records %}
+            <a class="record-row {% if selected_maintenance.id == record.id %}selected{% endif %}" href="?tab=repairs&amp;maintenance={{ record.id }}"><div><strong>{{ record.maintenance_no }}</strong><small>{{ record.get_repair_type_display }} · {{ record.created_at|date:'Y-m-d H:i' }}</small></div><div><span class="status-badge">{{ record.get_status_display }}</span><small>{{ record.service_provider|default:'内部处理' }}</small></div></a>
+          {% empty %}<div class="empty-state">尚无维修记录，可在右侧建立第一张维修单。</div>{% endfor %}
+        </div>
+      </section>
+      <section class="panel lifecycle-scroll form-panel">
+        {% if selected_maintenance %}
+          <div class="panel-head"><h2>{{ selected_maintenance.maintenance_no }}</h2><span>{{ selected_maintenance.get_status_display }}</span></div>
+          {% if selected_maintenance.source_request %}<p class="related-document">关联申请：<a href="{% url 'workflow_detail' selected_maintenance.source_request.id %}">{{ selected_maintenance.source_request.request_no }}</a></p>{% endif %}
+          {% if can_manage_lifecycle and selected_maintenance.status != 'completed' and selected_maintenance.status != 'canceled' %}
+            <form method="post">{% csrf_token %}<input type="hidden" name="action" value="update_maintenance"><input type="hidden" name="maintenance_id" value="{{ selected_maintenance.id }}"><div class="lifecycle-form-grid">{% for field in maintenance_update_form %}<div class="form-field {% if field.name == 'fault_description' or field.name == 'diagnosis' or field.name == 'resolution' %}full{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <b>*</b>{% endif %}</label>{{ field }}{% if field.help_text %}<small class="field-help">{{ field.help_text }}</small>{% endif %}{% for error in field.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>{% endfor %}</div><div class="form-actions"><button class="button button-primary" type="submit">保存维修进度</button></div></form>
+            <details class="repair-finish-box"><summary>完成或取消维修</summary><form method="post">{% csrf_token %}<input type="hidden" name="maintenance_id" value="{{ selected_maintenance.id }}"><div class="lifecycle-form-grid">{% for field in maintenance_finish_form %}<div class="form-field {% if field.name == 'resolution' %}full{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>{% endfor %}</div><div class="form-actions"><button class="button button-primary" name="action" value="complete_maintenance" type="submit">确认维修完成</button><button class="button button-secondary" name="action" value="cancel_maintenance" type="submit">取消本次维修</button></div></form></details>
+          {% else %}
+            <dl class="compact-details"><div><dt>故障现象</dt><dd>{{ selected_maintenance.fault_description }}</dd></div><div><dt>诊断结果</dt><dd>{{ selected_maintenance.diagnosis|default:'未填写' }}</dd></div><div><dt>维修结果</dt><dd>{{ selected_maintenance.resolution|default:'未填写' }}</dd></div><div><dt>维修商 / RMA</dt><dd>{{ selected_maintenance.service_provider|default:'-' }} / {{ selected_maintenance.rma_no|default:'-' }}</dd></div><div><dt>实际成本</dt><dd>{% if selected_maintenance.actual_cost != None %}¥{{ selected_maintenance.actual_cost }}{% else %}未填写{% endif %}</dd></div><div><dt>结束时间</dt><dd>{{ selected_maintenance.completed_at|date:'Y-m-d H:i'|default:'-' }}</dd></div></dl>
+          {% endif %}
+        {% elif can_manage_lifecycle %}
+          <div class="panel-head"><h2>新建维修单</h2><span>保存后资产状态自动变为维修中</span></div><form method="post">{% csrf_token %}<input type="hidden" name="action" value="create_maintenance"><div class="lifecycle-form-grid">{% for field in maintenance_create_form %}<div class="form-field {% if field.name == 'fault_description' %}full{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <b>*</b>{% endif %}</label>{{ field }}{% if field.help_text %}<small class="field-help">{{ field.help_text }}</small>{% endif %}{% for error in field.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>{% endfor %}</div><div class="form-actions"><button class="button button-primary" type="submit">建立维修单</button></div></form>
+        {% else %}<div class="empty-state">请选择左侧维修记录查看详情。</div>{% endif %}
+      </section>
+    </div>
+  {% elif tab == 'handover' %}
+    <div class="lifecycle-layout">
+      <section class="panel lifecycle-scroll"><div class="panel-head"><h2>交接记录</h2><span>只确认实物和责任，不直接改变库存状态</span></div><div class="record-list">
+        {% for handover in handovers %}<article class="handover-row"><div><strong>{{ handover.handover_no }}</strong><small>{{ handover.handover_date|date:'Y-m-d' }} · {{ handover.from_holder_name|default:'未填写' }} → {{ handover.to_holder_name }}</small>{% if handover.accessories %}<p>随附：{{ handover.accessories }}</p>{% endif %}</div><div><span class="status-badge">{{ handover.get_status_display }}</span>{% if handover.status == 'pending' and can_handover %}<form method="post">{% csrf_token %}<input type="hidden" name="handover_id" value="{{ handover.id }}"><button class="text-button" name="action" value="confirm_handover" type="submit">确认接收</button><button class="text-button danger-text" name="action" value="cancel_handover" type="submit">取消</button></form>{% endif %}</div></article>{% empty %}<div class="empty-state">该资产暂无交接记录。</div>{% endfor %}
+      </div></section>
+      <section class="panel lifecycle-scroll form-panel"><div class="panel-head"><h2>新建交接</h2><span>接收方确认后形成不可覆盖记录</span></div>{% if can_handover %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="create_handover"><div class="lifecycle-form-grid">{% for field in handover_form %}<div class="form-field {% if field.name == 'condition_description' or field.name == 'accessories' or field.name == 'note' %}full{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <b>*</b>{% endif %}</label>{{ field }}{% if field.help_text %}<small class="field-help">{{ field.help_text }}</small>{% endif %}{% for error in field.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>{% endfor %}</div><div class="form-actions"><button class="button button-primary" type="submit">建立交接记录</button></div></form>{% else %}<div class="empty-state">当前账号没有出入库执行权限，不能建立交接。</div>{% endif %}</section>
+    </div>
+  {% else %}
+    <div class="lifecycle-layout">
+      <section class="panel lifecycle-scroll"><div class="panel-head"><h2>归档资料</h2><span>{{ attachments|length }} 个附件</span></div><div class="attachment-list">{% for attachment in attachments %}<a class="attachment-row" href="{% url 'asset_attachment_download' attachment.id %}"><div><strong>{{ attachment.display_name }}</strong><small>{{ attachment.get_category_display }} · {{ attachment.created_at|date:'Y-m-d H:i' }}{% if attachment.uploaded_by %} · {{ attachment.uploaded_by.get_username }}{% endif %}</small></div><span>下载</span></a>{% empty %}<div class="empty-state">该资产暂无归档附件。</div>{% endfor %}</div></section>
+      <section class="panel lifecycle-scroll form-panel"><div class="panel-head"><h2>上传并归档</h2><span>单个文件最大 20 MB</span></div>{% if can_manage_lifecycle %}<form method="post" enctype="multipart/form-data">{% csrf_token %}<input type="hidden" name="action" value="archive_attachment"><div class="lifecycle-form-grid">{% for field in attachment_form %}<div class="form-field {% if field.name == 'note' %}full{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <b>*</b>{% endif %}</label>{{ field }}{% if field.help_text %}<small class="field-help">{{ field.help_text }}</small>{% endif %}{% for error in field.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>{% endfor %}</div><div class="form-actions"><button class="button button-primary" type="submit">上传并归档</button></div></form>{% else %}<div class="empty-state">当前账号没有附件归档权限。</div>{% endif %}</section>
+    </div>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,14 @@
+[Unit]
+Description=Expire pending warehouse inventory reservations
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=warehouse
+Group=warehouse
+WorkingDirectory=/opt/after-sales-warehouse/backend
+EnvironmentFile=/opt/after-sales-warehouse/backend/.env
+ExecStart=/opt/after-sales-warehouse/venv/bin/python manage.py expire_inventory_reservations
+
+[Install]
+WantedBy=multi-user.target

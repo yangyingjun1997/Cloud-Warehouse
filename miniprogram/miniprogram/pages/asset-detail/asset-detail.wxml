@@ -1,0 +1,45 @@
+<view class="page" wx:if="{{asset}}">
+  <view class="asset-summary">
+    <view class="asset-title-row"><view class="asset-name">{{asset.name}}</view><text class="tag">{{asset.statusText}}</text></view>
+    <view class="asset-code">{{asset.asset_code}}</view>
+    <view class="asset-type">{{asset.item_type_name || '未分类'}}</view>
+  </view>
+
+  <image wx:if="{{photoUrl}}" class="asset-photo" mode="aspectFill" src="{{photoUrl}}" bindtap="previewPhoto" />
+  <button wx:if="{{isOperator}}" class="photo-button" loading="{{uploading}}" bindtap="choosePhoto">{{photoUrl ? '更新资产照片' : '拍照上传资产照片'}}</button>
+
+  <view class="card">
+    <view class="section-title">基础信息</view>
+    <view class="info-row"><text>物品类型</text><text>{{asset.item_type_name || '-'}}</text></view>
+    <view class="info-row"><text>厂家</text><text>{{asset.manufacturer || '-'}}</text></view>
+    <view class="info-row"><text>型号</text><text>{{asset.model || '-'}}</text></view>
+    <view class="info-row"><text>原厂序列号</text><text>{{asset.serial_number || '-'}}</text></view>
+    <view class="info-row"><text>原厂条码</text><text>{{asset.manufacturer_barcode || '-'}}</text></view>
+    <view class="info-row"><text>系统二维码内容</text><text class="code-text">{{asset.qr_value || '-'}}</text></view>
+  </view>
+
+  <view wx:if="{{isOperator}}" class="card">
+    <view class="section-title">仓储信息</view>
+    <view class="info-row"><text>仓库</text><text>{{asset.warehouse_name || '-'}}</text></view>
+    <view class="info-row"><text>库位</text><text>{{asset.location_code || '-'}}</text></view>
+    <view class="info-row"><text>系统持有人</text><text>{{asset.current_holder_name || '-'}}</text></view>
+  </view>
+
+  <view class="card" wx:if="{{lifecycle.length}}">
+    <view class="section-title">资产履历</view>
+    <view class="timeline">
+      <view class="timeline-row" wx:for="{{lifecycle}}" wx:key="id">
+        <view class="timeline-meta">{{item.at}} {{item.actor ? '· ' + item.actor : ''}}</view>
+        <view class="timeline-title">【{{item.kind}}】{{item.title}}</view>
+        <view class="timeline-desc" wx:if="{{item.description}}">{{item.description}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="action-block">
+    <button wx:if="{{asset.can_request}}" class="primary-button" data-type="borrow" bindtap="createRequest">申请借用</button>
+    <button wx:if="{{asset.can_request}}" class="secondary-button action-gap" data-type="issue" bindtap="createRequest">申请领用</button>
+    <button wx:if="{{asset.can_return}}" class="secondary-button" data-type="return" bindtap="createRequest">申请归还</button>
+    <view wx:if="{{!asset.can_request && !asset.can_return}}" class="muted">当前状态不支持由您发起借用、领用或归还。</view>
+  </view>
+</view>

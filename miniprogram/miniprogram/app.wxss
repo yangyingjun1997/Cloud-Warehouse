@@ -1,0 +1,31 @@
+page {
+  background: #f7f8fa;
+  color: #17201c;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 28rpx;
+}
+
+view, text, button, input, textarea, picker, image { box-sizing: border-box; }
+button { border-radius: 10rpx; font-size: 28rpx; line-height: 84rpx; }
+button::after { border: 0; }
+.page { min-height: 100vh; padding: 28rpx 28rpx 48rpx; }
+.topbar { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 28rpx; }
+.title { color: #17201c; font-size: 42rpx; font-weight: 700; }
+.subtitle, .muted { color: #69756f; font-size: 25rpx; line-height: 1.55; }
+.subtitle { margin-top: 8rpx; }
+.card { margin-bottom: 22rpx; padding: 26rpx; background: #fff; border: 1rpx solid #e2e7e4; border-radius: 12rpx; }
+.section-title { margin-bottom: 20rpx; color: #17201c; font-size: 30rpx; font-weight: 700; }
+.primary-button { color: #fff; background: #176b4d; }
+.secondary-button { color: #176b4d; background: #e8f4ed; }
+.danger-button { color: #b42318; background: #fff0ee; }
+.empty { padding: 76rpx 20rpx; color: #8a9690; text-align: center; }
+.tag { display: inline-block; padding: 7rpx 13rpx; color: #176b4d; background: #e8f4ed; border-radius: 6rpx; font-size: 22rpx; line-height: 1.3; }
+.required::before { color: #d92d20; content: '*'; margin-right: 6rpx; }
+.field-label { margin-bottom: 12rpx; color: #3f4b45; font-size: 25rpx; }
+.field-input, .field-textarea { width: 100%; color: #17201c; background: #fafbfa; border: 1rpx solid #d9e2dd; border-radius: 8rpx; }
+.field-input { height: 82rpx; padding: 0 20rpx; }
+.field-textarea { min-height: 156rpx; padding: 18rpx 20rpx; }
+.field-block { margin-top: 26rpx; }
+.status-pending { color: #a15c00; background: #fff4d7; }
+.status-done { color: #176b4d; background: #e8f4ed; }
+.status-rejected, .status-canceled { color: #b42318; background: #fff0ee; }

@@ -1,0 +1,43 @@
+{% extends "web_base.html" %}
+{% block title %}采购订单详情 - 售后仓库管理系统{% endblock %}
+{% block crumb %}仓库工具 / 采购订单详情{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>采购订单详情</h1><p class="page-copy"><span class="code">{{ purchase_order.order_no }}</span> · {{ purchase_order.get_status_display }} · 关联申请 <a class="code" href="{% url 'purchase_draft_detail' purchase_order.purchase_request_id %}">{{ purchase_order.purchase_request.purchase_no }}</a></p></div><div class="page-actions"><a class="button button-secondary" href="{% url 'purchase_order_list' %}">返回采购订单</a></div></div>
+<div class="workflow-grid"><section class="panel"><div class="panel-head"><h2>订单信息</h2><span class="tag neutral">{{ purchase_order.get_status_display }}</span></div><dl class="detail-list"><div><dt>采购订单编号</dt><dd class="code">{{ purchase_order.order_no }}</dd></div><div><dt>关联采购申请</dt><dd><a class="code" href="{% url 'purchase_draft_detail' purchase_order.purchase_request_id %}">{{ purchase_order.purchase_request.purchase_no }}</a></dd></div><div><dt>创建人</dt><dd>{{ purchase_order.created_by.get_username|default:'已删除账号' }}</dd></div><div><dt>下单日期</dt><dd>{{ purchase_order.order_date|date:'Y-m-d' }}</dd></div><div><dt>预计到货日期</dt><dd>{{ purchase_order.expected_delivery_date|date:'Y-m-d'|default:'未填写' }}</dd></div><div class="wide"><dt>订单说明</dt><dd>{{ purchase_order.note|default:'暂无说明' }}</dd></div></dl></section><section class="panel"><div class="panel-head"><h2>到货登记记录</h2><span>{{ purchase_receipts|length }} 次</span></div>{% for receipt in purchase_receipts %}<div class="notice success"><strong>{{ receipt.receipt_no }}</strong> · {{ receipt.received_date|date:'Y-m-d' }} · {{ receipt.received_by.get_username }}{% if receipt.note %}<br>{{ receipt.note }}{% endif %}</div>{% empty %}<div class="empty-state">尚未登记到货</div>{% endfor %}</section></div>
+<section class="panel" style="margin-top:14px"><div class="panel-head"><h2>采购明细</h2><span>到货数量按订单明细分别累计</span></div><div class="table-scroll"><table class="data-table"><thead><tr><th>物品</th><th>编码</th><th>管理方式</th><th>订购数量</th><th>已到货</th><th>剩余</th><th>供应商</th><th>单价</th></tr></thead><tbody>{% for line in purchase_order.lines.all %}<tr><td><strong>{{ line.name_snapshot }}</strong></td><td class="code">{{ line.code_snapshot|default:'-' }}</td><td>{{ line.management_mode }}</td><td>{{ line.ordered_quantity }} {{ line.unit }}</td><td>{{ line.received_quantity }} {{ line.unit }}</td><td>{{ line.remaining_quantity }} {{ line.unit }}</td><td>{{ line.supplier_snapshot|default:'未填写' }}</td><td>{% if line.unit_cost is not None %}{{ line.unit_cost|floatformat:2 }} 元{% else %}未填写{% endif %}</td></tr>{% endfor %}</tbody></table></div></section>
+{% if can_place or can_cancel %}<section class="workflow-actions"><h2>订单处理</h2>{% if can_place %}<form method="post" class="action-form"><input type="hidden" name="action" value="place">{% csrf_token %}<span><strong>下达采购</strong><small>下达后供应商可按订单供货。</small></span><label>预计到货日期<input type="date" name="expected_delivery_date"></label><label>订单说明<textarea name="note" placeholder="可选"></textarea></label><button class="button button-primary" type="submit">下达采购</button></form>{% endif %}{% if can_cancel %}<form method="post" class="action-form reject-form"><input type="hidden" name="action" value="cancel">{% csrf_token %}<span><strong>取消采购订单</strong><small>已有到货登记或已完成的订单不能取消。</small></span><textarea name="reason" placeholder="取消原因（可选）"></textarea><button class="button button-danger" type="submit" onclick="return confirm('确认取消采购订单吗？')">取消订单</button></form>{% endif %}</section>{% endif %}
+{% if can_receive %}<section class="panel" style="margin-top:14px"><div class="panel-head"><h2>登记到货</h2><span>本次到货不能超过剩余数量；资产类物品可同时逐件录入 SN 与资产编码</span></div><form method="post" class="form-grid">{% csrf_token %}<input type="hidden" name="action" value="receive"><div class="form-field"><label>入库仓库 <b class="required">*</b></label><select name="warehouse_id" required><option value="">请选择仓库</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}">{{ warehouse.name }}</option>{% endfor %}</select></div><div class="form-field"><label>入库库位 <b class="required">*</b></label><select name="location_id" required><option value="">请选择库位</option>{% for location in locations %}<option value="{{ location.id }}">{{ location.warehouse.name }} / {{ location.code }} {{ location.name }}</option>{% endfor %}</select></div><div class="form-field"><label>到货日期 <b class="required">*</b></label><input type="date" name="received_date" value="{% now 'Y-m-d' %}" required></div><div class="form-field form-field-wide"><label>到货说明</label><textarea name="receipt_note" placeholder="可选"></textarea></div><div class="form-field form-field-wide"><div class="table-scroll"><table class="data-table"><thead><tr><th>物品</th><th>剩余可到货</th><th>本次到货数量 <b class="required">*</b></th><th>逐件资料（可选）</th></tr></thead><tbody>{% for line in purchase_order.lines.all %}<tr><td>{{ line.name_snapshot }}</td><td>{{ line.remaining_quantity }} {{ line.unit }}</td><td><input type="number" name="received_{{ line.id }}" id="received_{{ line.id }}" data-line="{{ line.id }}" data-is-asset="{% if line.item_type_id %}1{% else %}0{% endif %}" min="0" max="{{ line.remaining_quantity }}" value="0" {% if line.remaining_quantity == 0 %}readonly{% endif %}></td><td>{% if line.item_type_id %}<div id="profiles_{{ line.id }}" class="profile-rows"></div><small class="muted">填写本次到货数量后展开逐件录入；也可到货后从下方「资产资料补录」批量补录。</small>{% else %}<span class="muted">耗材无需逐件资料</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div></div><div class="form-actions"><button class="button button-primary" type="submit">登记并入库</button></div></form></section>{% endif %}
+{% if pending_profile_assets and can_edit_profiles %}<section class="panel" style="margin-top:14px"><div class="panel-head"><h2>资产资料补录</h2><span>{{ pending_profile_assets|length }} 件到货资产待补充 SN / 资产编码</span></div><div class="table-scroll"><table class="data-table"><thead><tr><th>系统资产编号</th><th>物品</th><th>生产厂家 SN</th><th>资产编码</th><th>库位</th></tr></thead><tbody>{% for asset in pending_profile_assets %}<tr><td class="code">{{ asset.system_asset_no }}</td><td>{{ asset.name }}</td><td>{{ asset.serial_number|default:'-' }}</td><td>{{ asset.asset_code|default:'-' }}</td><td>{{ asset.location.code|default:'-' }}</td></tr>{% endfor %}</tbody></table></div><div class="form-actions" style="margin-top:10px"><a class="button button-secondary" href="{% url 'purchase_order_profile_template' purchase_order.id %}">下载补录模板</a></div><form method="post" enctype="multipart/form-data" class="form-grid" style="margin-top:10px">{% csrf_token %}<input type="hidden" name="action" value="complete_profiles"><div class="form-field form-field-wide"><label>上传补录 Excel <b class="required">*</b></label><input type="file" name="profile_file" accept=".xlsx" required><small class="muted">在模板中填写 SN、资产编码、厂家等资料后上传；与台账冲突时整批拒绝。</small></div><div class="form-actions"><button class="button button-primary" type="submit">批量补录</button></div></form></section>{% endif %}
+<script>
+document.querySelectorAll('input[data-is-asset="1"]').forEach(function (input) {
+  input.addEventListener('input', function () {
+    var lineId = input.dataset.line;
+    var container = document.getElementById('profiles_' + lineId);
+    var count = parseInt(input.value || '0', 10);
+    container.innerHTML = '';
+    if (!count || count < 1) return;
+    var table = document.createElement('table');
+    table.className = 'data-table';
+    table.innerHTML = '<thead><tr><th>第几件</th><th>生产厂家 SN</th><th>资产编码</th><th>厂家条码</th><th>生产厂家</th><th>型号</th></tr></thead>';
+    var tbody = document.createElement('tbody');
+    for (var i = 1; i <= Math.min(count, 8); i++) {
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + i + '</td>' +
+        '<td><input name="profile_' + lineId + '_' + i + '_serial_number" placeholder="可选"></td>' +
+        '<td><input name="profile_' + lineId + '_' + i + '_asset_code" placeholder="可选"></td>' +
+        '<td><input name="profile_' + lineId + '_' + i + '_manufacturer_barcode" placeholder="可选"></td>' +
+        '<td><input name="profile_' + lineId + '_' + i + '_manufacturer" placeholder="可选"></td>' +
+        '<td><input name="profile_' + lineId + '_' + i + '_model" placeholder="可选"></td>';
+      tbody.appendChild(tr);
+    }
+    if (count > 8) {
+      var hint = document.createElement('tr');
+      hint.innerHTML = '<td colspan="6" class="muted">超过 8 件时请使用「资产资料补录」Excel 批量补录。</td>';
+      tbody.appendChild(hint);
+    }
+    table.appendChild(tbody);
+    container.appendChild(table);
+  });
+});
+</script>
+{% endblock %}

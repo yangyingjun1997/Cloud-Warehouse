@@ -1,0 +1,9 @@
+{% extends "web_base.html" %}
+
+{% block title %}{% if stock_item %}编辑耗材配件{% else %}录入耗材配件{% endif %} - 售后仓库管理系统{% endblock %}
+{% block crumb %}仓库管理 / {% if stock_item %}编辑耗材配件{% else %}录入耗材配件{% endif %}{% endblock %}
+
+{% block content %}
+  <div class="page-heading"><div><h1>{% if stock_item %}编辑耗材配件{% else %}录入耗材配件{% endif %}</h1><p class="page-copy">用于按数量管理的耗材、备件和通用物品。后续数量变化请通过出入库、盘点或受控转换处理。</p></div><div class="page-actions">{% if stock_item and stock_item.quantity > 0 %}<a class="button button-secondary" href="{% url 'inventory_conversion' %}?direction=stock_to_asset&amp;stock_item_id={{ stock_item.id }}">转为单件资产</a>{% endif %}<a class="button button-secondary" href="{% url 'warehouse_management' %}">返回仓库管理</a></div></div>
+  <form method="post" class="form-card management-form">{% csrf_token %}{% if form.non_field_errors %}<div class="notice error">{{ form.non_field_errors }}</div>{% endif %}<div class="form-grid">{% for field in form %}<div class="form-field"><label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <span class="required">*</span>{% endif %}</label>{{ field }}{% if field.help_text %}<span class="field-help">{{ field.help_text }}</span>{% endif %}{% for error in field.errors %}<span class="field-error">{{ error }}</span>{% endfor %}</div>{% endfor %}</div><div class="form-actions"><a class="button button-secondary" href="{% url 'warehouse_management' %}">取消</a><button class="button button-primary" type="submit">保存耗材配件</button></div></form>
+{% endblock %}

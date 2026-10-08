@@ -1,0 +1,11 @@
+[Unit]
+Description=Run After-sales Warehouse health monitor every five minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

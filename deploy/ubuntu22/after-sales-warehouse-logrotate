@@ -1,0 +1,9 @@
+/var/log/after-sales-warehouse-*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

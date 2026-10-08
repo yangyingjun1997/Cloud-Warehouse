@@ -1,0 +1,11 @@
+[Unit]
+Description=Run After-sales Warehouse return due reminders every morning
+
+[Timer]
+OnCalendar=*-*-* 09:10:00
+Persistent=true
+RandomizedDelaySec=3m
+Unit=after-sales-warehouse-return-reminder.service
+
+[Install]
+WantedBy=timers.target

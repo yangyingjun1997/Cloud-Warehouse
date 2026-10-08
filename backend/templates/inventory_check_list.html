@@ -1,0 +1,31 @@
+{% extends "web_base.html" %}
+
+{% block title %}盘点任务 - 售后仓库管理系统{% endblock %}
+{% block crumb %}盘点任务{% endblock %}
+
+{% block content %}
+<div class="page-heading">
+  <div><h1>盘点任务</h1><p class="page-copy">冻结账面快照，现场扫码核对，管理员复核后才会调整库存。</p></div>
+  {% if can_create_check %}<a class="button button-primary" href="{% url 'inventory_check_create' %}">新建盘点任务</a>{% endif %}
+</div>
+<section class="panel management-filter">
+  <form method="get" class="management-filter-form">
+    <div class="form-field"><label for="check-status">任务状态</label><select id="check-status" name="status"><option value="">全部状态</option>{% for value,label in status_choices %}<option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <button class="button button-secondary" type="submit">筛选</button>
+  </form>
+</section>
+<section class="panel table-panel">
+  <div class="panel-head"><h2>任务列表</h2><span>{{ tasks|length }} 项任务</span></div>
+  <div class="table-scroll"><table class="data-table"><thead><tr><th>任务编号</th><th>任务名称</th><th>范围</th><th>进度</th><th>状态</th><th>创建人 / 时间</th><th></th></tr></thead><tbody>
+  {% for task in tasks %}<tr>
+    <td class="code">{{ task.check_no }}</td>
+    <td><strong>{{ task.name }}</strong>{% if task.note %}<div class="queue-meta">{{ task.note }}</div>{% endif %}</td>
+    <td>{{ task.warehouse.name }}{% if task.location %}<div class="queue-meta">{{ task.location.code }}</div>{% else %}<div class="queue-meta">全仓库</div>{% endif %}</td>
+    <td>{{ task.line_counted }} / {{ task.line_total }} 条{% if task.line_differences %}<div class="queue-meta danger-text">{{ task.line_differences }} 项差异</div>{% endif %}</td>
+    <td><span class="tag {{ task.status }}">{{ task.get_status_display }}</span></td>
+    <td>{{ task.created_by.username|default:'-' }}<div class="queue-meta">{{ task.created_at|date:'Y-m-d H:i' }}</div></td>
+    <td><a class="table-action" href="{% url 'inventory_check_detail' task.id %}">查看任务</a></td>
+  </tr>{% empty %}<tr><td colspan="7"><div class="empty-state">暂无盘点任务</div></td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

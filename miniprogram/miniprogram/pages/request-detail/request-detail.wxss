@@ -1,0 +1,27 @@
+.request-summary { margin-bottom: 22rpx; padding: 28rpx; background: #174f3b; border-radius: 12rpx; color: #fff; }
+.summary-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18rpx; }
+.request-no { font-size: 31rpx; font-weight: 700; }
+.summary-meta, .summary-applicant { margin-top: 12rpx; color: #d3eddf; font-size: 24rpx; }
+.request-summary .tag { color: #174f3b; background: #c8f0db; }
+.line-item { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 18rpx; padding: 19rpx 0; border-top: 1rpx solid #eef1ef; }
+.line-item:first-of-type { border-top: 0; }
+.line-name { color: #17201c; font-size: 27rpx; font-weight: 700; }
+.line-code { margin-top: 7rpx; color: #69756f; font-size: 22rpx; }
+.line-side { color: #69756f; font-size: 24rpx; }
+.line-location { position: absolute; right: 0; bottom: 13rpx; color: #176b4d; font-size: 21rpx; }
+.info-row { display: flex; justify-content: space-between; gap: 32rpx; padding: 17rpx 0; border-top: 1rpx solid #eef1ef; color: #69756f; font-size: 25rpx; }
+.info-row text:last-child { max-width: 60%; color: #17201c; text-align: right; word-break: break-all; }
+.traceability { margin-top: 20rpx; }
+.trace-title { padding: 14rpx 0; color: #176b4d; font-size: 25rpx; font-weight: 700; }
+.log-row { padding: 18rpx 0; border-top: 1rpx solid #eef1ef; }
+.log-action { color: #17201c; font-size: 26rpx; font-weight: 700; }
+.log-comment { margin-top: 10rpx; color: #3f4b45; font-size: 24rpx; line-height: 1.55; }
+.action-block { margin-top: 28rpx; }
+.action-gap { margin: 16rpx 0; }
+.process-date-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16rpx; padding: 18rpx 20rpx; background: #f2f6f4; border-radius: 10rpx; }
+.process-date-label { color: #69756f; font-size: 24rpx; }
+.process-date-value { color: #17201c; font-size: 25rpx; font-weight: 600; }
+.reject-mask { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 10; display: flex; align-items: flex-end; background: rgba(23, 32, 28, 0.42); }
+.reject-dialog { width: 100%; padding: 30rpx 28rpx 42rpx; background: #fff; border-radius: 16rpx 16rpx 0 0; }
+.dialog-actions { display: flex; gap: 16rpx; margin-top: 24rpx; }
+.dialog-actions button { flex: 1; }

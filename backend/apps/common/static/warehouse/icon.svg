@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#173239"/>
+  <rect x="96" y="96" width="320" height="320" rx="52" fill="#18736e"/>
+  <text x="256" y="326" fill="#ffffff" font-family="Microsoft YaHei, sans-serif" font-size="190" font-weight="700" text-anchor="middle">仓</text>
+</svg>

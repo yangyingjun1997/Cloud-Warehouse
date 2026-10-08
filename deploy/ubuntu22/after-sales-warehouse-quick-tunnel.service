@@ -1,0 +1,21 @@
+[Unit]
+Description=After-sales Warehouse temporary Cloudflare Tunnel
+After=network-online.target nginx.service
+Wants=network-online.target
+Requires=nginx.service
+
+[Service]
+Type=simple
+User=cloudflared
+Group=cloudflared
+ExecStart=/usr/local/sbin/after-sales-warehouse-quick-tunnel-runner
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cloudflared
+
+[Install]
+WantedBy=multi-user.target
