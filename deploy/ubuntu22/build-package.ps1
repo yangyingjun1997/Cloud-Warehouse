@@ -117,25 +117,27 @@ function Test-IsExcluded([string]$FullPath, [bool]$IsDirectory) {
     return $false
 }
 
-$sourceFiles = foreach ($includedPath in $includedPaths) {
-    $absolutePath = Join-Path $repoRootPath $includedPath
-    if (-not (Test-Path -LiteralPath $absolutePath)) {
-        throw "Required package path does not exist: $includedPath"
+$sourceFiles = @(
+    foreach ($includedPath in $includedPaths) {
+        $absolutePath = Join-Path $repoRootPath $includedPath
+        if (-not (Test-Path -LiteralPath $absolutePath)) {
+            throw "Required package path does not exist: $includedPath"
+        }
+        if ((Get-Item -LiteralPath $absolutePath).PSIsContainer) {
+            Get-ChildItem -LiteralPath $absolutePath -Force -Recurse -File
+        }
+        else {
+            Get-Item -LiteralPath $absolutePath
+        }
     }
-    if ((Get-Item -LiteralPath $absolutePath).PSIsContainer) {
-        Get-ChildItem -LiteralPath $absolutePath -Force -Recurse -File
+    foreach ($pattern in $includedFilePatterns) {
+        $patternFiles = @(Get-ChildItem -Path (Join-Path $repoRootPath $pattern) -File)
+        if ($patternFiles.Count -eq 0) {
+            throw "Required package file pattern did not match: $pattern"
+        }
+        $patternFiles
     }
-    else {
-        Get-Item -LiteralPath $absolutePath
-    }
-}
-foreach ($pattern in $includedFilePatterns) {
-    $patternFiles = @(Get-ChildItem -Path (Join-Path $repoRootPath $pattern) -File)
-    if ($patternFiles.Count -eq 0) {
-        throw "Required package file pattern did not match: $pattern"
-    }
-    $patternFiles
-}
+)
 
 $sourceFiles |
     Where-Object { -not (Test-IsExcluded $_.FullName $false) } |
