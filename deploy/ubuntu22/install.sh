@@ -54,6 +54,48 @@ if [[ ! -f "$SOURCE_BACKEND/manage.py" ]]; then
   exit 1
 fi
 
+# 发布包在任何服务器变更前先完成身份校验。手工源码部署没有 manifest 时
+# 明确标记为未版本化，不能被误认成可追溯的正式构建。
+RELEASE_VERSION=unversioned
+SOURCE_REVISION=unknown
+SOURCE_REVISION_SHORT=unknown
+WORKING_TREE_DIRTY=unknown
+SOURCE_CONTENT_SHA256=unknown
+if [[ -f "$REPO_ROOT/release-manifest.json" ]]; then
+  mapfile -t release_metadata < <(python3 - "$REPO_ROOT/release-manifest.json" <<'PY'
+import json
+import sys
+
+manifest_path = sys.argv[1]
+with open(manifest_path, encoding="utf-8-sig") as manifest_file:
+    manifest = json.load(manifest_file)
+
+fields = (
+    ("version", "unversioned"),
+    ("source_revision", "unknown"),
+    ("source_revision_short", "unknown"),
+    ("working_tree_dirty", "unknown"),
+    ("source_content_sha256", "unknown"),
+)
+for key, default in fields:
+    value = manifest.get(key, default)
+    if isinstance(value, bool):
+        value = str(value).lower()
+    value = str(value).replace("\r", " ").replace("\n", " ")
+    print(value)
+PY
+  )
+  if (( ${#release_metadata[@]} != 5 )); then
+    echo "Invalid release-manifest.json: expected five release metadata values."
+    exit 1
+  fi
+  RELEASE_VERSION="${release_metadata[0]}"
+  SOURCE_REVISION="${release_metadata[1]}"
+  SOURCE_REVISION_SHORT="${release_metadata[2]}"
+  WORKING_TREE_DIRTY="${release_metadata[3]}"
+  SOURCE_CONTENT_SHA256="${release_metadata[4]}"
+fi
+
 # ---------------------------------------------------------------------------
 # 出口地址白名单
 # 服务器通常同时具备有线、WiFi、内网专线等多个出口，客户端从任意一条都能访问。
@@ -170,6 +212,9 @@ created_at=$(date --iso-8601=seconds)
 source=pre_deploy_snapshot
 host=$(hostname)
 EOF
+  if [[ -r "$APP_DIR/current-release" ]]; then
+    install -m 640 "$APP_DIR/current-release" "$snapshot_dir/current-release.txt"
+  fi
   echo "已保存当前程序代码快照：$snapshot_dir"
 
   mapfile -t old_snapshots < <(find "$RELEASE_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -rn | awk 'NR > 10 {print $2}')
@@ -364,8 +409,12 @@ systemctl restart after-sales-warehouse-health.timer after-sales-warehouse-backu
 cat > "$APP_DIR/current-release" <<EOF
 deployed_at=$(date --iso-8601=seconds)
 server_name=$SERVER_NAME
-source_backend=$SOURCE_BACKEND
 host=$(hostname)
+release_version=$RELEASE_VERSION
+source_revision=$SOURCE_REVISION
+source_revision_short=$SOURCE_REVISION_SHORT
+working_tree_dirty=$WORKING_TREE_DIRTY
+source_content_sha256=$SOURCE_CONTENT_SHA256
 EOF
 chown "$APP_USER:$APP_GROUP" "$APP_DIR/current-release"
 

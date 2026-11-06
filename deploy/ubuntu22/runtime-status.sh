@@ -42,6 +42,12 @@ printf 'Django: '; /opt/after-sales-warehouse/venv/bin/python -m django --versio
 printf 'Gunicorn: '; /opt/after-sales-warehouse/venv/bin/gunicorn --version 2>/dev/null || echo '未安装'
 printf 'Nginx: '; nginx -v 2>&1 || true
 printf 'PostgreSQL client: '; psql --version 2>/dev/null || echo '未安装'
+if [[ -r /opt/after-sales-warehouse/current-release ]]; then
+  echo '当前应用发布：'
+  sed -e 's/^/  /' /opt/after-sales-warehouse/current-release
+else
+  echo '当前应用发布：未记录'
+fi
 echo
 
 echo '--- 健康检查 ---'

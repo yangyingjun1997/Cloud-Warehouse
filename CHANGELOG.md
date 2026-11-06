@@ -19,6 +19,7 @@
 
 ### Changed
 
+- 部署脚本将 release manifest 中的版本、Git revision、脏工作区状态和源内容哈希持久化到服务器；运行状态可直接查看，代码快照与回滚保留对应发布身份。
 - workflow API 的审批/拒绝与出入库执行改用独立组合权限，未授权角色直接返回 403；通知 API 收敛为只读、未读计数和标记已读。
 - 移除 DRF Basic Authentication，内网 API 继续使用时效令牌或 Django Session，避免 HTTP 环境传输基础认证口令。
 - 发布构建默认拒绝脏 Git 工作区；紧急 `-AllowDirty` 包自动携带 `dirty`、完整 revision 和源内容哈希。
@@ -52,6 +53,7 @@
 
 ### Verification
 
+- 2026-11-06：部署元数据 JSON 解析、正式包/紧急脏包字段、缺少 manifest 降级标记和回滚元数据保留完成检查。
 - 2026-11-06：累计改动建立 Git 基线 `1228c04`，发布手册纳入修正为 `cbe99d5`；干净发布包验证 `working_tree_dirty=false`、revision/内容哈希正确，且不含环境文件、业务数据、EXE 或构建产物。
 - 2026-11-06：权限/API 加固专项测试 `27/27`、Django 全量测试 `356/356`、打印渲染测试 `6/6`、系统检查、迁移漂移、JavaScript 语法和差异格式检查通过。Win11 系统临时目录不可写时改用受控 `.worktmp` 运行全量测试，确认首轮批量错误均为环境问题。
 - 2026-11-06：发布脚本默认拒绝脏工作区验证通过；显式紧急构建生成 `dirty + 内容哈希` 包。新 `BwtLabelClient.exe` 为 32,395,359 字节，SHA-256 `8d436201ccba1b73aed4c8ac246e6aa90b6d6891ea88530bf19cf1dd5e19f488`。

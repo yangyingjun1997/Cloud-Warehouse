@@ -120,13 +120,29 @@ fi
 sudo -u "$APP_USER" "$APP_DIR/venv/bin/python" "$BACKEND_DIR/manage.py" check
 sudo -u "$APP_USER" "$APP_DIR/venv/bin/python" "$BACKEND_DIR/manage.py" collectstatic --noinput
 
-cat > "$APP_DIR/current-release" <<EOF
+if [[ -r "$SNAPSHOT_DIR/current-release.txt" ]]; then
+  install -o "$APP_USER" -g "$APP_GROUP" -m 640 \
+    "$SNAPSHOT_DIR/current-release.txt" "$APP_DIR/current-release"
+  cat >> "$APP_DIR/current-release" <<EOF
 rolled_back_at=$(date --iso-8601=seconds)
 rollback_snapshot=$target
 pre_rollback_snapshot=$(basename "$PRE_ROLLBACK_DIR")
 database_rollback=not_performed
 EOF
-chown "$APP_USER:$APP_GROUP" "$APP_DIR/current-release"
+else
+  cat > "$APP_DIR/current-release" <<EOF
+rolled_back_at=$(date --iso-8601=seconds)
+rollback_snapshot=$target
+pre_rollback_snapshot=$(basename "$PRE_ROLLBACK_DIR")
+database_rollback=not_performed
+release_version=unknown_legacy_snapshot
+source_revision=unknown
+source_revision_short=unknown
+working_tree_dirty=unknown
+source_content_sha256=unknown
+EOF
+  chown "$APP_USER:$APP_GROUP" "$APP_DIR/current-release"
+fi
 
 systemctl restart after-sales-warehouse
 systemctl reload nginx || true

@@ -48,6 +48,7 @@
 
 ## Verified baseline
 
+- 2026-11-06：部署运行状态追溯已补齐：安装脚本严格解析发布 manifest，并将版本、完整/短 revision、脏工作区状态和源内容 SHA-256 写入服务器 `current-release`；部署前代码快照保存旧发布身份，代码回滚后恢复并追加回滚记录。缺少 manifest 的手工源码部署明确标记为未版本化。
 - 2026-11-06：累计功能与治理改动已建立 Git 基线提交 `1228c04`，发布手册纳入修正提交为 `cbe99d5`。干净工作区构建验证 manifest 的 `working_tree_dirty=false`、完整 revision 与内容哈希正确，发布包包含 318 个文件和 Ubuntu 手册，未包含 `.env`、数据库、Excel、EXE、媒体、备份或构建目录。
 - 2026-11-06：workflow API 已分别使用审批权限和出入库执行权限，拆分角色不能越权；通知 API 收敛为只读、未读计数和标记已读；DRF Basic Authentication 已移除。专项测试 `27/27`、Django 全量测试 `356/356`、打印渲染 `6/6`、系统检查、迁移漂移、JavaScript 语法和差异格式检查通过。
 - 2026-11-06：发布脚本默认拒绝脏工作区，显式 `-AllowDirty` 构建会在包名和 manifest 中记录 `dirty`、完整 Git revision 与源文件内容哈希；Windows PowerShell 5 下中文手册通过 ASCII 通配模式可靠纳入发布包。

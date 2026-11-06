@@ -188,6 +188,10 @@ sudo bash deploy/ubuntu22/install.sh --host <SERVER_IP>
 
 构建脚本默认要求 Git 工作区干净，确保包名和 manifest 能准确对应提交。仅紧急调试可显式增加
 `-AllowDirty`；此时包名会自动包含 `dirty` 和内容哈希，不得作为正式发布版本。
+安装完成后，发布版本、Git revision、脏工作区标记和源内容 SHA-256 会写入
+`/opt/after-sales-warehouse/current-release`，可通过
+`sudo /usr/local/sbin/after-sales-warehouse-status` 查看。手工源码部署缺少 manifest 时会明确显示
+`unversioned/unknown`；部署前代码快照会保留旧发布身份，代码回滚后恢复该身份并追加回滚记录。
 
 安装脚本会自动完成：
 
