@@ -1386,8 +1386,12 @@ def consistency_check_export(request):
     return response
 
 
-@role_required(is_warehouse_operator, message='当前账号没有仓库管理权限。')
-def warehouse_management(request):
+def _warehouse_filtered_assets(request):
+    """按仓库管理页的 GET 条件过滤资产 queryset。
+
+    页面视图与 CSV 导出共用，保证「导出的就是当前筛选结果」。
+    返回按页面默认顺序排序的资产 queryset（不含分页）。
+    """
     query = request.GET.get('q', '').strip()
     status = request.GET.get('status', '').strip()
     location_state = request.GET.get('location_state', '').strip()
@@ -1397,14 +1401,9 @@ def warehouse_management(request):
     warehouse_id = request.GET.get('warehouse', '').strip()
     location_id = request.GET.get('location', '').strip()
     item_type_id = request.GET.get('item_type', '').strip()
-    tab = request.GET.get('tab', 'assets')
     assets = Asset.objects.select_related('item_type', 'warehouse', 'location')
-    stock_items = StockItem.objects.select_related('item_type', 'warehouse', 'location').order_by('name')
     if query:
         assets = assets.filter(asset_search_query(query)).distinct()
-        stock_items = stock_items.filter(
-            Q(name__icontains=query) | Q(code__icontains=query) | Q(item_type__name__icontains=query)
-        ).distinct()
     selected_statuses = [value for value in status.split(',') if value]
     if selected_statuses:
         assets = assets.filter(status__in=selected_statuses)
@@ -1425,12 +1424,76 @@ def warehouse_management(request):
             assets = assets.filter(**{field: value})
     if warehouse_id:
         assets = assets.filter(warehouse_id=warehouse_id)
-        stock_items = stock_items.filter(warehouse_id=warehouse_id)
     if location_id:
         assets = assets.filter(location_id=location_id)
-        stock_items = stock_items.filter(location_id=location_id)
     if item_type_id:
         assets = assets.filter(item_type_id=item_type_id)
+    return assets
+
+
+@role_required(is_warehouse_operator, message='当前账号没有仓库管理权限。')
+def warehouse_asset_export(request):
+    """资产台账 CSV 导出：套用与台账页完全一致的筛选条件。
+
+    采购金额属财务字段，无财务权限时不导出该列（与出入库导出同一口径）。
+    """
+    assets = _warehouse_filtered_assets(request).order_by(
+        'warehouse__name', 'location__code', 'asset_code', 'system_asset_no',
+    )
+    response = HttpResponse(content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = 'attachment; filename="warehouse-assets.csv"'
+    response.write('﻿')
+    writer = csv.writer(response)
+    show_financials = can_view_financials(request.user)
+    header = ['资产编码', '系统编号', '资产名称', '生产厂家', '型号', '生产厂家 SN',
+              '物品类型', '综合状态', '实物位置', '可用性', '质量状态', '处置状态',
+              '仓库', '库位', '供应商', '质保到期日']
+    if show_financials:
+        header.append('采购金额（元）')
+    writer.writerow(header)
+    for asset in assets.iterator():
+        row = [
+            asset.asset_code or '暂未赋码', asset.system_asset_no, asset.name,
+            asset.manufacturer, asset.model, asset.serial_number,
+            asset.item_type.name if asset.item_type else '',
+            asset.get_status_display(), asset.get_location_state_display(),
+            asset.get_availability_state_display(), asset.get_quality_state_display(),
+            asset.get_disposition_state_display(),
+            asset.warehouse.name if asset.warehouse else '未入库',
+            asset.location.code if asset.location else '',
+            asset.supplier, asset.warranty_until.isoformat() if asset.warranty_until else '',
+        ]
+        if show_financials:
+            row.append(asset.purchase_amount if asset.purchase_amount is not None else '')
+        writer.writerow(row)
+    return response
+
+
+@role_required(is_warehouse_operator, message='当前账号没有仓库管理权限。')
+def warehouse_management(request):
+    query = request.GET.get('q', '').strip()
+    status = request.GET.get('status', '').strip()
+    location_state = request.GET.get('location_state', '').strip()
+    availability_state = request.GET.get('availability_state', '').strip() or request.GET.get('availability', '').strip()
+    quality_state = request.GET.get('quality_state', '').strip()
+    disposition_state = request.GET.get('disposition_state', '').strip()
+    warehouse_id = request.GET.get('warehouse', '').strip()
+    location_id = request.GET.get('location', '').strip()
+    item_type_id = request.GET.get('item_type', '').strip()
+    tab = request.GET.get('tab', 'assets')
+    selected_statuses = [value for value in status.split(',') if value]
+    # 资产过滤逻辑与 CSV 导出共用 _warehouse_filtered_assets，保证口径一致。
+    assets = _warehouse_filtered_assets(request)
+    stock_items = StockItem.objects.select_related('item_type', 'warehouse', 'location').order_by('name')
+    if query:
+        stock_items = stock_items.filter(
+            Q(name__icontains=query) | Q(code__icontains=query) | Q(item_type__name__icontains=query)
+        ).distinct()
+    if warehouse_id:
+        stock_items = stock_items.filter(warehouse_id=warehouse_id)
+    if location_id:
+        stock_items = stock_items.filter(location_id=location_id)
+    if item_type_id:
         stock_items = stock_items.filter(item_type_id=item_type_id)
     low_serialized_types = _serialized_type_availability(
         ItemType.objects.filter(is_serialized=True, safety_stock__gt=0)

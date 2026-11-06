@@ -34,8 +34,9 @@
   <form method="get" class="management-bar">
     <input type="hidden" name="tab" value="{{ active_tab }}">
     <input type="hidden" name="page_size" value="{{ page_size }}">
-    <input id="management-query" name="q" class="management-search" value="{{ query }}" placeholder="搜索编码、SN、名称或别名；支持 ! &amp; | ()" aria-label="搜索">
+    <input id="management-query" name="q" class="management-search" value="{{ query }}" placeholder="搜索编码、SN、名称或别名；支持扫码枪扫码定位，支持 ! &amp; | ()" aria-label="搜索">
     <button class="button button-primary" type="submit">搜索</button>
+    {% if active_tab == 'assets' %}<a class="button button-secondary" href="{% url 'warehouse_asset_export' %}?{{ asset_filter_query }}" title="按当前筛选条件导出资产台账 CSV">导出 CSV</a>{% endif %}
     <details class="management-advanced" {% if advanced_active %}open{% endif %}>
       <summary>更多筛选{% if advanced_count %}<span class="filter-badge">{{ advanced_count }}</span>{% endif %}</summary>
       <div class="management-advanced-body">

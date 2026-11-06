@@ -1119,6 +1119,46 @@ class DashboardAndAdminTests(TestCase):
         self.assertContains(response, borrowed_asset.asset_code)
         self.assertNotContains(response, self.asset.asset_code)
 
+    def test_warehouse_asset_export_inherits_current_filters(self):
+        """资产台账 CSV 导出必须套用与页面一致的筛选条件。"""
+        borrowed_asset = Asset.objects.create(
+            name='已借出测试资产',
+            item_type=self.asset.item_type,
+            warehouse=self.asset.warehouse,
+            location=self.asset.location,
+            asset_code='WEB-ZC-EXPORT-2',
+            serial_number='SN-WEB-EXPORT-2',
+            status=Asset.Status.BORROWED,
+        )
+        self.client.force_login(self.operator)
+
+        response = self.client.get(
+            '/warehouse/assets.csv',
+            {'location_state': Asset.LocationState.OUT_ON_LOAN},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('text/csv', response['Content-Type'])
+        self.assertIn('attachment', response['Content-Disposition'])
+        body = response.content.decode('utf-8-sig')
+        self.assertIn(borrowed_asset.asset_code, body)
+        self.assertNotIn(self.asset.asset_code, body)
+
+    def test_warehouse_asset_export_hides_financials_without_permission(self):
+        """无财务权限时导出不含采购金额列。"""
+        Asset.objects.filter(pk=self.asset.pk).update(purchase_amount='1234.56')
+        self.client.force_login(self.operator)
+
+        response = self.client.get('/warehouse/assets.csv')
+        body = response.content.decode('utf-8-sig')
+        self.assertNotIn('采购金额', body)
+        self.assertNotIn('1234.56', body)
+
+    def test_warehouse_asset_export_requires_operator_permission(self):
+        self.client.force_login(self.employee)
+        response = self.client.get('/warehouse/assets.csv')
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, '/')
+
     def test_asset_lookup_uses_availability_dimension_for_request_label(self):
         Asset.objects.filter(pk=self.asset.pk).update(
             availability_state=Asset.AvailabilityState.RESERVED,

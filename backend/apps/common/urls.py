@@ -19,6 +19,7 @@ urlpatterns = [
     ), name='password_change_done'),
     path('assets/lookup/', views.asset_lookup, name='asset_lookup'),
     path('warehouse/', views.warehouse_management, name='warehouse_management'),
+    path('warehouse/assets.csv', views.warehouse_asset_export, name='warehouse_asset_export'),
     path('warehouse/items/new/', views.warehouse_item_create, name='warehouse_item_create'),
     path('warehouse/low-stock/', views.low_stock_alerts, name='low_stock_alerts'),
     path('warehouse/replenishment/', views.replenishment_suggestions, name='replenishment_suggestions'),

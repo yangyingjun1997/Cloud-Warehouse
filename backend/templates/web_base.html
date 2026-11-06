@@ -921,6 +921,7 @@
         /^\/warehouse\/quick-process\//,
         /^\/inventory-checks\//,
         /^\/warehouse\/assets\/[^/]+\/lifecycle\//,
+        /^\/warehouse\/$/,
         /^\/requests\/new\//,
         /^\/my-loans\//,
         /^\/approvals\//,
@@ -1035,6 +1036,15 @@
             }
             candidateInput.value = value;
             candidateInput.focus();
+            if (candidateInput.id === 'management-query') {
+              // 资产台账：扫码即定位——填入搜索框并提交筛选表单，命中行即高亮呈现。
+              // 合成 keydown 不触发浏览器原生提交，需显式 requestSubmit。
+              flash(`已扫码：${value}，正在台账中定位…`, false);
+              if (candidateInput.form) {
+                candidateInput.form.requestSubmit();
+              }
+              return;
+            }
             candidateInput.dispatchEvent(new KeyboardEvent('keydown', {
               key: 'Enter', bubbles: true, cancelable: true,
             }));
