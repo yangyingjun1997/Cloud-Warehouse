@@ -5,9 +5,11 @@ rem Windows 11 local acceptance launcher for the warehouse system.
 cd /d "%~dp0"
 set "PROJECT_ROOT=%~dp0"
 set "BACKEND_DIR=%PROJECT_ROOT%backend"
-set "DATA_DIR=%LOCALAPPDATA%\AfterSalesWarehouse\data"
+rem 数据库放在项目内 runtime-data：本机安全策略限制 Python 进程写 LOCALAPPDATA，
+rem 会导致 "attempt to write a readonly database"。项目目录不受该限制。
+set "DATA_DIR=%PROJECT_ROOT%runtime-data"
 set "DB_NAME=%DATA_DIR%\db.sqlite3"
-set "LEGACY_DB=%PROJECT_ROOT%runtime-data\db.sqlite3"
+set "LEGACY_DB=%LOCALAPPDATA%\AfterSalesWarehouse\data\db.sqlite3"
 set "VENV_DIR=%PROJECT_ROOT%.venv"
 set "PYTHON_EXE=%VENV_DIR%\Scripts\python.exe"
 set "ALLOWED_HOSTS=127.0.0.1,localhost,0.0.0.0,*"
@@ -33,7 +35,8 @@ if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
 if not exist "%DB_NAME%" (
     echo [DATA] Initializing writable runtime database...
     if exist "%LEGACY_DB%" (
-        echo        Migrating the previous workspace database to LocalAppData...
+        echo        Migrating the previous LocalAppData database into the workspace...
+        attrib -R "%LEGACY_DB%" >nul 2>nul
         copy /Y "%LEGACY_DB%" "%DB_NAME%" >nul
     ) else if exist "%BACKEND_DIR%\db.sqlite3" (
         copy /Y "%BACKEND_DIR%\db.sqlite3" "%DB_NAME%" >nul
