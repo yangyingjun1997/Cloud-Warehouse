@@ -56,6 +56,7 @@ from apps.common.permissions import (
     can_view_reports,
     is_system_administrator, is_warehouse_operator,
 )
+from apps.common.security_audit import record_login_event
 from apps.accounts.models import Department, UserProfile
 from apps.inventory.forms import (
     AssetAttachmentForm,
@@ -449,8 +450,20 @@ self.addEventListener('fetch', event => {
 def logout_view(request):
     if request.method != 'POST':
         return redirect('home')
+    username = request.user.get_username()
+    client_ip = client_ip_from_request(request)
+
+    def logout_and_record():
+        with transaction.atomic():
+            record_login_event(
+                event_type='logout_succeeded',
+                username=username,
+                client_ip=client_ip,
+            )
+            auth_logout(request)
+
     try:
-        retry_database_operation(lambda: auth_logout(request))
+        retry_database_operation(logout_and_record)
     except DatabaseError:
         messages.error(request, '退出登录时数据库繁忙，请稍后重试。')
         return redirect('home')

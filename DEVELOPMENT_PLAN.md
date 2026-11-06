@@ -85,6 +85,19 @@ Acceptance: 打印渲染尺寸及四象限测试通过；全量回归通过后�
 
 Acceptance: 拆分角色正反向测试、通知只读测试、全量回归和打印渲染通过；干净发布包 manifest 对应真实提交；NUC 部署前后业务数据计数不变。
 
+### M7 Pre-production security and concurrency hardening
+
+Status: in progress. 当前只面向内网小范围试运行，不把自动化回归包装成第三方安全认证。
+
+- 建立上线前安全与质量评估报告，区分已验证、未验证和公网阻断项。
+- 登录成功、失败、限流阻断和退出均写入匿名化安全事件审计。
+- 使用 PostgreSQL 隔离测试库验证审批、资产预约、快速出库、耗材扣减和安全计数竞态。
+- 建立只读 HTTP 并发基线工具，输出 P50/P95/P99、吞吐、状态码和错误率。
+- 与用户确认特权账号会话策略；未确认前不强制单点登录。
+- 钉钉双向交互先完成安全边界设计，不开放自由群聊文本直接修改库存。
+
+Acceptance: 本地全量回归通过；PostgreSQL 并发专项在目标环境通过；NUC 只读基线有可复现结果；报告记录剩余风险且不包含明文凭据。
+
 ## Regression checklist
 
 1. `python manage.py check`

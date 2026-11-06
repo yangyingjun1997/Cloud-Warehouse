@@ -242,11 +242,25 @@ sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
   /opt/after-sales-warehouse/backend/manage.py smoke_business_flows \
   --actor admin --confirm '确认写入冒烟数据' --rollback
 
+# PostgreSQL 隔离测试库竞态测试（临时授权建库，结束自动撤销并删库）
+sudo /usr/local/sbin/after-sales-warehouse-concurrency-test
+
 # 回滚到上一个版本
 sudo /usr/local/sbin/after-sales-warehouse-rollback --list
 ```
 
 业务冒烟覆盖快速出入库、申请审批、维修回库、采购到货、盘点修正、V3 导入撤销和离线幂等/冲突。必须保留 `--rollback`；服务器已存在业务数据时禁止用持久写入模式执行。
+
+轻量只读 HTTP 基线可从开发机执行，不提交任何表单：
+
+```bash
+python tools/read_only_load_test.py \
+  --base-url http://<SERVER_IP>/ \
+  --path /health/ --path /login/ \
+  --requests 200 --concurrency 8
+```
+
+该结果只反映只读入口，不代替登录后业务页面压测、资源监控或稳定性测试。
 
 ### 定时任务
 
@@ -376,6 +390,7 @@ python manage.py test apps.common -v 2   # 详细输出
 - 部署原理与手动部署步骤：`Ubuntu22.04完整手动部署手册.md`
 - 当前状态与剩余任务：`PROJECT_STATUS.md`
 - 开发顺序与回归验收：`DEVELOPMENT_PLAN.md`
+- 上线前安全、并发和质量边界：`docs/上线前安全与质量评估报告.md`
 - 资产编码规则：`资产编码系统V2设计规范.md`
 - 扫码枪接入：`扫码枪接入说明.md`
 - 打印客户端：`打印机客户端部署与测试流程.md`

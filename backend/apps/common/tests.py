@@ -235,6 +235,21 @@ class LoginSecurityAuditTests(TestCase):
         self.assertTrue(SecurityAuditEvent.objects.filter(event_type='login_failed').exists())
         self.assertTrue(SecurityAuditEvent.objects.filter(event_type='login_blocked').exists())
 
+    def test_successful_login_records_hashed_security_event(self):
+        User.objects.create_user(username='successful-audit-user', password='correct-password')
+
+        response = self.client.post('/login/', {
+            'username': 'successful-audit-user',
+            'password': 'correct-password',
+        })
+
+        self.assertRedirects(response, '/')
+        event = SecurityAuditEvent.objects.get(event_type='login_succeeded')
+        self.assertEqual(len(event.subject_hash), 64)
+        self.assertEqual(len(event.ip_hash), 64)
+        self.assertNotIn('successful-audit-user', event.subject_hash)
+        self.assertNotIn('127.0.0.1', event.ip_hash)
+
     def test_security_audit_event_is_append_only(self):
         event = SecurityAuditEvent.objects.create(
             event_type='login_failed',
@@ -511,6 +526,9 @@ class DashboardAndAdminTests(TestCase):
 
         self.assertRedirects(response, '/login/')
         self.assertNotIn('_auth_user_id', self.client.session)
+        event = SecurityAuditEvent.objects.get(event_type='logout_succeeded')
+        self.assertEqual(len(event.subject_hash), 64)
+        self.assertEqual(len(event.ip_hash), 64)
 
     def test_employee_dashboard_hides_inventory_counts_and_admin_navigation(self):
         self.client.force_login(self.employee)

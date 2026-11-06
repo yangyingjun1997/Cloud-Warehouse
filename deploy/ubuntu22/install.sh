@@ -379,6 +379,7 @@ install -m 750 "$SCRIPT_DIR/health-monitor.sh" /usr/local/sbin/after-sales-wareh
 install -m 750 "$SCRIPT_DIR/restore-drill.sh" /usr/local/sbin/after-sales-warehouse-restore-drill
 install -m 750 "$SCRIPT_DIR/rollback.sh" /usr/local/sbin/after-sales-warehouse-rollback
 install -m 750 "$SCRIPT_DIR/security-check.sh" /usr/local/sbin/after-sales-warehouse-security-check
+install -m 750 "$SCRIPT_DIR/run-concurrency-tests.sh" /usr/local/sbin/after-sales-warehouse-concurrency-test
 install -d -m 755 /usr/local/libexec
 install -m 750 "$SCRIPT_DIR/dingtalk-notify.py" /usr/local/libexec/after-sales-warehouse-dingtalk-notify
 sed "s/__SERVER_NAME__/$RESOLVED_SERVER_NAME/g" "$SCRIPT_DIR/nginx-after-sales-warehouse.conf" > /etc/nginx/sites-available/after-sales-warehouse
@@ -431,4 +432,5 @@ fi
 echo "登记域名或其它 IP：sudo bash deploy/ubuntu22/register-host.sh <IP或域名>"
 echo "Verify with: systemctl status after-sales-warehouse nginx"
 echo "Security check: sudo /usr/local/sbin/after-sales-warehouse-security-check"
+echo "Concurrency test: sudo /usr/local/sbin/after-sales-warehouse-concurrency-test"
 echo "Rollback list: sudo /usr/local/sbin/after-sales-warehouse-rollback --list"

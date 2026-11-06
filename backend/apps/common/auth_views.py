@@ -3,6 +3,7 @@
 from django import forms
 from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth import views as auth_views
+from django.db import transaction
 
 from .auth_throttle import (
     clear_account_failures,
@@ -55,3 +56,15 @@ class RateLimitedAuthenticationForm(AuthenticationForm):
 class RateLimitedLoginView(auth_views.LoginView):
     authentication_form = RateLimitedAuthenticationForm
     template_name = 'registration/login.html'
+
+    def form_valid(self, form):
+        """完成登录并记录不含明文账号/IP 的成功事件。"""
+
+        with transaction.atomic():
+            response = super().form_valid(form)
+            record_login_event(
+                event_type='login_succeeded',
+                username=form.get_user().get_username(),
+                client_ip=get_client_ip(self.request),
+            )
+        return response
