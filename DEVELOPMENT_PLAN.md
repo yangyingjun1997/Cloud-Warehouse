@@ -54,6 +54,8 @@ Acceptance: 正向、非管理员、确认文字错误、有业务历史、重�
 
 ### M4 Deployment and PostgreSQL smoke
 
+Status: completed on 2026-11-06. PostgreSQL 回滚式冒烟已覆盖导入撤销、快速出入库、申请审批、采购到货、盘点修正、维修回库和离线冲突，业务数据计数前后保持不变。
+
 - 本地全量测试通过后部署到 `192.168.123.101`。
 - 部署前自动生成数据库和代码快照。
 - 保留服务器 `.env`、PostgreSQL 和媒体文件。
@@ -63,6 +65,8 @@ Acceptance: 正向、非管理员、确认文字错误、有业务历史、重�
 Acceptance: 健康检查 200；服务 active；冒烟全通过；服务器版本和时间写入 PROJECT_STATUS。
 
 ### M5 Label calibration and manual maintenance
+
+Status: software completed, device blocked. 标签机损坏期间不继续真机尺寸、浓度和批量打印验收。
 
 - 旧台账 V4 转换入口已按手工维护方案移除，历史台账只作为人工核对依据。
 - Windows 打印客户端增加 60×40 mm 校准页和完整 2×2 四格测试打印。

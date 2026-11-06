@@ -4,8 +4,13 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase
 
-from apps.inventory.models import Asset, Category, ItemType, Location, MaintenanceRecord, Warehouse
-from apps.workflow.models import InventoryTransaction, WorkflowRequest
+from apps.inventory.models import (
+    Asset, Category, ImportBatch, InventoryCheckTask, ItemType, Location,
+    MaintenanceRecord, StockItem, Warehouse,
+)
+from apps.workflow.models import (
+    InventoryTransaction, OfflineOperation, PurchaseRequest, WorkflowRequest,
+)
 
 
 class SmokeBusinessFlowsCommandTests(TestCase):
@@ -34,10 +39,16 @@ class SmokeBusinessFlowsCommandTests(TestCase):
         )
 
         self.assertIn('业务冒烟通过', output.getvalue())
+        self.assertIn('采购到货、盘点修正、导入撤销、离线幂等与冲突', output.getvalue())
         self.assertGreaterEqual(WorkflowRequest.objects.count(), 5)
         self.assertGreaterEqual(InventoryTransaction.objects.count(), 4)
         self.assertEqual(Asset.objects.exclude(status=Asset.Status.IN_STOCK).count(), 0)
         self.assertEqual(Asset.objects.exclude(location__isnull=True).count(), 1)
+        self.assertEqual(StockItem.objects.count(), 0)
+        self.assertEqual(PurchaseRequest.objects.count(), 0)
+        self.assertEqual(InventoryCheckTask.objects.count(), 0)
+        self.assertEqual(ImportBatch.objects.count(), 0)
+        self.assertEqual(OfflineOperation.objects.count(), 0)
 
     def test_rollback_mode_verifies_flows_without_leaving_test_data(self):
         actor = get_user_model().objects.create_superuser(
@@ -65,9 +76,15 @@ class SmokeBusinessFlowsCommandTests(TestCase):
         )
 
         self.assertIn('业务冒烟通过', output.getvalue())
+        self.assertIn('采购到货、盘点修正、导入撤销、离线幂等与冲突', output.getvalue())
         self.assertIn('不会保留', output.getvalue())
         self.assertEqual(WorkflowRequest.objects.count(), 0)
         self.assertEqual(InventoryTransaction.objects.count(), 0)
         self.assertEqual(MaintenanceRecord.objects.count(), 0)
         self.assertEqual(Location.objects.count(), 0)
         self.assertEqual(Asset.objects.exclude(status=Asset.Status.IN_STOCK).count(), 0)
+        self.assertEqual(StockItem.objects.count(), 0)
+        self.assertEqual(PurchaseRequest.objects.count(), 0)
+        self.assertEqual(InventoryCheckTask.objects.count(), 0)
+        self.assertEqual(ImportBatch.objects.count(), 0)
+        self.assertEqual(OfflineOperation.objects.count(), 0)

@@ -4,7 +4,7 @@
 
 - Django 单体按 `accounts`、`common`、`inventory`、`workflow`、`notifications` 分域。
 - Web/PWA 是当前唯一前端交付；小程序暂停，不与后端放在同一发布包。
-- PostgreSQL 是 NUC 唯一正式运行数据库；SQLite 仅限本机开发和隔离测试。
+- PostgreSQL 是 NUC 唯一正式运行数据库；SQLite 仅限本机开发和隔离测试。NUC 上已有的 MySQL 容器不属于本系统架构，除非出现经过测量且 PostgreSQL 无法解决的需求，否则不得发起数据库迁移。
 - Nginx 负责 80/443 入口，Gunicorn 仅监听 `127.0.0.1:8000`。
 - systemd 管理 Web 服务、备份、健康检查、预警和清理任务。
 

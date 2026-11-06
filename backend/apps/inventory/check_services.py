@@ -225,7 +225,12 @@ def scan_check_value(task, actor, value, quantity=1, note=''):
     observed_location = getattr(asset, 'location', None) or getattr(stock_item, 'location', None)
 
     if asset:
-        line = task.lines.select_for_update().filter(asset=asset).first()
+        line = (
+            task.lines.select_for_update(of=('self',))
+            .order_by('pk')
+            .filter(asset=asset)
+            .first()
+        )
         in_scope = asset.status in COUNTABLE_ASSET_STATUSES and asset.warehouse_id == task.warehouse_id and (
             not task.location_id or asset.location_id == task.location_id
         )
@@ -263,7 +268,12 @@ def scan_check_value(task, actor, value, quantity=1, note=''):
         else:
             result = InventoryCheckScan.Result.OUT_OF_SCOPE
     elif stock_item:
-        line = task.lines.select_for_update().filter(stock_item=stock_item).first()
+        line = (
+            task.lines.select_for_update(of=('self',))
+            .order_by('pk')
+            .filter(stock_item=stock_item)
+            .first()
+        )
         in_scope = stock_item.warehouse_id == task.warehouse_id and (
             not task.location_id or stock_item.location_id == task.location_id
         )
@@ -372,7 +382,11 @@ def submit_check_task(task, actor):
     if task.status != InventoryCheckTask.Status.IN_PROGRESS:
         raise InventoryCheckError('只有盘点中的任务可以提交复核。')
     now = timezone.now()
-    pending_lines = task.lines.select_for_update().filter(counted_quantity__isnull=True)
+    pending_lines = (
+        task.lines.select_for_update(of=('self',))
+        .order_by('pk')
+        .filter(counted_quantity__isnull=True)
+    )
     for line in pending_lines:
         line.counted_quantity = 0
         line.result = InventoryCheckLine.Result.SHORTAGE

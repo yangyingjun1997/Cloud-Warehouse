@@ -85,6 +85,8 @@ def receive_offline_operation(*, operator, client_operation_id, client_created_a
     if operation.operator_id != operator.id:
         raise WorkflowError('该离线操作编号已由其他账号使用。')
     if not created:
+        if operation.payload != payload or operation.client_created_at != parsed_created_at:
+            raise WorkflowError('该离线操作编号对应的原始内容不一致，请删除本机异常记录后重新登记。')
         operation.retry_count += 1
         operation.save(update_fields=['retry_count', 'updated_at'])
         return operation, False

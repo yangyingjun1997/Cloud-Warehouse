@@ -65,16 +65,17 @@ class OfflineOperationTests(TestCase):
 
     def test_receive_is_idempotent_and_audited(self):
         client_id = uuid4()
+        client_created_at = timezone.now().isoformat()
         first, created = receive_offline_operation(
             operator=self.operator,
             client_operation_id=str(client_id),
-            client_created_at=timezone.now().isoformat(),
+            client_created_at=client_created_at,
             payload=self.payload,
         )
         second, created_again = receive_offline_operation(
             operator=self.operator,
             client_operation_id=str(client_id),
-            client_created_at=timezone.now().isoformat(),
+            client_created_at=client_created_at,
             payload=self.payload,
         )
         self.assertTrue(created)
@@ -82,6 +83,48 @@ class OfflineOperationTests(TestCase):
         self.assertEqual(first.id, second.id)
         self.assertEqual(OfflineOperation.objects.count(), 1)
         self.assertTrue(OperationAuditLog.objects.filter(action='offline_operation_received', target_id=first.id).exists())
+
+    def test_same_operation_id_cannot_cross_accounts(self):
+        other = User.objects.create_user(username='offline-other', password='password123')
+        other.groups.add(Group.objects.get(name='warehouse_staff'))
+        client_id = uuid4()
+        receive_offline_operation(
+            operator=self.operator,
+            client_operation_id=str(client_id),
+            client_created_at=timezone.now().isoformat(),
+            payload=self.payload,
+        )
+
+        with self.assertRaisesMessage(WorkflowError, '其他账号使用'):
+            receive_offline_operation(
+                operator=other,
+                client_operation_id=str(client_id),
+                client_created_at=timezone.now().isoformat(),
+                payload=self.payload,
+            )
+        self.assertEqual(OfflineOperation.objects.count(), 1)
+
+    def test_same_operation_id_rejects_changed_payload(self):
+        client_id = uuid4()
+        created_at = timezone.now().isoformat()
+        operation, _ = receive_offline_operation(
+            operator=self.operator,
+            client_operation_id=str(client_id),
+            client_created_at=created_at,
+            payload=self.payload,
+        )
+        changed_payload = {**self.payload, 'reason': ['被修改的离线原因']}
+
+        with self.assertRaisesMessage(WorkflowError, '原始内容不一致'):
+            receive_offline_operation(
+                operator=self.operator,
+                client_operation_id=str(client_id),
+                client_created_at=created_at,
+                payload=changed_payload,
+            )
+        operation.refresh_from_db()
+        self.assertEqual(operation.retry_count, 1)
+        self.assertEqual(operation.payload, self.payload)
 
     def test_sync_endpoint_returns_server_review_status(self):
         self.client.force_login(self.operator)

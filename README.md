@@ -237,9 +237,16 @@ sudo systemctl start after-sales-warehouse-backup.service
 # 恢复演练（在隔离测试库中进行，不影响生产）
 sudo /usr/local/sbin/after-sales-warehouse-restore-drill
 
+# PostgreSQL 关键业务回滚式冒烟（执行完整写流程，但不保留测试数据）
+sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
+  /opt/after-sales-warehouse/backend/manage.py smoke_business_flows \
+  --actor admin --confirm '确认写入冒烟数据' --rollback
+
 # 回滚到上一个版本
 sudo /usr/local/sbin/after-sales-warehouse-rollback --list
 ```
+
+业务冒烟覆盖快速出入库、申请审批、维修回库、采购到货、盘点修正、V3 导入撤销和离线幂等/冲突。必须保留 `--rollback`；服务器已存在业务数据时禁止用持久写入模式执行。
 
 ### 定时任务
 
