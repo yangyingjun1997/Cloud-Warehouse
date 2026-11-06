@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
@@ -49,6 +51,36 @@ class AssetStateCorrectionTests(WarehouseTestFixture, TestCase):
                 assets=[asset], to_status=Asset.Status.IN_STOCK, reason='错误测试',
                 actor=self.user, warehouse=self.warehouse, location=self.location,
             )
+
+    def test_stale_asset_version_rejects_entire_correction_without_audit(self):
+        asset = self.make_asset(status=Asset.Status.REPAIRING)
+        stale_updated_at = asset.updated_at
+        concurrent_updated_at = stale_updated_at + timedelta(seconds=1)
+        Asset.objects.filter(pk=asset.pk).update(
+            name='其他账号已修改名称',
+            updated_at=concurrent_updated_at,
+        )
+        audit_count = OperationAuditLog.objects.count()
+        event_count = AssetLifecycleEvent.objects.count()
+
+        with self.assertRaisesMessage(AssetStateCorrectionError, '已被其他账号修改'):
+            correct_asset_states(
+                assets=[asset],
+                to_status=Asset.Status.IN_STOCK,
+                reason='旧页面提交的校正',
+                actor=self.user,
+                warehouse=self.warehouse,
+                location=self.location,
+                expected_updated_at_by_id={asset.pk: stale_updated_at},
+            )
+
+        asset.refresh_from_db()
+        self.assertEqual(asset.name, '其他账号已修改名称')
+        self.assertEqual(asset.status, Asset.Status.REPAIRING)
+        self.assertEqual(asset.updated_at, concurrent_updated_at)
+        self.assertEqual(OperationAuditLog.objects.count(), audit_count)
+        self.assertEqual(AssetLifecycleEvent.objects.count(), event_count)
+        self.assertFalse(AssetStateCorrection.objects.filter(asset=asset).exists())
 
     def test_correction_is_append_only(self):
         asset = self.make_asset(status=Asset.Status.DAMAGED)

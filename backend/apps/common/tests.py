@@ -1035,6 +1035,7 @@ class DashboardAndAdminTests(TestCase):
             status=Asset.Status.MAINTENANCE,
             purchase_amount='80.00',
         )
+        self.operator.groups.add(Group.objects.get_or_create(name='warehouse_finance')[0])
         self.client.force_login(self.operator)
 
         response = self.client.get('/reports/')
@@ -1354,6 +1355,106 @@ class DashboardAndAdminTests(TestCase):
         })
         self.assertRedirects(response, '/warehouse/setup/categories/')
         self.assertTrue(Category.objects.filter(code='NETWORK').exists())
+
+    def test_base_data_create_does_not_require_version_token(self):
+        administrator = User.objects.create_user(
+            username='create-version-admin', password='password123', is_staff=True,
+        )
+        administrator.groups.add(Group.objects.get_or_create(name='warehouse_admin')[0])
+        self.client.force_login(administrator)
+
+        response = self.client.post('/warehouse/setup/warehouses/new/', {
+            'name': '新增测试仓',
+            'code': 'NEW-TEST-WH',
+        })
+
+        self.assertRedirects(response, '/warehouse/setup/warehouses/')
+        self.assertTrue(Warehouse.objects.filter(code='NEW-TEST-WH').exists())
+
+    def test_base_data_edit_uses_current_version_and_records_business_changes(self):
+        administrator = User.objects.create_user(
+            username='version-admin', password='password123', is_staff=True,
+        )
+        administrator.groups.add(Group.objects.get_or_create(name='warehouse_admin')[0])
+        warehouse = self.asset.warehouse
+        self.client.force_login(administrator)
+
+        response = self.client.get(f'/warehouse/setup/warehouses/{warehouse.id}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'name="expected_updated_at"', html=False)
+
+        response = self.client.post(f'/warehouse/setup/warehouses/{warehouse.id}/', {
+            'name': '售后主仓',
+            'code': warehouse.code,
+            'location_desc': '一层东侧',
+            'is_active': 'on',
+            'expected_updated_at': warehouse.updated_at.isoformat(),
+        })
+
+        self.assertRedirects(response, '/warehouse/setup/warehouses/')
+        warehouse.refresh_from_db()
+        self.assertEqual(warehouse.name, '售后主仓')
+        audit_log = OperationAuditLog.objects.get(
+            action='warehouses_updated', target_id=warehouse.id,
+        )
+        self.assertEqual(audit_log.before_data['name'], '售后中心仓')
+        self.assertEqual(audit_log.after_data['name'], '售后主仓')
+        self.assertNotIn('expected_updated_at', audit_log.before_data)
+        self.assertNotIn('expected_updated_at', audit_log.after_data)
+
+    def test_stale_base_data_edit_is_rejected_without_audit_or_overwrite(self):
+        administrator = User.objects.create_user(
+            username='stale-version-admin', password='password123', is_staff=True,
+        )
+        administrator.groups.add(Group.objects.get_or_create(name='warehouse_admin')[0])
+        warehouse = self.asset.warehouse
+        stale_updated_at = warehouse.updated_at
+        concurrent_updated_at = stale_updated_at + timedelta(seconds=1)
+        Warehouse.objects.filter(pk=warehouse.pk).update(
+            name='其他账号已修改',
+            updated_at=concurrent_updated_at,
+        )
+        self.client.force_login(administrator)
+
+        response = self.client.post(f'/warehouse/setup/warehouses/{warehouse.id}/', {
+            'name': '旧页面尝试覆盖',
+            'code': warehouse.code,
+            'location_desc': '旧页面内容',
+            'is_active': 'on',
+            'expected_updated_at': stale_updated_at.isoformat(),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '该记录已被其他账号修改，本次未保存')
+        warehouse.refresh_from_db()
+        self.assertEqual(warehouse.name, '其他账号已修改')
+        self.assertEqual(warehouse.updated_at, concurrent_updated_at)
+        self.assertFalse(OperationAuditLog.objects.filter(
+            action='warehouses_updated', target_id=warehouse.id,
+        ).exists())
+
+    def test_base_data_edit_requires_version_token(self):
+        administrator = User.objects.create_user(
+            username='missing-version-admin', password='password123', is_staff=True,
+        )
+        administrator.groups.add(Group.objects.get_or_create(name='warehouse_admin')[0])
+        warehouse = self.asset.warehouse
+        self.client.force_login(administrator)
+
+        response = self.client.post(f'/warehouse/setup/warehouses/{warehouse.id}/', {
+            'name': '不带版本的修改',
+            'code': warehouse.code,
+            'location_desc': '',
+            'is_active': 'on',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '页面版本信息缺失，请刷新页面后重新填写')
+        warehouse.refresh_from_db()
+        self.assertEqual(warehouse.name, '售后中心仓')
+        self.assertFalse(OperationAuditLog.objects.filter(
+            action='warehouses_updated', target_id=warehouse.id,
+        ).exists())
 
     def test_warehouse_staff_cannot_manage_base_data(self):
         self.client.force_login(self.operator)
@@ -2186,3 +2287,39 @@ class ExportAuditArchiveTests(TestCase):
                 rows = [json.loads(l) for l in tar.extractfile('operation_audit_log.jsonl').read().decode().splitlines() if l.strip()]
                 self.assertEqual(len(rows), 1)
                 self.assertEqual(rows[0]['data']['action'], 'old')
+
+
+class SystemSettingsTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username='settings-admin', password='password123', is_staff=True,
+        )
+        self.admin.groups.add(Group.objects.get_or_create(name='warehouse_admin')[0])
+        self.operator = User.objects.create_user(
+            username='settings-operator', password='password123', is_staff=True,
+        )
+        self.operator.groups.add(Group.objects.get_or_create(name='warehouse_staff')[0])
+
+    def test_admin_can_open_settings_and_see_release_info(self):
+        self.client.force_login(self.admin)
+        response = self.client.get('/system/settings/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '版本与缓存')
+        self.assertContains(response, '强制刷新本机页面缓存')
+
+    def test_admin_can_save_brand_settings_with_audit(self):
+        from .models import SiteSettings
+        self.client.force_login(self.admin)
+        response = self.client.post('/system/settings/', {
+            'site_name': '新仓库名称',
+            'subtitle': '测试副标题',
+        })
+        self.assertRedirects(response, '/system/settings/')
+        self.assertEqual(SiteSettings.load().site_name, '新仓库名称')
+        self.assertTrue(OperationAuditLog.objects.filter(action='site_settings_updated').exists())
+
+    def test_non_admin_cannot_open_settings(self):
+        self.client.force_login(self.operator)
+        response = self.client.get('/system/settings/')
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, '/')

@@ -8,6 +8,7 @@ from label_client import (
     build_test_labels,
     mm_to_px,
     render_calibration_sheet,
+    render_cell,
     render_sheet,
 )
 
@@ -75,6 +76,20 @@ class LabelRenderingTests(unittest.TestCase):
         }
         image = next(render_sheet(build_test_labels(1), config, 203))
         self.assertEqual(image.size, (mm_to_px(60, 203), mm_to_px(40, 203)))
+
+    def test_single_label_scales_content_to_full_sheet(self):
+        label = build_test_labels(1)[0]
+        dpi = 203
+        cell = render_cell(label, mm_to_px(30, dpi), mm_to_px(20, dpi), dpi)
+        sheet = render_cell(label, mm_to_px(60, dpi), mm_to_px(40, dpi), dpi)
+        cell_bbox = ImageChops.invert(cell).getbbox()
+        sheet_bbox = ImageChops.invert(sheet).getbbox()
+        self.assertIsNotNone(cell_bbox)
+        self.assertIsNotNone(sheet_bbox)
+        self.assertGreater(
+            sheet_bbox[2] - sheet_bbox[0],
+            (cell_bbox[2] - cell_bbox[0]) * 1.5,
+        )
 
 
 if __name__ == '__main__':

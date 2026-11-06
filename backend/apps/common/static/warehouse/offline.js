@@ -236,6 +236,13 @@
       const allowed = (form.dataset.offlineActions || '').split(',').filter(Boolean);
       if (form.dataset.offlineMode === 'quick_inventory' && navigator.onLine && allowed.includes(action)) {
         event.preventDefault();
+        if (!form.reportValidity()) return;
+        const submitter = event.submitter;
+        if (submitter) {
+          submitter.disabled = true;
+          submitter.dataset.originalText = submitter.textContent;
+          submitter.textContent = '提交中…';
+        }
         try {
           const controller = new AbortController();
           const timeout = window.setTimeout(() => controller.abort(), 4000);
@@ -245,6 +252,10 @@
           HTMLFormElement.prototype.submit.call(form);
         } catch (_) {
           await saveOfflineForm(form, action).catch(error => showStatus(error.message, 'error'));
+          if (submitter) {
+            submitter.disabled = false;
+            submitter.textContent = submitter.dataset.originalText || '确认执行';
+          }
         }
         return;
       }

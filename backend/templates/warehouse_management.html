@@ -18,7 +18,7 @@
       <a href="{% url 'inventory_check_list' %}"><strong>库存盘点</strong><span>扫码核对和差异修正</span></a>
       <a href="{% url 'inventory_conversion' %}"><strong>管理方式转换</strong><span>资产与耗材配件受控转换</span></a>
       {% if user_is_system_admin %}<a href="{% url 'inventory_import' %}"><strong>Excel 导入</strong><span>增量或全量基准导入</span></a>{% endif %}
-      {% if user_is_system_admin %}{% if global_can_print_asset_labels %}<a href="{% url 'warehouse_qr_labels' %}"><strong>标签打印队列</strong><span>查看作业、重试或取消</span></a>{% endif %}<a href="{% url 'warehouse_setup' 'warehouses' %}"><strong>仓库与库位</strong><span>维护存放位置</span></a><a href="{% url 'warehouse_setup' 'item-types' %}"><strong>物品类型</strong><span>维护类型和库存提醒值</span></a>{% endif %}
+      {% if user_is_system_admin %}{% if global_can_print_asset_labels %}<a href="{% url 'warehouse_management' %}"><strong>资产标签打印</strong><span>勾选资产后使用打印预览</span></a>{% endif %}<a href="{% url 'warehouse_setup' 'warehouses' %}"><strong>仓库与库位</strong><span>维护存放位置</span></a><a href="{% url 'warehouse_setup' 'item-types' %}"><strong>物品类型</strong><span>维护类型和库存提醒值</span></a>{% endif %}
       {% if user_is_system_admin %}<a href="{% url 'warehouse_setup' 'projects' %}"><strong>业务基础资料</strong><span>项目、工单、客户和供应商</span></a>{% endif %}
       {% if user_can_manage_inventory %}<a href="{% url 'replenishment_suggestions' %}"><strong>补货建议</strong><span>按安全库存生成清单</span></a><a href="{% url 'purchase_draft_list' %}"><strong>采购草稿</strong><span>核对需要采购的物品</span></a>{% endif %}
     </nav>
@@ -34,7 +34,7 @@
   <form method="get" class="management-bar">
     <input type="hidden" name="tab" value="{{ active_tab }}">
     <input type="hidden" name="page_size" value="{{ page_size }}">
-    <input id="management-query" name="q" class="management-search" value="{{ query }}" placeholder="搜索编码、SN、名称或别名" aria-label="搜索">
+    <input id="management-query" name="q" class="management-search" value="{{ query }}" placeholder="搜索编码、SN、名称或别名；支持 ! &amp; | ()" aria-label="搜索">
     <button class="button button-primary" type="submit">搜索</button>
     <details class="management-advanced" {% if advanced_active %}open{% endif %}>
       <summary>更多筛选{% if advanced_count %}<span class="filter-badge">{{ advanced_count }}</span>{% endif %}</summary>

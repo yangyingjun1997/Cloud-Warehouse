@@ -76,6 +76,7 @@ urlpatterns = [
     path('notifications/', views.notification_center, name='notification_center'),
     path('notifications/<uuid:notification_id>/open/', views.notification_open, name='notification_open'),
     path('permissions/', views.permission_management, name='permission_management'),
+    path('system/settings/', views.system_settings, name='system_settings'),
     path('system/audit/', views.audit_log_list, name='audit_log_list'),
     path('system/consistency/', views.consistency_check, name='consistency_check'),
     path('system/consistency.csv', views.consistency_check_export, name='consistency_check_export'),

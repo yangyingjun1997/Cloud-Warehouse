@@ -25,7 +25,10 @@ def _json_value(value):
 
 def form_change_data(form) -> tuple[dict, dict]:
     before, after = {}, {}
+    excluded_fields = set(getattr(form, 'audit_excluded_fields', ()))
     for field_name in form.changed_data:
+        if field_name in excluded_fields:
+            continue
         before[field_name] = _json_value(form.initial.get(field_name))
         after[field_name] = _json_value(form.cleaned_data.get(field_name))
     return before, after

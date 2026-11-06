@@ -22,14 +22,7 @@ def normalize_scan_value(value: str) -> str:
     return unicodedata.normalize('NFKC', cleaned).strip()
 
 
-def asset_search_query(value: str) -> Q:
-    """Search all supported user-facing asset identifiers and text aliases."""
-
-    value = normalize_scan_value(value)
-    if not value:
-        # 空查询不应命中任何记录，否则扫码枪误触发会返回全表
-        return Q(pk__in=[])
-
+def _term_q(value: str) -> Q:
     return (
         Q(system_asset_no__iexact=value)
         | Q(identifiers__normalized_value__iexact=value)
@@ -52,3 +45,113 @@ def asset_search_query(value: str) -> Q:
         | Q(remarks__icontains=value)
         | Q(search_index__icontains=value.lower())
     )
+
+
+def _negated_q(query: Q) -> Q:
+    # 多值关联上的 ~Q 会因 JOIN 产生误判，改用子查询表达“完全不含”。
+    from .models import Asset
+    return ~Q(pk__in=Asset.objects.filter(query).values('pk'))
+
+
+def _tokenize(expression: str) -> list:
+    tokens = []
+    index = 0
+    length = len(expression)
+    while index < length:
+        char = expression[index]
+        if char in '&|!()':
+            tokens.append(char)
+            index += 1
+        elif char.isspace():
+            index += 1
+        elif char == '"':
+            end = expression.find('"', index + 1)
+            if end == -1:
+                raise ValueError('unterminated quote')
+            tokens.append(('term', expression[index + 1:end]))
+            index = end + 1
+        else:
+            end = index
+            while end < length and not expression[end].isspace() and expression[end] not in '&|!()"':
+                end += 1
+            tokens.append(('term', expression[index:end]))
+            index = end
+    return tokens
+
+
+def _parse_boolean(tokens: list) -> Q:
+    position = 0
+
+    def peek():
+        return tokens[position] if position < len(tokens) else None
+
+    def parse_or() -> Q:
+        nonlocal position
+        query = parse_and()
+        while peek() == '|':
+            position += 1
+            query = query | parse_and()
+        return query
+
+    def parse_and() -> Q:
+        nonlocal position
+        query = parse_unary()
+        while True:
+            token = peek()
+            if token == '&':
+                position += 1
+                query = query & parse_unary()
+            elif token == '!' or token == '(' or (isinstance(token, tuple) and token[0] == 'term'):
+                query = query & parse_unary()
+            else:
+                return query
+
+    def parse_unary() -> Q:
+        nonlocal position
+        token = peek()
+        if token == '!':
+            position += 1
+            return _negated_q(parse_unary())
+        if token == '(':
+            position += 1
+            query = parse_or()
+            if peek() != ')':
+                raise ValueError('missing closing parenthesis')
+            position += 1
+            return query
+        if isinstance(token, tuple) and token[0] == 'term' and token[1]:
+            position += 1
+            return _term_q(token[1])
+        raise ValueError('unexpected token')
+
+    query = parse_or()
+    if position != len(tokens):
+        raise ValueError('unexpected trailing token')
+    return query
+
+
+def _literal_q(value: str) -> Q:
+    return _term_q(value)
+
+
+def asset_search_query(value: str) -> Q:
+    """Search all supported user-facing asset identifiers and text aliases.
+
+    普通关键词保持原有“任意字段包含”语义；出现 `! & | ( )` 时按布尔表达式解析。
+    优先级：`!` > `&` > `|`，相邻条件视为 `&`。
+    """
+
+    value = normalize_scan_value(value)
+    if not value:
+        # 空查询不应命中任何记录，否则扫码枪误触发会返回全表
+        return Q(pk__in=[])
+
+    if not any(char in value for char in '&|!()'):
+        return _literal_q(value)
+
+    try:
+        query = _parse_boolean(_tokenize(value))
+    except ValueError:
+        # 表达式不完整时退回普通包含搜索，避免用户看到服务器错误。
+        return _literal_q(value)
+    return query

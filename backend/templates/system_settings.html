@@ -1,0 +1,73 @@
+{% extends "web_base.html" %}
+
+{% block title %}系统设置 - 售后仓库管理系统{% endblock %}
+{% block crumb %}系统设置{% endblock %}
+
+{% block content %}
+  <div class="page-heading">
+    <div>
+      <h1>系统设置</h1>
+      <p class="page-copy">只有超级管理员可以修改品牌名称和 Logo。修改后所有页面立即使用新设置，图片文件保存在服务器媒体目录。</p>
+    </div>
+    <div class="page-actions"><a class="button button-secondary" href="{% url 'warehouse_management' %}">返回资产与库存</a></div>
+  </div>
+
+  <section class="panel">
+    <div class="panel-head"><h2>版本与缓存</h2><span>用于确认当前实际运行的程序版本</span></div>
+    <dl class="detail-list">
+      <div><dt>发布版本</dt><dd class="code">{{ release.release_version }}</dd></div>
+      <div><dt>代码修订</dt><dd class="code">{{ release.source_revision|default:'未记录' }}</dd></div>
+      <div><dt>部署时间</dt><dd>{{ release.deployed_at|default:'未记录' }}</dd></div>
+      <div><dt>工作区状态</dt><dd>{% if release.working_tree_dirty == 'true' %}有未提交改动{% elif release.working_tree_dirty == 'false' %}干净{% else %}未记录{% endif %}</dd></div>
+      <div><dt>源内容摘要</dt><dd class="code">{{ release.source_content_sha256|default:'未记录' }}</dd></div>
+      <div><dt>页面缓存版本</dt><dd class="code">{{ cache_version }}</dd></div>
+      <div><dt>版本信息来源</dt><dd class="code">{{ release.source }}</dd></div>
+    </dl>
+    <form method="post" class="form-actions">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="refresh_cache">
+      <button class="button button-primary" type="submit">强制刷新本机页面缓存</button>
+      <span class="field-help">上传新程序后如仍看到旧按钮或旧样式，点此让当前浏览器重新加载。</span>
+    </form>
+  </section>
+
+  <form method="post" enctype="multipart/form-data" class="form-card management-form">
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="notice error">{{ form.non_field_errors }}</div>{% endif %}
+    <div class="form-section">
+      <h2>品牌信息</h2>
+      <div class="form-grid">
+        <div class="form-field">
+          <label for="{{ form.site_name.id_for_label }}">系统名称</label>
+          {{ form.site_name }}{{ form.site_name.errors }}
+          <small class="field-help">显示在侧边栏和手机端顶部。</small>
+        </div>
+        <div class="form-field">
+          <label for="{{ form.subtitle.id_for_label }}">副标题</label>
+          {{ form.subtitle }}{{ form.subtitle.errors }}
+        </div>
+        <div class="form-field">
+          <label for="{{ form.logo.id_for_label }}">站点 Logo</label>
+          {{ form.logo }}{{ form.logo.errors }}
+          <small class="field-help">PNG/JPG，不超过 2 MB；留空则继续使用默认图标。</small>
+          {% if instance.logo %}<label class="field-help">{{ form.clear_logo }} {{ form.clear_logo.label }}</label>{% endif %}
+        </div>
+        <div class="form-field">
+          <label for="{{ form.label_logo.id_for_label }}">标签彩色 Logo</label>
+          {{ form.label_logo }}{{ form.label_logo.errors }}
+          {% if instance.label_logo %}<label class="field-help">{{ form.clear_label_logo }} {{ form.clear_label_logo.label }}</label>{% endif %}
+        </div>
+        <div class="form-field">
+          <label for="{{ form.label_logo_mono.id_for_label }}">标签单色 Logo</label>
+          {{ form.label_logo_mono }}{{ form.label_logo_mono.errors }}
+          <small class="field-help">热转印打印使用；建议黑白透明 PNG。</small>
+          {% if instance.label_logo_mono %}<label class="field-help">{{ form.clear_label_logo_mono }} {{ form.clear_label_logo_mono.label }}</label>{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="form-actions">
+      <a class="button button-secondary" href="{% url 'system_settings' %}">取消</a>
+      <button class="button button-primary" type="submit">保存系统设置</button>
+    </div>
+  </form>
+{% endblock %}

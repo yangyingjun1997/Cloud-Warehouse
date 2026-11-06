@@ -5,7 +5,7 @@
 {% block crumb %}资产检索{% endblock %}
 
 {% block content %}
-  <div class="page-heading"><div><p class="eyebrow">统一入口</p><h1>综合检索</h1><p class="page-copy">输入任意一段资产信息或人员信息，系统会从可见业务记录中匹配。</p></div></div>
+  <div class="page-heading"><div><p class="eyebrow">统一入口</p><h1>综合检索</h1><p class="page-copy">输入任意一段资产信息或人员信息，系统会从可见业务记录中匹配。资产检索支持 <span class="code">!关键词</span> 排除、<span class="code">&amp;</span> 同时满足、<span class="code">|</span> 任一满足、<span class="code">()</span> 分组，例如 <span class="code">EDU &amp; !B1</span>。</p></div></div>
   <section class="lookup-card">
     <h2>输入关键词</h2>
     <form class="lookup-form" method="get"><input id="asset-query" name="q" value="{{ query }}" autofocus placeholder="资产名称、编号、SN，或人员姓名 / 工号" aria-label="资产或人员关键词"><button id="mobile-scan-button" class="button button-secondary mobile-scan-button" type="button">扫码</button><button class="button button-primary" type="submit">开始检索</button><span id="asset-scan-message" class="scan-message" role="status"></span></form>

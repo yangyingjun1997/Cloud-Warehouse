@@ -3,6 +3,7 @@ import uuid
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.utils import OperationalError, ProgrammingError
 from django.utils import timezone
 
 
@@ -186,3 +187,31 @@ class SecurityAuditEvent(ImmutableAuditMixin, UUIDModel, TimeStampedModel):
         ]
         verbose_name = '安全审计事件'
         verbose_name_plural = '安全审计事件'
+
+
+class SiteSettings(models.Model):
+    """单例站点品牌设置，只有系统管理员可以修改。"""
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    site_name = models.CharField('系统名称', max_length=60, default='售后仓库')
+    subtitle = models.CharField('副标题', max_length=80, default='资产与出入库管理')
+    logo = models.ImageField('站点 Logo', upload_to='branding/', blank=True, null=True)
+    label_logo = models.ImageField('标签彩色 Logo', upload_to='branding/', blank=True, null=True)
+    label_logo_mono = models.ImageField('标签单色 Logo', upload_to='branding/', blank=True, null=True)
+    updated_by = models.CharField('最后修改人', max_length=64, blank=True, default='')
+
+    class Meta:
+        verbose_name = '站点设置'
+        verbose_name_plural = '站点设置'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        try:
+            return cls.objects.filter(pk=1).first()
+        except (OperationalError, ProgrammingError):
+            # 迁移尚未应用或数据库只读时，页面继续使用默认品牌。
+            return None

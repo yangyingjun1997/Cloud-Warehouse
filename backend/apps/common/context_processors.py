@@ -1,3 +1,4 @@
+from apps.common.models import SiteSettings
 from apps.common.permissions import (
     can_approve_workflow,
     can_execute_inventory,
@@ -14,9 +15,11 @@ from apps.notifications.models import Notification
 
 
 def web_navigation(request):
+    site_settings = SiteSettings.load()
     if not request.user.is_authenticated:
-        return {}
+        return {'global_site_settings': site_settings}
     return {
+        'global_site_settings': site_settings,
         'global_unread_notification_count': Notification.objects.filter(
             recipient=request.user,
             is_read=False,

@@ -1077,6 +1077,7 @@ class SupplierReportTests(TestCase):
     def setUp(self):
         self.reporter = User.objects.create_user(username='reporter', password='password123')
         self.reporter.groups.add(Group.objects.get_or_create(name='warehouse_reports')[0])
+        self.reporter.groups.add(Group.objects.get_or_create(name='warehouse_finance')[0])
         self.employee = User.objects.create_user(username='plain', password='password123')
         self.client.force_login(self.reporter)
         category = Category.objects.create(name='报表分类', code='REPORT-CAT')

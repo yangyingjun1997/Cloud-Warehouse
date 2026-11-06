@@ -90,9 +90,8 @@
           : outcome.state === 'existing' ? '已存在' : '未加入';
       row.append(content, status);
       list.prepend(row);
-      while (list.querySelectorAll('.scan-result-row').length > 20) {
-        list.querySelector('.scan-result-row:last-child').remove();
-      }
+      const rows = Array.from(list.querySelectorAll('.scan-result-row'));
+      rows.slice(20).forEach(extra => extra.remove());
       updateCounter();
     }
 

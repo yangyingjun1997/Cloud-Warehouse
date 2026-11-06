@@ -188,6 +188,22 @@ def detect_printer_dpi(printer_name: str = '') -> int | None:
     try:
         if not printer_name:
             printer_name = win32print.GetDefaultPrinter()
+
+        # 驱动 DC 的 LOGPIXELSX/Y 才是位图 1:1 输出时的真实分辨率。
+        # 只信 PrintQuality 时，若配置 600 而驱动实际 203，60×40mm 会被
+        # 放大近 3 倍，整张标签会溢出到下一格。
+        if win32ui is not None:
+            hdc = win32ui.CreateDC()
+            try:
+                hdc.CreatePrinterDC(printer_name)
+                dpi_x = int(hdc.GetDeviceCaps(88))
+                dpi_y = int(hdc.GetDeviceCaps(90))
+                if 150 <= dpi_x <= 2400 and abs(dpi_x - dpi_y) <= 2:
+                    LOG.info('打印机 %s 驱动 DPI=%s', printer_name, dpi_x)
+                    return dpi_x
+            finally:
+                hdc.DeleteDC()
+
         handle = win32print.OpenPrinter(printer_name)
         try:
             info = win32print.GetPrinter(handle, 2)
@@ -329,24 +345,32 @@ def render_cell(label: dict, width: int, height: int, dpi: int) -> Image.Image:
     image = Image.new('L', (width, height), 255)
     draw = ImageDraw.Draw(image)
 
-    pad = max(2, int(round(mm_to_px(0.6, dpi))))
+    # 30×20 mm 是标准四联格；1×1 整张 60×40 时按同一比例放大字号，
+    # 否则文字会缩在左上角，二维码反而显得特别大。
+    base_w = mm_to_px(30, dpi)
+    base_h = mm_to_px(20, dpi)
+    scale = max(1.0, min(width / base_w, height / base_h))
 
-    # 二维码按高度占比取，但要给左侧文字留足宽度。
-    # 30mm 宽的格子，二维码超过 12mm 就会挤掉编码行。
-    # 实际以编码可读性为准：二维码只承担扫码定位，缩小后扫码距离略减，
-    # 但资产编码 / SN 是人工核对的主要依据，优先保证不被截断。
-    qr_px = min(int(height * 0.46), int(width * 0.34))
+    pad = max(2, int(round(mm_to_px(0.6 * scale, dpi))))
 
-    logo_font = load_font(mm_to_px(1.5, dpi), bold=True)
-    name_font = load_font(mm_to_px(1.7, dpi), bold=True)
-    label_font = load_font(mm_to_px(1.1, dpi))
-    value_font = load_font(mm_to_px(1.5, dpi), bold=True)
+    # 二维码只承担定位，编码和 SN 才是人工核对重点。
+    # 30mm 宽时控制在约 6mm，底边与“资产名”区域对齐，不再压到编码行。
+    qr_px = min(
+        int(height * 0.30),
+        int(width * 0.30),
+        mm_to_px(6.0 * scale, dpi),
+    )
+
+    logo_font = load_font(mm_to_px(1.5 * scale, dpi), bold=True)
+    name_font = load_font(mm_to_px(1.7 * scale, dpi), bold=True)
+    label_font = load_font(mm_to_px(1.1 * scale, dpi))
+    value_font = load_font(mm_to_px(1.5 * scale, dpi), bold=True)
 
     qr = _qr_image(label, qr_px)
-    # 右侧不再贴边：向左收约 1.6 mm，底边稍后与“资产编码：”行对齐。
-    qr_right_inset = mm_to_px(2.2, dpi)
+    # 右侧留出机械误差余量，二维码左侧紧贴文字列。
+    qr_right_inset = mm_to_px(3.0 * scale, dpi)
     qr_x = max(pad, width - qr_right_inset - qr_px)
-    top_text_width = max(mm_to_px(8.0, dpi), qr_x - pad - mm_to_px(0.8, dpi))
+    top_text_width = max(mm_to_px(8.0 * scale, dpi), qr_x - pad - mm_to_px(0.8 * scale, dpi))
     full_text_width = width - pad * 2
 
     def clip(text: str, font, limit: int) -> str:
@@ -383,10 +407,10 @@ def render_cell(label: dict, width: int, height: int, dpi: int) -> Image.Image:
     logo = get_logo_image()
     logo_img = None
     if logo is not None:
-        logo_w = min(int(top_text_width * 0.72), mm_to_px(9.0, dpi))
+        logo_w = min(int(top_text_width * 0.72), mm_to_px(9.0 * scale, dpi))
         ratio = logo.size[1] / logo.size[0]
         logo_h = max(1, int(logo_w * ratio))
-        max_h = mm_to_px(2.8, dpi)
+        max_h = mm_to_px(2.8 * scale, dpi)
         if logo_h > max_h:
             logo_h = max_h
             logo_w = max(1, int(logo_h / ratio))
@@ -395,7 +419,6 @@ def render_cell(label: dict, width: int, height: int, dpi: int) -> Image.Image:
         rows.append(('text', logo_font, clip(str(label.get('logo_text') or ''), logo_font, top_text_width)))
 
     rows.append(('text', name_font, clip(str(label.get('title') or ''), name_font, top_text_width)))
-    code_label_index = len(rows)
     rows.append(('text', label_font, '资产编码：'))
 
     # 编码和 SN 用自适应字号：DZSB 编码有 22 字符，固定字号会截断
@@ -420,25 +443,21 @@ def render_cell(label: dict, width: int, height: int, dpi: int) -> Image.Image:
     gap = slack / gaps if gaps else 0
     # 不设硬上限：无序列号的标签行数少，若此处截断就会留下大片空白，
     # 和有条码的标签高度不一致，四联看起来就是"没对齐"。
-    gap = min(gap, mm_to_px(3.2, dpi))
+    gap = min(gap, mm_to_px(3.2 * scale, dpi))
 
     y = float(pad)
     if logo_img:
         image.paste(logo_img[0], (pad, int(y)))
         y += logo_img[1] + gap
-    row_positions = []
-    for index, (kind, font, text) in enumerate(rows):
+    for kind, font, text in rows:
         h = line_height(font)
         baseline = draw.textbbox((0, 0), text or 'A', font=font)
         draw.text((pad, int(y) - baseline[1]), text, fill=0 if kind == 'text' else 90, font=font)
-        row_positions.append((index, y, h))
         y += h + gap
 
     if qr is not None:
-        code_label_row = row_positions[code_label_index]
-        qr_bottom = int(code_label_row[1] + code_label_row[2])
-        qr_y = max(pad, qr_bottom - qr_px)
-        image.paste(qr, (qr_x, qr_y))
+        # 顶部对齐 logo，底边不超过“资产名”下方，避免压住编码行。
+        image.paste(qr, (qr_x, pad))
 
     return image
 

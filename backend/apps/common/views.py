@@ -49,7 +49,10 @@ from apps.common.api_throttle import client_ip_from_request, consume_scan_quota
 from apps.common.database import retry_database_operation
 from apps.common.consistency import build_consistency_issues
 from apps.common.decorators import role_required
-from apps.common.models import OperationAuditLog, UserListPreference
+from apps.common.models import OperationAuditLog, SiteSettings, UserListPreference
+from apps.common.settings_forms import SiteSettingsForm
+from apps.common.version import release_info
+from apps.common.middleware import CACHE_RESET_COOKIE, CACHE_RESET_VERSION
 from apps.common.permissions import (
     PERMISSION_GROUPS, can_approve_workflow, can_change_asset_domain, can_execute_inventory,
     can_import_inventory, can_manage_admin_code, can_manage_code_master, can_manage_inventory,
@@ -1047,6 +1050,59 @@ def notification_open(request, notification_id):
     return redirect('notification_center')
 
 
+@role_required(is_system_administrator, message='只有系统管理员可以修改系统设置。')
+def system_settings(request):
+    instance = SiteSettings.load() or SiteSettings(pk=1)
+    form = SiteSettingsForm(request.POST or None, request.FILES or None, instance=instance)
+    if request.method == 'POST' and request.POST.get('action') == 'refresh_cache':
+        response = redirect('system_settings')
+        response.set_cookie(
+            CACHE_RESET_COOKIE,
+            f'manual-{int(timezone.now().timestamp())}',
+            max_age=300,
+            samesite='Lax',
+        )
+        messages.success(request, '已请求浏览器清理页面缓存，下一次加载会重新取回最新页面。')
+        return response
+    if request.method == 'POST' and form.is_valid():
+        before = {
+            'site_name': instance.site_name,
+            'subtitle': instance.subtitle,
+            'logo': instance.logo.name if instance.logo else '',
+        }
+        settings_obj = form.save(commit=False)
+        settings_obj.pk = 1
+        settings_obj.updated_by = request.user.get_username()
+        try:
+            settings_obj.save()
+        except DatabaseError:
+            form.add_error(None, '数据库当前不可写，系统设置未保存。请确认迁移已应用且数据库可写。')
+            return render(request, 'system_settings.html', {
+                'form': form,
+                'instance': instance,
+                'release': release_info(),
+                'cache_version': CACHE_RESET_VERSION,
+            })
+        record_operation(
+            request.user, 'site_settings_updated', settings_obj,
+            summary='修改系统设置与品牌 Logo',
+            before=before,
+            after={
+                'site_name': settings_obj.site_name,
+                'subtitle': settings_obj.subtitle,
+                'logo': settings_obj.logo.name if settings_obj.logo else '',
+            },
+        )
+        messages.success(request, '系统设置已保存。')
+        return redirect('system_settings')
+    return render(request, 'system_settings.html', {
+        'form': form,
+        'instance': instance,
+        'release': release_info(),
+        'cache_version': CACHE_RESET_VERSION,
+    })
+
+
 @role_required(is_system_administrator, message='当前账号没有系统设置权限。')
 def permission_management(request):
     group_names = [*PERMISSION_GROUPS, 'warehouse_admin']
@@ -1978,7 +2034,7 @@ def _supplier_price_rows(supplier_text='', item_text='', start_date=None, end_da
     return lines
 
 
-@role_required(can_view_reports, message='当前账号没有报表权限。')
+@role_required(can_view_financials, message='当前账号没有财务金额查看权限。')
 def supplier_price_history(request):
     """供应商价格历史：按供应商+物品维度的历次采购单价序列。"""
     supplier_text = request.GET.get('supplier', '').strip()
@@ -2033,7 +2089,7 @@ def supplier_price_history(request):
     })
 
 
-@role_required(can_view_reports, message='当前账号没有报表导出权限。')
+@role_required(can_view_financials, message='当前账号没有财务金额查看权限。')
 def supplier_price_history_export(request):
     """供应商价格历史 CSV 导出（与页面筛选一致）。"""
     supplier_text = request.GET.get('supplier', '').strip()
@@ -2111,7 +2167,7 @@ def _supplier_reconciliation_context(request):
     return supplier_text, start_text, end_text, date_basis, start_date, end_date
 
 
-@role_required(can_view_reports, message='当前账号没有报表权限。')
+@role_required(can_view_financials, message='当前账号没有财务金额查看权限。')
 def supplier_reconciliation(request):
     """采购与到货汇总：默认按下单日期，也可按实际到货日期统计。"""
     supplier_text, start_text, end_text, date_basis, start_date, end_date = _supplier_reconciliation_context(request)
@@ -2164,7 +2220,7 @@ def supplier_reconciliation(request):
     })
 
 
-@role_required(can_view_reports, message='当前账号没有报表导出权限。')
+@role_required(can_view_financials, message='当前账号没有财务金额查看权限。')
 def supplier_reconciliation_export(request):
     """采购与到货汇总明细 CSV 导出，与页面使用相同统计口径。"""
     supplier_text, start_text, end_text, date_basis, start_date, end_date = _supplier_reconciliation_context(request)
@@ -2887,6 +2943,7 @@ def asset_lifecycle(request, asset_id):
     correction_form = AssetStateCorrectionForm(
         prefix='correction',
         user=request.user,
+        asset=asset,
         initial={'target_warehouse': asset.warehouse, 'target_location': asset.location},
     )
     scrap_form = ScrapApprovalForm(prefix='scrap')
@@ -3004,7 +3061,12 @@ def asset_lifecycle(request, asset_id):
                     return redirect(f'{reverse("asset_lifecycle", args=[asset.id])}?tab=attachments')
             elif action == 'correct_state' and can_correct:
                 redirect_tab = 'corrections'
-                correction_form = AssetStateCorrectionForm(request.POST, prefix='correction', user=request.user)
+                correction_form = AssetStateCorrectionForm(
+                    request.POST,
+                    prefix='correction',
+                    user=request.user,
+                    asset=asset,
+                )
                 if correction_form.is_valid():
                     data = correction_form.cleaned_data
                     correction = correct_asset_states(
@@ -3015,6 +3077,9 @@ def asset_lifecycle(request, asset_id):
                         reason=data['reason'],
                         warehouse=data['target_warehouse'],
                         location=data['target_location'],
+                        expected_updated_at_by_id={
+                            asset.pk: data['expected_asset_updated_at'],
+                        },
                     )[0]
                     messages.success(request, f'台账校正已记录：{correction.get_to_status_display()}。')
                     return redirect(f'{reverse("asset_lifecycle", args=[asset.id])}?tab=corrections')
@@ -3219,23 +3284,41 @@ def warehouse_setup_edit(request, section, object_id=None):
     form = form_class(request.POST or None, instance=instance)
     if request.method == 'POST' and form.is_valid():
         is_create = instance is None
-        before, after = form_change_data(form)
+        save_succeeded = False
         with transaction.atomic():
-            instance = form.save(commit=False)
-            if hasattr(instance, 'created_by_id') and not instance.created_by_id:
-                instance.created_by = request.user
-            instance.save()
-            form.save_m2m()
-            record_operation(
-                request.user,
-                f'{section}_created' if is_create else f'{section}_updated',
-                instance,
-                summary=f'{"新建" if is_create else "修改"}{title} {instance}',
-                before=before,
-                after=after,
-            )
-        messages.success(request, f'已保存{title}“{instance}”。')
-        return redirect('warehouse_setup', section=section)
+            if not is_create:
+                locked_instance = model.objects.select_for_update().filter(pk=instance.pk).first()
+                expected_updated_at = form.cleaned_data.get('expected_updated_at')
+                if not locked_instance or locked_instance.updated_at != expected_updated_at:
+                    form.add_error(
+                        None,
+                        '该记录已被其他账号修改，本次未保存。请刷新页面后重新核对。',
+                    )
+                else:
+                    # ModelForm 在 is_valid() 时已把提交值写入旧实例。
+                    # 锁定最新行后重新绑定，才能把同一份数据安全应用到加锁实例。
+                    form = form_class(request.POST, instance=locked_instance)
+                    if not form.is_valid():
+                        form.add_error(None, '记录内容已变化，请刷新页面后重新填写。')
+            if not form.errors:
+                before, after = form_change_data(form)
+                instance = form.save(commit=False)
+                if hasattr(instance, 'created_by_id') and not instance.created_by_id:
+                    instance.created_by = request.user
+                instance.save()
+                form.save_m2m()
+                record_operation(
+                    request.user,
+                    f'{section}_created' if is_create else f'{section}_updated',
+                    instance,
+                    summary=f'{"新建" if is_create else "修改"}{title} {instance}',
+                    before=before,
+                    after=after,
+                )
+                save_succeeded = True
+        if save_succeeded:
+            messages.success(request, f'已保存{title}“{instance}”。')
+            return redirect('warehouse_setup', section=section)
     return render(request, 'warehouse_setup_form.html', {
         'section': section,
         'section_title': title,
@@ -3296,6 +3379,8 @@ def warehouse_qr_labels(request):
             request,
             f'已发送 {len(built)} 张标签到贴纸打印机，打印机会自动取走。',
         )
+        # 使用 PRG，避免刷新预览页时重复创建打印作业。
+        return redirect(f"{reverse('warehouse_qr_labels')}?{urlencode({'asset_ids': asset_ids}, doseq=True)}")
 
     return render(request, 'warehouse_qr_labels.html', {
         'labels': labels,
@@ -3653,6 +3738,9 @@ def report_dashboard(request):
     if work_order_no:
         transactions = transactions.filter(work_order_no__icontains=work_order_no)
     chart_metric = request.GET.get('metric', 'count')
+    show_financials = can_view_financials(request.user)
+    if chart_metric == 'cost' and not show_financials:
+        chart_metric = 'count'
     chart_rows = transactions.annotate(bucket=truncator('business_date')).values('bucket').annotate(
         count=Count('id'), cost=Sum('cost_amount')
     ).order_by('bucket')
@@ -3685,17 +3773,20 @@ def report_dashboard(request):
     low_serialized_types = _serialized_type_availability(
         ItemType.objects.filter(is_serialized=True, safety_stock__gt=0)
     ).filter(available_count__lt=F('safety_stock')).order_by('available_count', 'name')[:10]
-    current_inventory_cost = sum(
-        (asset.purchase_amount or Decimal('0'))
-        for asset in Asset.objects.filter(in_warehouse_asset_filter()).only('purchase_amount')
-    ) + sum(
-        item.quantity * (item.unit_cost or Decimal('0'))
-        for item in StockItem.objects.only('quantity', 'unit_cost')
-    )
+    current_inventory_cost = 0
+    if show_financials:
+        current_inventory_cost = sum(
+            (asset.purchase_amount or Decimal('0'))
+            for asset in Asset.objects.filter(in_warehouse_asset_filter()).only('purchase_amount')
+        ) + sum(
+            item.quantity * (item.unit_cost or Decimal('0'))
+            for item in StockItem.objects.only('quantity', 'unit_cost')
+        )
     return render(request, 'report_dashboard.html', {
         'days': range_days + 1,
         'start_date': start_date, 'end_date': end_date, 'period': period,
         'granularity': granularity, 'chart_metric': chart_metric,
+        'show_financials': show_financials,
         'selected_action': action, 'selected_warehouse': warehouse_id,
         'project_code': project_code, 'work_order_no': work_order_no,
         'warehouses': Warehouse.objects.filter(is_active=True).order_by('name'),
@@ -3863,7 +3954,7 @@ def transaction_export(request):
     response['Content-Disposition'] = 'attachment; filename="inventory-transactions.csv"'
     response.write('\ufeff')
     writer = csv.writer(response)
-    writer.writerow(['出入库单号', '关联申请单', '申请日期', '出入库日期', '系统操作时间', '处理类型', '物品编码', '物品名称', '数量', '库存成本价值（元）', '项目编号', '工单编号', '资产状态变化', '库存数量变化', '来源仓库', '目标仓库', '接收人', '接收单位', '执行人', '处理说明'])
+    writer.writerow(['出入库单号', '关联申请单', '申请日期', '出入库日期', '系统操作时间', '处理类型', '物品编码', '物品名称', '数量', '项目编号', '工单编号', '资产状态变化', '库存数量变化', '来源仓库', '目标仓库', '接收人', '接收单位', '执行人', '处理说明'] if not can_view_financials(request.user) else ['出入库单号', '关联申请单', '申请日期', '出入库日期', '系统操作时间', '处理类型', '物品编码', '物品名称', '数量', '库存成本价值（元）', '项目编号', '工单编号', '资产状态变化', '库存数量变化', '来源仓库', '目标仓库', '接收人', '接收单位', '执行人', '处理说明'])
     transactions = InventoryTransaction.objects.select_related('request', 'asset', 'stock_item', 'source_warehouse', 'target_warehouse', 'actor').order_by('-created_at')
     query = request.GET.get('q', '').strip()
     if query:

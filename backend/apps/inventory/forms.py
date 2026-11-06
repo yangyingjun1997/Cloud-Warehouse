@@ -34,6 +34,30 @@ from .code_services import SN_PLACEHOLDERS, normalize_identifier
 User = get_user_model()
 
 
+class VersionedModelForm(forms.ModelForm):
+    """为基础资料编辑携带页面打开时的版本时间。"""
+
+    audit_excluded_fields = {'expected_updated_at'}
+    expected_updated_at = forms.DateTimeField(
+        label='',
+        required=False,
+        widget=forms.HiddenInput,
+        error_messages={
+            'required': '页面版本信息缺失，请刷新页面后重新填写。',
+            'invalid': '页面版本信息无效，请刷新页面后重新填写。',
+        },
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # UUID 主键在实例化时就已有默认值，不能用 pk 判断是否新增。
+        if not self.instance._state.adding:
+            self.fields['expected_updated_at'].required = True
+            self.initial.setdefault('expected_updated_at', self.instance.updated_at)
+        else:
+            self.fields.pop('expected_updated_at', None)
+
+
 class AssetManagementForm(forms.ModelForm):
     identity_change_reason = forms.CharField(
         label='编码或身份变更原因', required=False,
@@ -255,7 +279,7 @@ class StockItemManagementForm(forms.ModelForm):
         return cleaned_data
 
 
-class WarehouseManagementForm(forms.ModelForm):
+class WarehouseManagementForm(VersionedModelForm):
     class Meta:
         model = Warehouse
         fields = ['name', 'code', 'location_desc', 'is_active']
@@ -266,7 +290,7 @@ class WarehouseManagementForm(forms.ModelForm):
         widgets = {'location_desc': forms.Textarea(attrs={'rows': 3})}
 
 
-class LocationManagementForm(forms.ModelForm):
+class LocationManagementForm(VersionedModelForm):
     class Meta:
         model = Location
         fields = ['warehouse', 'name', 'code', 'description']
@@ -277,14 +301,14 @@ class LocationManagementForm(forms.ModelForm):
         widgets = {'description': forms.Textarea(attrs={'rows': 3})}
 
 
-class CategoryManagementForm(forms.ModelForm):
+class CategoryManagementForm(VersionedModelForm):
     class Meta:
         model = Category
         fields = ['name', 'code']
         labels = {'name': '分类名称', 'code': '分类编码'}
 
 
-class ItemTypeManagementForm(forms.ModelForm):
+class ItemTypeManagementForm(VersionedModelForm):
     class Meta:
         model = ItemType
         fields = ['name', 'code', 'is_serialized', 'unit', 'safety_stock']
@@ -306,7 +330,7 @@ class ItemTypeManagementForm(forms.ModelForm):
         return instance
 
 
-class BusinessReferenceForm(forms.ModelForm):
+class BusinessReferenceForm(VersionedModelForm):
     class Meta:
         fields = ['code', 'name', 'contact_name', 'phone', 'notes', 'is_active']
         labels = {
@@ -331,7 +355,7 @@ class ManufacturerManagementForm(BusinessReferenceForm):
         model = Manufacturer
 
 
-class AssetTypeCodeManagementForm(forms.ModelForm):
+class AssetTypeCodeManagementForm(VersionedModelForm):
     class Meta:
         model = AssetTypeCode
         fields = ['code', 'name', 'description', 'is_active']
@@ -339,7 +363,7 @@ class AssetTypeCodeManagementForm(forms.ModelForm):
         widgets = {'description': forms.Textarea(attrs={'rows': 3})}
 
 
-class ProductModelCodeManagementForm(forms.ModelForm):
+class ProductModelCodeManagementForm(VersionedModelForm):
     class Meta:
         model = ProductModelCode
         fields = [
@@ -366,7 +390,7 @@ class ServiceProviderManagementForm(BusinessReferenceForm):
         model = ServiceProvider
 
 
-class ProjectManagementForm(forms.ModelForm):
+class ProjectManagementForm(VersionedModelForm):
     class Meta:
         model = Project
         fields = ['code', 'name', 'customer', 'notes', 'is_active']
@@ -377,7 +401,7 @@ class ProjectManagementForm(forms.ModelForm):
         widgets = {'notes': forms.Textarea(attrs={'rows': 3})}
 
 
-class WorkOrderManagementForm(forms.ModelForm):
+class WorkOrderManagementForm(VersionedModelForm):
     class Meta:
         model = WorkOrder
         fields = ['code', 'name', 'project', 'customer', 'notes', 'is_active']
@@ -518,6 +542,15 @@ class MaintenanceFinishForm(forms.Form):
 
 
 class AssetStateCorrectionForm(forms.ModelForm):
+    expected_asset_updated_at = forms.DateTimeField(
+        label='',
+        widget=forms.HiddenInput,
+        error_messages={
+            'required': '资产版本信息缺失，请刷新页面后重新填写。',
+            'invalid': '资产版本信息无效，请刷新页面后重新填写。',
+        },
+    )
+
     class Meta:
         model = AssetStateCorrection
         fields = ['to_status', 'source', 'target_warehouse', 'target_location', 'reason']
@@ -530,8 +563,11 @@ class AssetStateCorrectionForm(forms.ModelForm):
         }
         widgets = {'reason': forms.Textarea(attrs={'rows': 4})}
 
-    def __init__(self, *args, user=None, **kwargs):
+    def __init__(self, *args, user=None, asset=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.asset = asset
+        if asset and not self.is_bound:
+            self.initial['expected_asset_updated_at'] = asset.updated_at
         from apps.common.permissions import is_system_administrator
         from .state_services import (
             ADMIN_CORRECTION_TARGET_STATUSES,

@@ -76,7 +76,7 @@ def asset_state_snapshot(asset):
 
 @transaction.atomic
 def correct_asset_states(*, assets, to_status, reason, actor, warehouse=None, location=None,
-                         source=AssetStateCorrection.Source.MANUAL):
+                         source=AssetStateCorrection.Source.MANUAL, expected_updated_at_by_id=None):
     asset_ids = [asset.pk for asset in assets]
     if not asset_ids:
         raise AssetStateCorrectionError('请至少选择一件资产。')
@@ -98,9 +98,17 @@ def correct_asset_states(*, assets, to_status, reason, actor, warehouse=None, lo
     locked_assets = list(Asset.objects.select_for_update().filter(pk__in=asset_ids).order_by('pk'))
     if len(locked_assets) != len(set(asset_ids)):
         raise AssetStateCorrectionError('部分资产不存在，请刷新页面后重试。')
+    expected_versions = {
+        str(asset_id): value for asset_id, value in (expected_updated_at_by_id or {}).items()
+    }
 
     results = []
     for asset in locked_assets:
+        expected_updated_at = expected_versions.get(str(asset.pk))
+        if expected_updated_at is not None and asset.updated_at != expected_updated_at:
+            raise AssetStateCorrectionError(
+                f'资产 {asset} 已被其他账号修改，本次未执行；请刷新页面后重新核对。'
+            )
         if InventoryReservation.objects.filter(
             asset=asset, status=InventoryReservation.Status.ACTIVE,
         ).exists():
