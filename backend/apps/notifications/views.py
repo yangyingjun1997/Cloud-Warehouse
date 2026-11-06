@@ -7,16 +7,13 @@ from .models import Notification
 from .serializers import NotificationSerializer
 
 
-class NotificationViewSet(viewsets.ModelViewSet):
+class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Notification.objects.select_related('recipient').all()
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         return super().get_queryset().filter(recipient=self.request.user)
-
-    def perform_create(self, serializer):
-        serializer.save(recipient=self.request.user)
 
     @action(detail=True, methods=['post'], url_path='mark-read')
     def mark_read(self, request, pk=None):

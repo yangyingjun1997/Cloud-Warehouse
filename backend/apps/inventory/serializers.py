@@ -1,26 +1,33 @@
+from copy import copy
+
 from rest_framework import serializers
 
 from .models import (
     Asset,
+    AssetTypeCode,
     AssetLifecycleEvent,
     AssetNetworkEndpoint,
     Category,
     ComponentLink,
     CompositeUnit,
     Customer,
+    InventoryDomain,
     InventoryCheckAdjustment,
     InventoryCheckLine,
     InventoryCheckScan,
     InventoryCheckTask,
     ItemType,
     Location,
+    Manufacturer,
     Project,
+    ProductModelCode,
     ServiceProvider,
     StockItem,
     Supplier,
     Warehouse,
     WorkOrder,
 )
+from .code_services import AssetCodeError, apply_asset_identity, normalize_identifier, validate_sn
 
 
 class BusinessReferenceSerializer(serializers.ModelSerializer):
@@ -36,6 +43,38 @@ class CustomerSerializer(BusinessReferenceSerializer):
 class SupplierSerializer(BusinessReferenceSerializer):
     class Meta(BusinessReferenceSerializer.Meta):
         model = Supplier
+
+
+class ManufacturerSerializer(BusinessReferenceSerializer):
+    class Meta(BusinessReferenceSerializer.Meta):
+        model = Manufacturer
+
+
+class InventoryDomainSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InventoryDomain
+        fields = ['id', 'code', 'name', 'code_scheme', 'is_active']
+        read_only_fields = fields
+
+
+class AssetTypeCodeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AssetTypeCode
+        fields = ['id', 'code', 'name', 'description', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
+
+
+class ProductModelCodeSerializer(serializers.ModelSerializer):
+    asset_type_name = serializers.CharField(source='asset_type_code.name', read_only=True)
+    manufacturer_name = serializers.CharField(source='manufacturer.name', read_only=True)
+
+    class Meta:
+        model = ProductModelCode
+        fields = [
+            'id', 'asset_type_code', 'asset_type_name', 'manufacturer', 'manufacturer_name',
+            'code', 'name', 'description', 'is_active', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['created_at', 'updated_at']
 
 
 class ServiceProviderSerializer(BusinessReferenceSerializer):
@@ -104,6 +143,7 @@ class AssetSerializer(serializers.ModelSerializer):
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
     location_code = serializers.CharField(source='location.code', read_only=True)
     current_holder_name = serializers.CharField(source='current_holder.username', read_only=True)
+    customer_name = serializers.CharField(source='customer_ref.name', read_only=True)
     can_request = serializers.SerializerMethodField()
     can_return = serializers.SerializerMethodField()
 
@@ -113,12 +153,18 @@ class AssetSerializer(serializers.ModelSerializer):
             'id',
             'system_asset_no',
             'asset_code',
+            'domain',
+            'code_source',
+            'asset_type_code',
+            'product_model_code',
             'name',
             'item_type',
             'item_type_name',
             'manufacturer',
+            'manufacturer_ref',
             'model',
             'serial_number',
+            'sn_status',
             'manufacturer_barcode',
             'qr_value',
             'search_aliases',
@@ -128,6 +174,10 @@ class AssetSerializer(serializers.ModelSerializer):
             'supplier_ref',
             'purchase_amount',
             'warranty_until',
+            'project',
+            'customer_ref',
+            'customer_name',
+            'work_order',
             'source_import_batch',
             'warehouse',
             'warehouse_name',
@@ -154,6 +204,15 @@ class AssetSerializer(serializers.ModelSerializer):
             'location_state', 'availability_state', 'quality_state', 'disposition_state',
         ]
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if request is not None:
+            from apps.common.permissions import can_view_financials
+            if not can_view_financials(request.user):
+                data.pop('purchase_amount', None)
+        return data
+
     def validate(self, attrs):
         controlled_fields = {
             'system_asset_no', 'qr_value', 'source_import_batch', 'current_holder',
@@ -166,7 +225,52 @@ class AssetSerializer(serializers.ModelSerializer):
                 field: '该字段只能由审批后的出入库流程或历史导入维护。'
                 for field in sorted(attempted)
             })
+        candidate = copy(self.instance) if self.instance else Asset()
+        for field, value in attrs.items():
+            setattr(candidate, field, value)
+        try:
+            warnings = validate_sn(candidate, exclude_asset_id=getattr(candidate, 'pk', None))
+        except Exception as exc:
+            detail = getattr(exc, 'message_dict', None)
+            if detail:
+                raise serializers.ValidationError(detail) from exc
+            raise
+        self._identity_warnings = warnings
+        code_source = attrs.get('code_source', getattr(candidate, 'code_source', None))
+        if code_source == Asset.CodeSource.MARKET_GENERATED:
+            if not getattr(candidate, 'asset_type_code_id', None) or not getattr(candidate, 'product_model_code_id', None):
+                raise serializers.ValidationError({'asset_type_code': '生成 SC 编码前必须选择设备类型和型号。'})
+            if not candidate.product_model_code.sc_prefix:
+                raise serializers.ValidationError({'product_model_code': '所选型号尚未维护源表 SC 编码前缀。'})
+        elif code_source == Asset.CodeSource.ADMIN_ASSIGNED:
+            if not normalize_identifier(candidate.asset_code).startswith(('DZSB-', 'ZSB-', 'QTZC-')):
+                raise serializers.ValidationError({
+                    'asset_code': '行政/ERP 资产编码必须以 DZSB- 开头（历史遗留的 ZSB-、QTZC- 也可接受）。',
+                })
+        elif code_source == Asset.CodeSource.WAREHOUSE_ASSIGNED:
+            if not normalize_identifier(candidate.asset_code).startswith(('SC-', 'DZSB-', 'ZSB-', 'QTZC-')):
+                raise serializers.ValidationError({
+                    'asset_code': '源表既有资产编码必须以 SC-、DZSB-、ZSB- 或 QTZC- 开头。',
+                })
         return attrs
+
+    def create(self, validated_data):
+        asset = Asset(**validated_data)
+        try:
+            return apply_asset_identity(asset, actor=self.context['request'].user, reason='通过接口录入资产')
+        except AssetCodeError as exc:
+            raise serializers.ValidationError({'detail': str(exc)}) from exc
+
+    def update(self, instance, validated_data):
+        old_domain_id = instance.domain_id
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        if old_domain_id and instance.domain_id != old_domain_id:
+            raise serializers.ValidationError({'domain': '归属变更必须使用受控的归属调整接口。'})
+        try:
+            return apply_asset_identity(instance, actor=self.context['request'].user, reason='通过接口修改资产身份')
+        except AssetCodeError as exc:
+            raise serializers.ValidationError({'detail': str(exc)}) from exc
 
     def get_can_request(self, obj):
         return (

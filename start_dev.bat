@@ -5,7 +5,10 @@ rem Windows 11 local acceptance launcher for the warehouse system.
 cd /d "%~dp0"
 set "PROJECT_ROOT=%~dp0"
 set "BACKEND_DIR=%PROJECT_ROOT%backend"
-set "VENV_DIR=%PROJECT_ROOT%.venv312"
+set "DATA_DIR=%LOCALAPPDATA%\AfterSalesWarehouse\data"
+set "DB_NAME=%DATA_DIR%\db.sqlite3"
+set "LEGACY_DB=%PROJECT_ROOT%runtime-data\db.sqlite3"
+set "VENV_DIR=%PROJECT_ROOT%.venv"
 set "PYTHON_EXE=%VENV_DIR%\Scripts\python.exe"
 set "ALLOWED_HOSTS=127.0.0.1,localhost,0.0.0.0,*"
 set "DEBUG=1"
@@ -24,6 +27,17 @@ if not exist "%BACKEND_DIR%\manage.py" (
     echo         Please run this file from the project root.
     pause
     exit /b 1
+)
+
+if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
+if not exist "%DB_NAME%" (
+    echo [DATA] Initializing writable runtime database...
+    if exist "%LEGACY_DB%" (
+        echo        Migrating the previous workspace database to LocalAppData...
+        copy /Y "%LEGACY_DB%" "%DB_NAME%" >nul
+    ) else if exist "%BACKEND_DIR%\db.sqlite3" (
+        copy /Y "%BACKEND_DIR%\db.sqlite3" "%DB_NAME%" >nul
+    )
 )
 
 netstat -ano | findstr ":8000" >nul
@@ -58,7 +72,7 @@ if not exist "%PYTHON_EXE%" (
 )
 
 echo [2/5] Checking Python dependencies...
-"%PYTHON_EXE%" -c "import django, rest_framework, corsheaders, PIL, dotenv, qrcode, openpyxl, pypinyin" >nul 2>nul
+"%PYTHON_EXE%" -c "import django, rest_framework, corsheaders, PIL, dotenv, qrcode, openpyxl, pypinyin; assert django.VERSION[:2] == (5, 2), django.get_version()" >nul 2>nul
 if errorlevel 1 (
     echo       Installing dependencies from backend\requirements.txt...
     "%PYTHON_EXE%" -m pip install -r "%BACKEND_DIR%\requirements.txt"
@@ -83,7 +97,7 @@ if not exist "%BACKEND_DIR%\.env" (
 
 echo [4/6] Applying database migrations...
 pushd "%BACKEND_DIR%"
-attrib -R "%BACKEND_DIR%\db.sqlite3" >nul 2>nul
+attrib -R "%DB_NAME%" >nul 2>nul
 "%PYTHON_EXE%" manage.py migrate --no-input
 if errorlevel 1 (
     popd
@@ -93,7 +107,7 @@ if errorlevel 1 (
 )
 
 echo [5/6] Verifying database write access...
-"%PYTHON_EXE%" manage.py shell -c "from django.db import connection; cursor = connection.cursor(); cursor.execute('BEGIN IMMEDIATE'); cursor.execute('ROLLBACK'); print('Database write preflight passed.')"
+"%PYTHON_EXE%" manage.py shell -c "from django.db import connection; cursor = connection.cursor(); cursor.execute('BEGIN IMMEDIATE'); cursor.execute('CREATE TABLE __warehouse_write_probe (id INTEGER)'); cursor.execute('DROP TABLE __warehouse_write_probe'); cursor.execute('ROLLBACK'); print('Database write preflight passed.')"
 if errorlevel 1 (
     popd
     echo [ERROR] The configured database cannot be written.

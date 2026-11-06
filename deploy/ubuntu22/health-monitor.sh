@@ -8,8 +8,6 @@ STATE_FILE="$STATE_DIR/health.state"
 NOTIFIER=/usr/local/libexec/after-sales-warehouse-dingtalk-notify
 DISK_WARNING_PERCENT="${DISK_WARNING_PERCENT:-85}"
 MEMORY_WARNING_PERCENT="${MEMORY_WARNING_PERCENT:-90}"
-CHECK_TUNNEL="${CHECK_TUNNEL:-1}"
-TUNNEL_URL_FILE=/var/lib/cloudflared/current-url
 
 install -d -m 750 "$STATE_DIR"
 problems=()
@@ -30,16 +28,6 @@ disk_percent="$(df -P /srv/after-sales-warehouse | awk 'NR==2 {gsub(/%/, "", $5)
 
 memory_percent="$(awk '/MemTotal:/ { total=$2 } /MemAvailable:/ { available=$2 } END { if (total > 0) printf "%d", (total - available) * 100 / total }' /proc/meminfo)"
 [[ "$memory_percent" =~ ^[0-9]+$ ]] && (( memory_percent < MEMORY_WARNING_PERCENT )) || problems+=("内存使用率 ${memory_percent:-未知}%（阈值 ${MEMORY_WARNING_PERCENT}%）")
-
-if [[ "$CHECK_TUNNEL" == 1 ]] && systemctl is-enabled --quiet after-sales-warehouse-quick-tunnel.service 2>/dev/null; then
-  systemctl is-active --quiet after-sales-warehouse-quick-tunnel.service || problems+=("Cloudflare Tunnel 未运行")
-  tunnel_url="$(cat "$TUNNEL_URL_FILE" 2>/dev/null || true)"
-  if [[ -z "$tunnel_url" ]]; then
-    problems+=("尚未记录 Cloudflare Tunnel 地址")
-  elif ! curl --fail --silent --show-error --max-time 15 "${tunnel_url%/}/health/" >/dev/null; then
-    problems+=("公网临时地址健康检查失败：$tunnel_url")
-  fi
-fi
 
 current_state=ok
 (( ${#problems[@]} == 0 )) || current_state=failed

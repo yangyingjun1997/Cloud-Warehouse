@@ -1,5 +1,6 @@
 # ---- 数据库与业务数据（绝不入库） ----
 backend/db.sqlite3
+backend/db.sqlite3.*
 backend/backups/
 backend/media/
 backend/staticfiles/
@@ -31,6 +32,11 @@ after-sales-warehouse-*.zip
 
 # ---- 工具运行产物 ----
 artifacts/
+.worktmp/
+runtime-data/
+/tmp????????
+/tools/label_printer_client/build/
+/tools/label_printer_client/*.spec
 
 # ---- IDE / 系统 ----
 .idea/
@@ -47,6 +53,8 @@ tools-private/
 docs-internal/
 
 # ---- 业务数据文件（真实客户/库存/供应商数据，绝不入库） ----
+/backups/
+*.xlsx
 import_output/
 *清单.txt
 *明细*.xlsx

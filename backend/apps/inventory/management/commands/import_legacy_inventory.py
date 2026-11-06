@@ -20,14 +20,17 @@ from openpyxl import load_workbook
 
 from apps.inventory.models import (
     Asset,
+    AssetCodeSequence,
     AssetNetworkEndpoint,
     Category,
     ImportBatch,
     ImportIssue,
+    InventoryDomain,
     ItemType,
     StockItem,
     Warehouse,
 )
+from apps.inventory.code_services import apply_asset_identity
 
 
 WAREHOUSE_CONFIG = {
@@ -38,8 +41,9 @@ WAREHOUSE_CONFIG = {
 STATUS_MAP = {
     '市场库存': {
         '在库空闲': Asset.Status.IN_STOCK,
+        '已归还': Asset.Status.IN_STOCK,
         '出库借用': Asset.Status.BORROWED,
-        '内部借用库': Asset.Status.BORROWED,
+        '内部借用库': Asset.Status.INTERNAL_BORROW,
         '出库出售': Asset.Status.SOLD,
         '返厂维修': Asset.Status.REPAIRING,
         '销售预定': Asset.Status.PENDING_OUT,
@@ -52,11 +56,17 @@ STATUS_MAP = {
         '已出库': Asset.Status.ISSUED,
         '返厂': Asset.Status.REPAIRING,
         '归还': Asset.Status.IN_STOCK,
+        '已归还': Asset.Status.IN_STOCK,
+        '已退货': Asset.Status.RETURNED_TO_VENDOR,
         '报废': Asset.Status.SCRAPPED,
     },
 }
 
 PLACEHOLDER_IDENTIFIERS = {'', '/', '-', '无', '未知', 'n/a', 'na', '本批没有序列号'}
+# ZSB 是行政系统早期把 DZSB 写错的遗留前缀，行政侧已无法改回；QTZC 是消防水炮
+# 的专用编码。两者都是源表给的正式编码，必须原样保留，不能自行改写成 DZSB。
+ASSET_CODE_PATTERN = re.compile(r'^(?:SC|DZSB|ZSB|QTZC)-[A-Z0-9]+(?:-[A-Z0-9]+)*$')
+SC_SEQUENCE_PATTERN = re.compile(r'^(?P<prefix>SC-[A-Z0-9]+(?:-[A-Z0-9]+)*)-(?P<number>\d+)$')
 
 
 class Command(BaseCommand):
@@ -66,6 +76,9 @@ class Command(BaseCommand):
         parser.add_argument('workbook', type=Path, help='Excel 文件路径')
         parser.add_argument('--apply', action='store_true', help='确认将可导入资产写入正式库')
         parser.add_argument('--user', help='执行导入的系统账号（用于追溯）')
+        parser.add_argument('--require-empty', action='store_true', help='要求资产和耗材配件表均为空')
+        parser.add_argument('--expected-assets', type=int, default=0)
+        parser.add_argument('--expected-stock-items', type=int, default=0)
 
     def handle(self, *args, **options):
         path = options['workbook'].expanduser().resolve()
@@ -76,6 +89,17 @@ class Command(BaseCommand):
 
         user = self._get_user(options.get('user'))
         asset_records, stock_records, issues, summary = self._parse_workbook(path)
+        errors = [issue for issue in issues if issue['severity'] == ImportIssue.Severity.ERROR]
+        if errors:
+            for issue in errors[:20]:
+                self.stderr.write(f'[错误] {issue["sheet_name"]} 第 {issue["row_number"]} 行：{issue["message"]}')
+            raise CommandError(f'源表预检存在 {len(errors)} 个阻断错误，未写入数据库。')
+        if options['expected_assets'] and len(asset_records) != options['expected_assets']:
+            raise CommandError(f'资产数不符合预期：解析 {len(asset_records)}，预期 {options["expected_assets"]}。')
+        if options['expected_stock_items'] and len(stock_records) != options['expected_stock_items']:
+            raise CommandError(f'耗材配件数不符合预期：解析 {len(stock_records)}，预期 {options["expected_stock_items"]}。')
+        if options['require_empty'] and (Asset.objects.exists() or StockItem.objects.exists()):
+            raise CommandError('资产或耗材配件表不是空表，已拒绝全量基准导入。')
         batch = ImportBatch.objects.create(
             source_filename=path.name,
             source_sha256=self._sha256(path),
@@ -140,108 +164,96 @@ class Command(BaseCommand):
                 continue
 
             product_name = ''
-            source_serials = set()
+            groups = {}
             source_codes = set()
             for row_number, row in enumerate(rows, start=2):
                 source = self._source_row(headers, row)
-                product_name = self._text(source.get('产品名称')) or product_name
                 if not any(source.values()):
                     continue
+                row_product_name = self._text(source.get('产品名称'))
+                if row_product_name:
+                    product_name = row_product_name
+                    groups.setdefault(product_name, {
+                        'summary_row': row_number,
+                        'summary_source': source,
+                        'asset_count': 0,
+                        'uncoded_detail_rows': [],
+                    })
                 if not product_name:
                     issues.append(self._issue(sheet_name, row_number, 'error', 'missing_product', '缺少产品名称，无法归类。', source))
                     continue
+                group = groups.setdefault(product_name, {
+                    'summary_row': row_number,
+                    'summary_source': source,
+                    'asset_count': 0,
+                    'uncoded_detail_rows': [],
+                })
+                codes = self._asset_codes(source)
+                if not codes:
+                    if self._looks_like_detail(sheet_name, source):
+                        group['uncoded_detail_rows'].append(row_number)
+                    malformed = self._malformed_code_value(source)
+                    if malformed:
+                        issues.append(self._issue(
+                            sheet_name, row_number, 'warning', 'malformed_asset_code',
+                            f'发现疑似资产编码“{malformed}”，但不符合 SC-/DZSB- 正式格式，未自动导入。', source,
+                        ))
+                    continue
 
-                serial = self._text(source.get('序列号'))
-                internal_code = self._text(source.get('资产编号') or source.get('八维通SN'))
                 status_source = self._text(source.get('状态'))
-                ip_value = serial if self._is_ip(serial) else ''
-                usable_serial = '' if self._is_placeholder(serial) or ip_value else serial
-                usable_code = '' if self._is_placeholder(internal_code) else internal_code
-
-                if not (usable_serial or usable_code or ip_value):
-                    if self._is_summary_row(sheet_name, source):
-                        stock_records.append({
-                            'sheet_name': sheet_name,
-                            'row_number': row_number,
-                            'source': source,
-                            'name': product_name,
-                            'quantity': self._summary_quantity(sheet_name, source),
-                        })
-                        continue
-                    issues.append(self._issue(
-                        sheet_name,
-                        row_number,
-                        'warning',
-                        'unidentified_row',
-                        '无有效序列号、旧资产编号或 IP，已转入复核清单。',
-                        source,
-                    ))
-                    continue
-                if self._is_serial_range(usable_serial):
-                    issues.append(self._issue(sheet_name, row_number, 'warning', 'serial_range', '序列号为范围值，无法对应单件资产，已转入复核清单。', source))
-                    continue
-                if usable_serial and usable_serial in source_serials:
-                    issues.append(self._issue(sheet_name, row_number, 'error', 'duplicate_serial', '同一工作簿序列号重复，未纳入自动导入。', source))
-                    continue
-                if usable_code and usable_code in source_codes:
-                    issues.append(self._issue(sheet_name, row_number, 'error', 'duplicate_internal_code', '同一工作簿旧资产编号重复，未纳入自动导入。', source))
-                    continue
-                source_serials.add(usable_serial)
-                source_codes.add(usable_code)
-
                 mapped_status = STATUS_MAP[sheet_name].get(status_source, Asset.Status.IN_STOCK)
                 if status_source and status_source not in STATUS_MAP[sheet_name]:
                     issues.append(self._issue(sheet_name, row_number, 'warning', 'unknown_status', f'未识别状态“{status_source}”，暂按“在库”导入。', source))
+                serial = self._text(source.get('序列号'))
+                if any(serial.upper() == code for code in codes):
+                    serial = ''
+                ip_value = serial if self._is_ip(serial) else ''
+                usable_serial = '' if self._is_placeholder(serial) or ip_value or self._is_serial_range(serial) else serial
                 if ip_value:
-                    issues.append(self._issue(sheet_name, row_number, 'info', 'ip_in_serial_column', 'IP 已转存为网络接口记录，厂家 SN 保留为空。', source))
-                asset_records.append({
-                    'sheet_name': sheet_name,
-                    'row_number': row_number,
-                    'source': source,
-                    'name': product_name,
-                    'serial_number': usable_serial,
-                    'asset_code': usable_code,
-                    'ip_address': ip_value,
-                    'status': mapped_status,
-                })
+                    issues.append(self._issue(sheet_name, row_number, 'info', 'ip_in_serial_column', 'IP 已转存为网络接口记录，生产厂家 SN 保留为空。', source))
+                for position, code in enumerate(codes, 1):
+                    if code in source_codes:
+                        issues.append(self._issue(sheet_name, row_number, 'error', 'duplicate_internal_code', f'正式资产编码 {code} 在源表中重复。', source))
+                        continue
+                    source_codes.add(code)
+                    group['asset_count'] += 1
+                    asset_records.append({
+                        'sheet_name': sheet_name,
+                        'row_number': row_number,
+                        'source': source,
+                        'name': product_name,
+                        'serial_number': usable_serial if len(codes) == 1 else '',
+                        'asset_code': code,
+                        'ip_address': ip_value if len(codes) == 1 else '',
+                        'status': mapped_status,
+                        'split_position': position,
+                    })
 
-        ip_counts = Counter(record['ip_address'] for record in asset_records if record['ip_address'])
-        safe_asset_records = []
-        for record in asset_records:
-            if record['ip_address'] and ip_counts[record['ip_address']] > 1:
-                issues.append(self._issue(
-                    record['sheet_name'],
-                    record['row_number'],
-                    'error',
-                    'duplicate_ip',
-                    '工作簿内存在重复 IP，无法确定对应单件，未纳入自动导入。',
-                    record['source'],
-                ))
-                continue
-            safe_asset_records.append(record)
+            for name, group in groups.items():
+                if group['asset_count'] == 0:
+                    stock_records.append({
+                        'sheet_name': sheet_name,
+                        'row_number': group['summary_row'],
+                        'source': group['summary_source'],
+                        'name': name,
+                        'quantity': self._summary_quantity(sheet_name, group['summary_source']),
+                    })
+                elif group['uncoded_detail_rows']:
+                    rows_text = '、'.join(str(value) for value in group['uncoded_detail_rows'][:12])
+                    issues.append(self._issue(
+                        sheet_name, group['summary_row'], 'warning', 'uncoded_rows_in_asset_group',
+                        f'“{name}”同时存在正式编码资产和无编码明细；无编码行 {rows_text} 未自动创建资产或数量库存。',
+                        group['summary_source'],
+                    ))
 
-        asset_product_keys = {(record['sheet_name'], record['name']) for record in safe_asset_records}
-        standalone_stock_records = []
-        for record in stock_records:
-            if (record['sheet_name'], record['name']) in asset_product_keys:
-                issues.append({
-                    **self._issue(
-                        record['sheet_name'],
-                        record['row_number'],
-                        'info',
-                        'summary_represented_by_assets',
-                        '产品汇总数已由同仓库单件资产反映，不重复创建数量库存。',
-                        record['source'],
-                    ),
-                    'resolved': True,
-                    'resolution_note': '已按单件资产导入，汇总行仅作核对。',
-                })
-                continue
-            standalone_stock_records.append(record)
+        safe_asset_records = asset_records
+        standalone_stock_records = stock_records
 
         summary = {
             'candidate_asset_count': len(safe_asset_records),
             'candidate_stock_item_count': len(standalone_stock_records),
+            'recognized_sc_count': sum(record['asset_code'].startswith('SC-') for record in safe_asset_records),
+            'recognized_dzsb_count': sum(record['asset_code'].startswith('DZSB-') for record in safe_asset_records),
             'issue_count': len(issues),
             'status_counts': dict(Counter(record['status'] for record in safe_asset_records)),
             'sheets': list(WAREHOUSE_CONFIG),
@@ -257,6 +269,11 @@ class Command(BaseCommand):
                 for name, code in WAREHOUSE_CONFIG.items()
             }
             category, _ = Category.objects.get_or_create(name='历史导入', defaults={'code': 'LEGACY'})
+            domains = {
+                code: InventoryDomain.objects.get(code=code)
+                for code in WAREHOUSE_CONFIG.values()
+            }
+            self._sync_sc_sequences(asset_records)
             for record in stock_records:
                 stock_code = self._stock_item_code(record['sheet_name'], record['name'])
                 if StockItem.objects.filter(code=stock_code).exists():
@@ -276,21 +293,21 @@ class Command(BaseCommand):
                 source = record['source']
                 serial = record['serial_number']
                 requested_code = record['asset_code']
-                if serial and Asset.objects.filter(serial_number=serial).exists():
-                    issues.append(self._issue(record['sheet_name'], record['row_number'], 'error', 'existing_serial', '系统内已存在相同厂家 SN，已跳过。', source))
-                    continue
                 if requested_code and Asset.objects.filter(asset_code=requested_code).exists():
                     issues.append(self._issue(record['sheet_name'], record['row_number'], 'error', 'existing_asset_code', '系统内已存在相同资产编号，已跳过。', source))
                     continue
 
                 item_type = self._item_type(category, record['name'])
-                asset = Asset.objects.create(
+                asset = Asset(
                     asset_code=requested_code,
+                    code_source=Asset.CodeSource.WAREHOUSE_ASSIGNED,
+                    domain=domains[WAREHOUSE_CONFIG[record['sheet_name']]],
                     name=record['name'],
                     item_type=item_type,
                     manufacturer=self._text(source.get('厂家')),
                     model=self._text(source.get('型号')),
                     serial_number=serial,
+                    sn_status=Asset.SnStatus.PROVIDED if serial else Asset.SnStatus.NO_SN,
                     received_date=self._date(source.get('到货日期')),
                     purchase_order_no=self._reference(source),
                     warehouse=warehouses[record['sheet_name']],
@@ -298,11 +315,44 @@ class Command(BaseCommand):
                     source_import_batch=batch,
                     remarks=self._remarks(record['sheet_name'], source),
                 )
+                apply_asset_identity(
+                    asset, actor=batch.created_by,
+                    reason=f'从 {batch.source_filename} 第 {record["row_number"]} 行导入',
+                )
                 imported_assets += 1
                 if record['ip_address']:
                     AssetNetworkEndpoint.objects.create(asset=asset, ip_address=record['ip_address'], is_primary=True)
                     imported_endpoints += 1
         return imported_assets, imported_stock_items, imported_endpoints, issues
+
+    @staticmethod
+    def _sync_sc_sequences(asset_records):
+        grouped = {}
+        for record in asset_records:
+            match = SC_SEQUENCE_PATTERN.fullmatch(record['asset_code'])
+            if not match:
+                continue
+            prefix = match.group('prefix')
+            number_text = match.group('number')
+            values = grouped.setdefault(prefix, {'numbers': [], 'widths': Counter()})
+            values['numbers'].append(int(number_text))
+            values['widths'][len(number_text)] += 1
+        for prefix, values in grouped.items():
+            width = values['widths'].most_common(1)[0][0]
+            sequence, _ = AssetCodeSequence.objects.get_or_create(
+                scheme=AssetCodeSequence.Scheme.MARKET,
+                prefix=prefix,
+                defaults={'width': width, 'last_number': max(values['numbers'])},
+            )
+            changed = []
+            if sequence.last_number < max(values['numbers']):
+                sequence.last_number = max(values['numbers'])
+                changed.append('last_number')
+            if sequence.last_number == 0 and sequence.width != width:
+                sequence.width = width
+                changed.append('width')
+            if changed:
+                sequence.save(update_fields=changed + ['updated_at'])
 
     def _item_type(self, category, name, *, is_serialized=True):
         code = f'LEGACY-{hashlib.sha1(name.encode("utf-8")).hexdigest()[:12].upper()}'
@@ -316,6 +366,30 @@ class Command(BaseCommand):
     def _stock_item_code(sheet_name, name):
         value = f'{sheet_name}:{name}'.encode('utf-8')
         return f'STOCK-{hashlib.sha1(value).hexdigest()[:12].upper()}'
+
+    def _asset_codes(self, source):
+        result = []
+        for field in ('资产编号', '八维通SN', '序列号'):
+            raw = self._text(source.get(field)).upper()
+            for value in re.split(r'[\r\n]+', raw):
+                value = value.strip()
+                if ASSET_CODE_PATTERN.fullmatch(value) and value not in result:
+                    result.append(value)
+        return result
+
+    def _malformed_code_value(self, source):
+        for field in ('资产编号', '八维通SN'):
+            value = self._text(source.get(field)).upper()
+            if value and value not in {'无', '-', '/'} and (
+                value.startswith(('SC', 'DZSB', 'ZSB', 'QTZC'))
+            ):
+                return value
+        return ''
+
+    def _looks_like_detail(self, sheet_name, source):
+        field = '采购个数' if sheet_name == '市场库存' else '采购数量'
+        value = self._text(source.get(field))
+        return not self._text(source.get('产品名称')) and bool(re.fullmatch(r'\d+(?:\.0+)?', value))
 
     @staticmethod
     def _is_summary_row(sheet_name, source):

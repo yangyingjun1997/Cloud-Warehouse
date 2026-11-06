@@ -299,6 +299,31 @@ class WorkflowApiTests(TestCase):
         response = self.client.post(f'/api/workflow/requests/{request_id}/process/', {}, format='json')
         self.assertEqual(response.status_code, 200, response.data)
 
+    def test_api_enforces_separate_approval_and_execution_permissions(self):
+        approver = User.objects.create_user(username='approval-only', password='password123')
+        approver.groups.add(Group.objects.get_or_create(name='warehouse_approval')[0])
+        executor = User.objects.create_user(username='outbound-only', password='password123')
+        executor.groups.add(Group.objects.get_or_create(name='warehouse_outbound')[0])
+        request_id = self._create_request()
+        response = self.client.post(f'/api/workflow/requests/{request_id}/submit/', {}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+
+        self.client.force_authenticate(executor)
+        response = self.client.post(f'/api/workflow/requests/{request_id}/approve/', {}, format='json')
+        self.assertEqual(response.status_code, 403, response.data)
+        response = self.client.post(f'/api/workflow/requests/{request_id}/reject/', {}, format='json')
+        self.assertEqual(response.status_code, 403, response.data)
+
+        self.client.force_authenticate(approver)
+        response = self.client.post(f'/api/workflow/requests/{request_id}/approve/', {}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        response = self.client.post(f'/api/workflow/requests/{request_id}/process/', {}, format='json')
+        self.assertEqual(response.status_code, 403, response.data)
+
+        self.client.force_authenticate(executor)
+        response = self.client.post(f'/api/workflow/requests/{request_id}/process/', {}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+
     def test_return_flow_requires_current_holder_and_puts_asset_back_in_stock(self):
         self.asset.current_holder = self.employee
         self.asset.status = Asset.Status.BORROWED
@@ -522,7 +547,7 @@ class WorkflowApiTests(TestCase):
         loan = StockItemLoan.objects.get(source_line__request_id=first_id)
         self.assertEqual(loan.outstanding_quantity, 4)
 
-    def test_expired_pending_request_is_closed_but_approved_reservation_is_preserved(self):
+    def test_expired_pending_request_is_closed_and_approved_reservation_also_expires(self):
         pending_id = self._create_request()
         self.client.post(f'/api/workflow/requests/{pending_id}/submit/', {}, format='json')
         pending_reservation = InventoryReservation.objects.get(request_line__request_id=pending_id)
@@ -556,12 +581,24 @@ class WorkflowApiTests(TestCase):
         self.client.force_authenticate(self.operator)
         self.client.post(f'/api/workflow/requests/{approved_id}/approve/', {}, format='json')
         approved_reservation = InventoryReservation.objects.get(request_line__request_id=approved_id)
-        self.assertIsNone(approved_reservation.expires_at)
-        self.assertEqual(expire_pending_reservations(timezone.now() + timedelta(days=30)), 0)
+        # 审批通过后不能把 expires_at 置空：那样库存会被无限期锁定，
+        # 恶意申请+审批即可囤积库存。这里改为固定 7 天的保留期。
+        self.assertIsNotNone(approved_reservation.expires_at)
+        self.assertGreater(approved_reservation.expires_at, timezone.now())
+        # 保留期内不会被回收。
+        self.assertEqual(expire_pending_reservations(timezone.now() + timedelta(days=3)), 0)
         self.assertEqual(
             WorkflowRequest.objects.get(pk=approved_id).status,
             WorkflowRequest.Status.WAITING_WAREHOUSE,
         )
+        # 超过保留期后必须自动关闭并释放，否则库存永远回不来。
+        self.assertEqual(expire_pending_reservations(timezone.now() + timedelta(days=30)), 1)
+        self.assertEqual(
+            WorkflowRequest.objects.get(pk=approved_id).status,
+            WorkflowRequest.Status.CLOSED,
+        )
+        approved_reservation.refresh_from_db()
+        self.assertEqual(approved_reservation.status, InventoryReservation.Status.RELEASED)
 
     def test_manual_close_records_release_actor_and_reason(self):
         request_id = self._create_request()

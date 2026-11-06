@@ -3,7 +3,7 @@
 {% block crumb %}仓库管理 / 资产生命周期{% endblock %}
 {% block content %}
   <section class="page-heading lifecycle-head">
-    <div><p class="eyebrow">资产全生命周期</p><h1>{{ asset.name }}</h1><p class="page-copy">仓库系统编号 {{ asset.system_asset_no }}{% if asset.asset_code %} · 公司 ERP 编码 {{ asset.asset_code }}{% endif %}{% if asset.serial_number %} · 生产厂家 SN {{ asset.serial_number }}{% endif %}</p></div>
+    <div><p class="eyebrow">资产全生命周期</p><h1>{{ asset.name }}</h1><p class="page-copy">{% if asset.asset_code %}资产编码 {{ asset.asset_code }}{% else %}<span class="tag pending">暂未赋码</span>{% endif %}{% if asset.serial_number %} · 生产厂家 SN {{ asset.serial_number }}{% endif %}<span style="opacity:.5; font-size:11px"> · 系统编号 {{ asset.system_asset_no }}</span></p></div>
     <div class="page-actions">{% if can_manage_lifecycle %}<a class="button button-secondary" href="{% url 'warehouse_asset_edit' asset.id %}">编辑基础信息</a>{% endif %}<a class="button button-secondary" href="{% url 'warehouse_management' %}?tab=assets&amp;q={{ asset.system_asset_no|urlencode }}">返回资产台账</a></div>
   </section>
 
@@ -20,6 +20,7 @@
     <a class="{% if tab == 'repairs' %}active{% endif %}" href="?tab=repairs">维修台账</a>
     <a class="{% if tab == 'handover' %}active{% endif %}" href="?tab=handover">交接确认</a>
     <a class="{% if tab == 'attachments' %}active{% endif %}" href="?tab=attachments">附件归档</a>
+    <a class="{% if tab == 'corrections' %}active{% endif %}" href="?tab=corrections">台账校正</a>
   </nav>
 
   {% if tab == 'timeline' %}
@@ -39,7 +40,7 @@
         <div class="panel-head"><h2>资产责任信息</h2></div>
         <dl class="compact-details">
           <div><dt>物品类型</dt><dd>{{ asset.item_type }}</dd></div><div><dt>生产厂家 / 型号</dt><dd>{{ asset.manufacturer|default:'-' }} / {{ asset.model|default:'-' }}</dd></div>
-          <div><dt>采购金额</dt><dd>{% if asset.purchase_amount != None %}¥{{ asset.purchase_amount }}{% else %}未填写{% endif %}</dd></div><div><dt>所属部门</dt><dd>{{ asset.department|default:'未分配' }}</dd></div>
+          <div><dt>采购金额</dt><dd>{% if not global_can_view_financials %}<span class="tag neutral">无权限查看</span>{% elif asset.purchase_amount != None %}¥{{ asset.purchase_amount }}{% else %}未填写{% endif %}</dd></div><div><dt>客户</dt><dd>{{ asset.customer_ref.name|default:'未关联' }}</dd></div><div><dt>所属部门</dt><dd>{{ asset.department|default:'未分配' }}</dd></div>
         </dl>
         {% if can_manage_lifecycle and asset.status != 'scrapped' and asset.status != 'sold' and asset.status != 'returned_to_vendor' %}
           {% if asset.status == 'borrowed' or asset.status == 'issued' %}
@@ -81,10 +82,30 @@
       </div></section>
       <section class="panel lifecycle-scroll form-panel"><div class="panel-head"><h2>新建交接</h2><span>接收方确认后形成不可覆盖记录</span></div>{% if can_handover %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="create_handover"><div class="lifecycle-form-grid">{% for field in handover_form %}<div class="form-field {% if field.name == 'condition_description' or field.name == 'accessories' or field.name == 'note' %}full{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <b>*</b>{% endif %}</label>{{ field }}{% if field.help_text %}<small class="field-help">{{ field.help_text }}</small>{% endif %}{% for error in field.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>{% endfor %}</div><div class="form-actions"><button class="button button-primary" type="submit">建立交接记录</button></div></form>{% else %}<div class="empty-state">当前账号没有出入库执行权限，不能建立交接。</div>{% endif %}</section>
     </div>
-  {% else %}
+  {% elif tab == 'attachments' %}
     <div class="lifecycle-layout">
       <section class="panel lifecycle-scroll"><div class="panel-head"><h2>归档资料</h2><span>{{ attachments|length }} 个附件</span></div><div class="attachment-list">{% for attachment in attachments %}<a class="attachment-row" href="{% url 'asset_attachment_download' attachment.id %}"><div><strong>{{ attachment.display_name }}</strong><small>{{ attachment.get_category_display }} · {{ attachment.created_at|date:'Y-m-d H:i' }}{% if attachment.uploaded_by %} · {{ attachment.uploaded_by.get_username }}{% endif %}</small></div><span>下载</span></a>{% empty %}<div class="empty-state">该资产暂无归档附件。</div>{% endfor %}</div></section>
       <section class="panel lifecycle-scroll form-panel"><div class="panel-head"><h2>上传并归档</h2><span>单个文件最大 20 MB</span></div>{% if can_manage_lifecycle %}<form method="post" enctype="multipart/form-data">{% csrf_token %}<input type="hidden" name="action" value="archive_attachment"><div class="lifecycle-form-grid">{% for field in attachment_form %}<div class="form-field {% if field.name == 'note' %}full{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <b>*</b>{% endif %}</label>{{ field }}{% if field.help_text %}<small class="field-help">{{ field.help_text }}</small>{% endif %}{% for error in field.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>{% endfor %}</div><div class="form-actions"><button class="button button-primary" type="submit">上传并归档</button></div></form>{% else %}<div class="empty-state">当前账号没有附件归档权限。</div>{% endif %}</section>
+    </div>
+  {% else %}
+    <div class="lifecycle-layout">
+      <section class="panel lifecycle-scroll">
+        <div class="panel-head"><h2>校正记录</h2><span>仅用于修正历史台账，不产生虚假出入库流水</span></div>
+        <div class="record-list">
+          {% for correction in corrections %}
+            <article class="handover-row">
+              <div><strong>{{ correction.get_from_status_display }} → {{ correction.get_to_status_display }}</strong><small>{{ correction.created_at|date:'Y-m-d H:i' }} · {{ correction.actor.get_username }}</small><p>{{ correction.reason }}</p></div>
+              <div><span class="status-badge">{{ correction.target_warehouse }} / {{ correction.target_location }}</span><small>{{ correction.get_source_display }}</small></div>
+            </article>
+          {% empty %}<div class="empty-state">该资产暂无台账校正记录。</div>{% endfor %}
+        </div>
+      </section>
+      <section class="panel lifecycle-scroll form-panel">
+        <div class="panel-head"><h2>新增台账校正</h2><span>维修中等业务状态不能通过普通归还改回在库</span></div>
+        {% if can_correct_state %}
+          <form method="post">{% csrf_token %}<input type="hidden" name="action" value="correct_state"><div class="lifecycle-form-grid">{% for field in correction_form %}<div class="form-field {% if field.name == 'reason' %}full{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <b>*</b>{% endif %}</label>{{ field }}{% if field.help_text %}<small class="field-help">{{ field.help_text }}</small>{% endif %}{% for error in field.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>{% endfor %}</div><div class="form-actions"><button class="button button-primary" type="submit">确认并记录校正</button></div></form>
+        {% else %}<div class="empty-state">当前账号没有资产台账校正权限。</div>{% endif %}
+      </section>
     </div>
   {% endif %}
 {% endblock %}

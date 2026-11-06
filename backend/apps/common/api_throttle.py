@@ -73,3 +73,27 @@ def consume_token_request(*, username: str, client_ip: str) -> tuple[bool, int]:
 
 def client_ip_from_request(request) -> str:
     return get_client_ip(request)
+
+
+def consume_scan_quota(*, username: str, client_ip: str) -> tuple[bool, int]:
+    """扫码查询额度，单独计数。
+
+    扫码是申请页的高频动作，和令牌接口共用计数会互相挤占；同时它又是
+    枚举资产台账的入口，必须有自己的上限。
+    """
+
+    limit = max(1, int(getattr(settings, 'SCAN_RATE_LIMIT_REQUESTS', 120)))
+    window_seconds = max(1, int(getattr(settings, 'SCAN_RATE_LIMIT_WINDOW_SECONDS', 300)))
+    now = timezone.now()
+    keys = [(api_ip_key(f'scan:{client_ip}'), limit)]
+    account_key = api_account_key(f'scan:{username}' if username else '')
+    if account_key:
+        keys.append((account_key, limit))
+    with transaction.atomic():
+        waits = []
+        allowed = True
+        for key, key_limit in keys:
+            current_allowed, wait = _consume_one(key, key_limit, now, window_seconds)
+            allowed = allowed and current_allowed
+            waits.append(wait)
+        return allowed, max(waits)

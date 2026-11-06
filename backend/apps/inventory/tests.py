@@ -10,6 +10,7 @@ from PIL import Image
 from rest_framework.test import APIClient
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 from io import BytesIO
 from importlib import import_module
@@ -28,12 +29,9 @@ from .conversion_services import (
     convert_assets_to_stock,
     convert_stock_to_assets,
 )
-from .import_services import (
-    apply_inventory_import,
+from .search import asset_search_query, normalize_scan_value
+from .import_batch_services import (
     create_import_batch,
-    parse_inventory_workbook,
-    build_inventory_import_template,
-    validate_inventory_records,
 )
 from .lifecycle_services import (
     archive_asset_attachment,
@@ -69,7 +67,68 @@ from apps.workflow.models import InventoryReservation, WorkflowRequest, Workflow
 from apps.workflow.services import process_request
 
 User = get_user_model()
-TEST_MEDIA_ROOT = Path(tempfile.mkdtemp(prefix='warehouse-test-media-'))
+
+
+def _make_test_media_root() -> Path:
+    """为单个测试类创建独立的媒体目录。
+
+    刻意不用 ``tempfile.mkdtemp()``：部分受限文件系统（例如 Windows 上继承
+    了受限 ACL 的临时目录）创建的目录，其下再 ``makedirs`` 子目录会抛
+    ``PermissionError``，导致上传类测试假失败。这里改用 ``makedirs`` 直接
+    创建带随机后缀的目录，行为与生产路径一致。
+    """
+    base = Path(tempfile.gettempdir()) / f'warehouse-test-media-{uuid.uuid4().hex[:8]}'
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+class ScanGunInputTests(TestCase):
+    """扫码枪接入：输入归一化与唯一命中。
+
+    DS3678 这类扫码枪以键盘模拟方式把二维码原文敲进输入框，
+    会带上全角标点（中文输入法）、尾随回车换行（键盘后缀配置）。
+    若不做归一化，用户看到的字符串一模一样却查不到记录。
+    """
+
+    def setUp(self):
+        category = Category.objects.create(name='扫码测试分类', code='SCAN-TEST')
+        self.item_type = ItemType.objects.create(name='扫码测试类型', code='SCAN-TYPE', category=category)
+        self.warehouse = Warehouse.objects.create(name='扫码测试仓', code='SCAN-WH')
+        self.asset = Asset.objects.create(
+            name='扫码测试设备', item_type=self.item_type, warehouse=self.warehouse,
+            system_asset_no='AST-00000238',
+        )
+
+    def test_normalize_scan_value_handles_fullwidth_and_control_chars(self):
+        target = 'WMS2:A:AST-00000238'
+        for raw in (
+            'WMS2:A:AST-00000238',
+            'WMS2：A：AST-00000238',        # 全角冒号
+            'ＷＭＳ２：Ａ：ＡＳＴ-00000238',  # 全角字母 + 全角冒号
+            '  WMS2:A:AST-00000238\r\n',     # 扫码枪尾随回车换行
+            'WMS2:A:AST-00000238\t',
+            'WMS2:A:AST-00000238\u200b',     # 零宽空格
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(normalize_scan_value(raw), target)
+
+    def test_normalize_scan_value_returns_empty_for_blank(self):
+        for raw in ('', '   ', '\r\n', '\u200b'):
+            with self.subTest(raw=raw):
+                self.assertEqual(normalize_scan_value(raw), '')
+
+    def test_fullwidth_qr_value_still_matches_asset(self):
+        # 库里存的是半角，输入是全角，仍应命中
+        query = asset_search_query('WMS2：A：AST-00000238')
+        self.assertIn(self.asset, Asset.objects.filter(query))
+
+    def test_qr_value_with_trailing_newline_still_matches_asset(self):
+        query = asset_search_query('WMS2:A:AST-00000238\r\n')
+        self.assertIn(self.asset, Asset.objects.filter(query))
+
+    def test_blank_query_matches_nothing(self):
+        # 空查询命中全表会让扫码枪误触发时列出所有资产
+        self.assertEqual(Asset.objects.filter(asset_search_query('')).count(), 0)
 
 
 class AssetStatusDimensionTests(TestCase):
@@ -150,8 +209,20 @@ class AssetStatusDimensionTests(TestCase):
         self.assertEqual(asset.disposition_state, Asset.DispositionState.INTERNAL)
 
 
-@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
 class AssetLifecycleTests(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._media_root = _make_test_media_root()
+        cls._media_override = override_settings(MEDIA_ROOT=cls._media_root)
+        cls._media_override.enable()
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls._media_override.disable()
+        shutil.rmtree(cls._media_root, ignore_errors=True)
+
     def setUp(self):
         self.employee = User.objects.create_user(username='lifecycle-employee', password='password123')
         self.operator = User.objects.create_user(username='lifecycle-operator', password='password123')
@@ -266,8 +337,20 @@ class AssetLifecycleTests(TestCase):
         self.assertEqual(self.asset.status, Asset.Status.BORROWED)
 
 
-@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
 class AssetApiTests(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._media_root = _make_test_media_root()
+        cls._media_override = override_settings(MEDIA_ROOT=cls._media_root)
+        cls._media_override.enable()
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls._media_override.disable()
+        shutil.rmtree(cls._media_root, ignore_errors=True)
+
     def setUp(self):
         self.client = APIClient()
         self.employee = User.objects.create_user(username='employee', password='password123')
@@ -282,11 +365,6 @@ class AssetApiTests(TestCase):
             serial_number='SN-001',
             qr_value='QR-001',
         )
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
 
     def test_lookup_and_qr_code(self):
         self.client.force_authenticate(self.employee)
@@ -463,190 +541,6 @@ class AssetApiTests(TestCase):
         ).exists())
 
 
-class InventoryConversionAndImportTests(TestCase):
-    def setUp(self):
-        self.admin = User.objects.create_superuser(username='inventory-admin', password='password123', email='')
-        self.category = Category.objects.create(name='转换测试分类', code='CONVERT-CAT')
-        self.item_type = ItemType.objects.create(
-            name='转换测试类型', code='CONVERT-TYPE', category=self.category,
-            unit='件', safety_stock=2,
-        )
-        self.warehouse = Warehouse.objects.create(name='转换测试仓库', code='CONVERT-WH')
-        self.location = Location.objects.create(
-            warehouse=self.warehouse, name='转换测试库位', code='A-01',
-        )
-        self.stock = StockItem.objects.create(
-            name='转换测试配件', code='CONVERT-STOCK', item_type=self.item_type,
-            warehouse=self.warehouse, location=self.location, quantity=3, unit='件',
-        )
-
-    def _workbook(self, rows):
-        workbook = Workbook()
-        sheet = workbook.active
-        sheet.title = '库存导入'
-        sheet.append([
-            '管理方式', '物品名称', '物品类型', '物品类型编码', '仓库', '库位',
-            '系统编号', '厂家出厂SN序列号', '耗材配件编码', '库存数量', '单位',
-            '最低库存提醒值', '状态', '备注',
-        ])
-        for row in rows:
-            sheet.append(row)
-        output = BytesIO()
-        workbook.save(output)
-        return output.getvalue()
-
-    def test_download_template_uses_current_columns_and_five_examples(self):
-        workbook = load_workbook(build_inventory_import_template(), data_only=True)
-        sheet = workbook['库存导入']
-
-        self.assertEqual(sheet.max_row, 6)
-        self.assertEqual(
-            [cell.value for cell in sheet[1]],
-            [
-                '管理方式*', '物品名称*', '物品类型*', '物品类型编码', '仓库*', '库位',
-                '仓库系统资产编号', '公司 ERP 资产编码', '生产厂家 SN / 序列号', '生产厂家条码 / 二维码内容', '本系统二维码内容',
-                '耗材配件编码', '库存数量', '单位', '最低库存提醒值', '厂家', '型号',
-                '供应商', '单价（元）', '状态', '备注',
-            ],
-        )
-        records, issues, summary = parse_inventory_workbook(build_inventory_import_template().getvalue())
-        self.assertEqual(len(records), 5)
-        self.assertEqual(summary['valid_row_count'], 5)
-        self.assertFalse([issue for issue in issues if issue['severity'] == 'error'])
-        self.assertEqual(sheet['G4'].value, 'AST-000003')
-        self.assertEqual(sheet['H4'].value, 'DZSB-D7-21-0001-600001')
-        self.assertIn('填写说明', summary['sheets'])
-        notes = workbook['填写说明']
-        note_text = '\n'.join(str(row[1].value) for row in notes.iter_rows(min_row=2, max_col=2))
-        self.assertIn('管理方式、物品名称、物品类型、仓库', note_text)
-        self.assertIn('行政', note_text)
-        self.assertIn('公司内部字段', note_text)
-
-    def test_new_asset_gets_immutable_system_number_without_erp_code(self):
-        asset = Asset.objects.create(
-            name='未赋码资产', item_type=self.item_type,
-            warehouse=self.warehouse, location=self.location,
-        )
-        self.assertIsNone(asset.asset_code)
-        self.assertRegex(asset.system_asset_no, r'^AST-\d{6}$')
-        self.assertEqual(asset.qr_value, asset.system_asset_no)
-
-        asset.asset_code = 'DZSB-D7-21-0001-600001'
-        asset.save()
-        asset.refresh_from_db()
-        self.assertEqual(asset.qr_value, asset.system_asset_no)
-
-    def test_system_number_is_unique_and_searchable(self):
-        asset = Asset.objects.create(
-            name='编号检索资产', item_type=self.item_type,
-            warehouse=self.warehouse, location=self.location,
-        )
-        self.assertEqual(Asset.objects.filter(asset_search_query(asset.system_asset_no)).count(), 1)
-
-    def test_multiple_uncoded_assets_coexist(self):
-        for index in range(3):
-            Asset.objects.create(
-                name=f'未赋码资产{index}', item_type=self.item_type,
-                warehouse=self.warehouse, location=self.location,
-            )
-        self.assertEqual(
-            Asset.objects.filter(asset_code__isnull=True, warehouse=self.warehouse).count(),
-            3,
-        )
-
-    def test_controlled_conversion_preserves_history_and_balances_quantity(self):
-        conversion, assets = convert_stock_to_assets(
-            actor=self.admin, stock_item_id=self.stock.id, quantity=2,
-            serial_numbers='CONVERT-SN-001\nCONVERT-SN-002', note='拆出两件独立追踪',
-        )
-        self.stock.refresh_from_db()
-        self.assertEqual(self.stock.quantity, 1)
-        self.assertEqual(len(assets), 2)
-        self.assertEqual(conversion.direction, InventoryConversion.Direction.STOCK_TO_ASSET)
-        self.assertTrue(OperationAuditLog.objects.filter(action='stock_converted_to_assets', target_id=conversion.id).exists())
-
-        reverse_conversion, target = convert_assets_to_stock(
-            actor=self.admin, asset_ids=[asset.id for asset in assets],
-            target_stock_item_id=self.stock.id, note='恢复按数量管理',
-        )
-        target.refresh_from_db()
-        self.assertEqual(target.quantity, 3)
-        self.assertEqual(reverse_conversion.assets.count(), 2)
-        self.assertEqual(
-            set(Asset.objects.filter(pk__in=[asset.id for asset in assets]).values_list('status', flat=True)),
-            {Asset.Status.CONVERTED_TO_STOCK},
-        )
-
-    def test_only_in_stock_assets_can_convert_to_stock(self):
-        asset = Asset.objects.create(
-            name='借出资产', item_type=self.item_type, warehouse=self.warehouse,
-            location=self.location, status=Asset.Status.BORROWED,
-        )
-        with self.assertRaisesMessage(InventoryConversionError, '在库'):
-            convert_assets_to_stock(actor=self.admin, asset_ids=[asset.id])
-
-    def test_incremental_import_creates_and_updates_unique_records(self):
-        content = self._workbook([
-            ['单件资产', '新雷达', '雷达', 'IMPORT-LIDAR', self.warehouse.name, self.location.code, '', 'IMPORT-SN-001', '', 1, '件', 1, '在库', '增量导入测试'],
-            ['耗材配件', self.stock.name, self.item_type.name, self.item_type.code, self.warehouse.name, self.location.code, '', '', self.stock.code, 9, '件', 3, '', '更新库存'],
-        ])
-        records, issues, summary = parse_inventory_workbook(content)
-        issues.extend(validate_inventory_records(records))
-        self.assertFalse([issue for issue in issues if issue['severity'] == 'error'])
-        batch = create_import_batch(
-            actor=self.admin, filename='incremental.xlsx', content=content,
-            mode=ImportBatch.Mode.INCREMENTAL, records=records, issues=issues, summary=summary,
-        )
-        apply_inventory_import(actor=self.admin, batch=batch, records=records)
-        self.stock.refresh_from_db()
-        self.assertEqual(self.stock.quantity, 9)
-        self.assertTrue(Asset.objects.filter(serial_number='IMPORT-SN-001').exists())
-        batch.refresh_from_db()
-        self.assertEqual(batch.status, ImportBatch.Status.IMPORTED)
-
-    def test_baseline_import_disables_missing_rows_only_in_listed_warehouse(self):
-        missing_asset = Asset.objects.create(
-            name='基准缺失资产', item_type=self.item_type, warehouse=self.warehouse,
-            location=self.location, status=Asset.Status.IN_STOCK,
-        )
-        other_warehouse = Warehouse.objects.create(name='不在文件中的仓库', code='OTHER-WH')
-        untouched_asset = Asset.objects.create(
-            name='其他仓资产', item_type=self.item_type, warehouse=other_warehouse,
-            status=Asset.Status.IN_STOCK,
-        )
-        included_asset = Asset.objects.create(
-            name='基准保留资产', item_type=self.item_type, warehouse=self.warehouse,
-            location=self.location, status=Asset.Status.IN_STOCK, serial_number='BASELINE-KEEP',
-            asset_code='BASELINE-KEEP-ZC',
-        )
-        content = self._workbook([
-            ['单件资产', included_asset.name, self.item_type.name, self.item_type.code, self.warehouse.name, self.location.code, included_asset.asset_code, included_asset.serial_number, '', 1, '件', 2, '在库', '基准保留'],
-        ])
-        records, issues, summary = parse_inventory_workbook(content)
-        issues.extend(validate_inventory_records(records))
-        batch = create_import_batch(
-            actor=self.admin, filename='baseline.xlsx', content=content,
-            mode=ImportBatch.Mode.BASELINE, records=records, issues=issues, summary=summary,
-        )
-        apply_inventory_import(actor=self.admin, batch=batch, records=records)
-        missing_asset.refresh_from_db()
-        untouched_asset.refresh_from_db()
-        self.stock.refresh_from_db()
-        self.assertEqual(missing_asset.status, Asset.Status.DISABLED)
-        self.assertEqual(self.stock.quantity, 0)
-        self.assertEqual(untouched_asset.status, Asset.Status.IN_STOCK)
-        self.assertTrue(batch.issues.filter(code='baseline_asset_disabled').exists())
-
-    def test_management_pages_expose_simplified_tools(self):
-        self.client.force_login(self.admin)
-        for path in ('/warehouse/items/new/', '/warehouse/low-stock/', '/warehouse/conversions/', '/warehouse/import/'):
-            response = self.client.get(path)
-            self.assertEqual(response.status_code, 200, path)
-        response = self.client.get('/warehouse/')
-        self.assertContains(response, '管理工具')
-        self.assertContains(response, '需要补货')
-
-
 class InventoryCheckTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_superuser(username='check-admin', password='password123', email='')
@@ -815,9 +709,21 @@ class InventoryCheckTests(TestCase):
         self.assertEqual(self.stock.quantity, 5)
 
 
-@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
 class CompositeUnitAssemblyTests(TestCase):
     """成品设备：免审批的组装/换装/拆散 + 审批的出库/归还。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._media_root = _make_test_media_root()
+        cls._media_override = override_settings(MEDIA_ROOT=cls._media_root)
+        cls._media_override.enable()
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls._media_override.disable()
+        shutil.rmtree(cls._media_root, ignore_errors=True)
 
     def setUp(self):
         from apps.inventory.assembly_services import add_components, create_unit

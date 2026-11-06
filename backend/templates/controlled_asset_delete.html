@@ -1,0 +1,9 @@
+{% extends "web_base.html" %}
+
+{% block title %}删除测试资产 - 售后仓库管理系统{% endblock %}
+{% block crumb %}库存中心 / 删除测试资产{% endblock %}
+
+{% block content %}
+  <div class="page-heading"><div><h1>删除无历史测试资产</h1><p class="page-copy">此入口只用于调试阶段清理误录测试资产。有任何申请、出入库、预占、盘点、维修、交接、附件、装配、转换或校正历史时都会被阻止。</p></div><div class="page-actions"><a class="button button-secondary" href="{% url 'warehouse_asset_edit' asset.id %}">返回资产</a></div></div>
+  <section class="panel"><div class="panel-head"><h2>{{ asset.system_asset_no }} · {{ asset.asset_code|default:'暂未赋码' }}</h2><span>{{ asset.name }}</span></div>{% if blockers %}<div class="notice error">当前资产已有业务历史，不能删除：{{ blockers|join:'、' }}。</div>{% else %}<div class="notice warning">删除后资产主体、识别码和网络信息将移除；删除前完整快照会写入不可变审计日志。</div><form method="post" class="form-grid">{% csrf_token %}<div class="form-field full"><label>输入 AST 或当前主资产编码确认 <span class="required">*</span></label><input name="confirmation" required autocomplete="off" placeholder="{{ asset.system_asset_no }}"></div><div class="form-field full"><label>删除原因 <span class="required">*</span></label><input name="reason" required maxlength="255" placeholder="例如：调试阶段重复录入"></div><div class="form-actions"><button class="button button-danger" type="submit">删除测试资产</button></div></form>{% endif %}</section>
+{% endblock %}

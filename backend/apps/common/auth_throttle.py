@@ -16,16 +16,41 @@ from django.utils import timezone
 from .models import LoginThrottleState
 
 
-def get_client_ip(request) -> str:
-    """获取反向代理传入的客户端地址，直连时回退到 REMOTE_ADDR。"""
+def _trusted_proxies() -> set[str]:
+    """返回允许提供转发头的反向代理地址。
 
-    forwarded = (request.META.get('HTTP_X_REAL_IP') or '').strip()
-    if forwarded:
-        return forwarded.split(',')[0].strip()[:128]
+    生产环境由 nginx 反代，REMOTE_ADDR 恒为代理地址，必须读转发头才能
+    拿到真实来源；但若无条件采信，攻击者每次换一个 X-Forwarded-For 就能
+    绕过 IP 维度限流。所以这里改成白名单：只有 REMOTE_ADDR 命中配置的
+    代理地址时才解析转发头。
+    """
+
+    raw = getattr(settings, 'TRUSTED_PROXY_IPS', ()) or ()
+    if isinstance(raw, str):
+        raw = raw.split(',')
+    return {str(item).strip() for item in raw if str(item).strip()}
+
+
+def get_client_ip(request) -> str:
+    """获取客户端地址，不可信来源一律回退到 REMOTE_ADDR。"""
+
+    remote_addr = (request.META.get('REMOTE_ADDR') or '').strip()[:128] or 'unknown'
+    if not _trusted_proxies():
+        # 未配置代理白名单：直连部署，转发头完全不可信。
+        return remote_addr
+    if remote_addr not in _trusted_proxies():
+        return remote_addr
+    # 已确认来自受信代理。X-Real-IP 由 nginx 覆盖写入，优先使用。
+    real_ip = (request.META.get('HTTP_X_REAL_IP') or '').strip()
+    if real_ip:
+        return real_ip.split(',')[0].strip()[:128]
     forwarded = (request.META.get('HTTP_X_FORWARDED_FOR') or '').strip()
     if forwarded:
-        return forwarded.split(',')[0].strip()[:128]
-    return (request.META.get('REMOTE_ADDR') or 'unknown').strip()[:128]
+        # 取最右一跳：左侧条目客户端可以任意伪造，最右侧才是代理追加的真实来源。
+        candidate = forwarded.split(',')[-1].strip()
+        if candidate:
+            return candidate[:128]
+    return remote_addr
 
 
 def _digest(value: str) -> str:

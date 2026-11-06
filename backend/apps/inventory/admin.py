@@ -1,7 +1,3 @@
-import base64
-from io import BytesIO
-
-import qrcode
 from django.contrib import admin, messages
 from django import forms
 from django.core.files.storage import default_storage
@@ -9,12 +5,19 @@ from django.shortcuts import redirect, render
 from django.urls import path, reverse
 from django.utils.html import format_html
 
+from .label_services import build_asset_labels
+
 from apps.common.admin import ChineseModelAdmin
 from apps.common.audit import record_operation
 from apps.common.models import UserListPreference
 from apps.common.upload_validation import sanitize_image_upload, validate_image_upload
 from .models import (
     Asset,
+    AssetCodeSequence,
+    AssetDomainChange,
+    AssetIdentifier,
+    AssetAssemblyLink,
+    AssetTypeCode,
     AssetAttachment,
     AssetHandover,
     AssetLifecycleEvent,
@@ -23,8 +26,10 @@ from .models import (
     ComponentLink,
     CompositeUnit,
     Customer,
+    InventoryDomain,
     ImportBatch,
     ImportIssue,
+    ImportMutation,
     InventoryCheckAdjustment,
     InventoryCheckLine,
     InventoryCheckScan,
@@ -32,8 +37,10 @@ from .models import (
     InventoryConversion,
     ItemType,
     Location,
+    Manufacturer,
     MaintenanceRecord,
     Project,
+    ProductModelCode,
     ServiceProvider,
     StockItem,
     StockItemHolding,
@@ -41,6 +48,7 @@ from .models import (
     Warehouse,
     WorkOrder,
 )
+from .code_services import AssetCodeError, apply_asset_identity
 
 
 class AssetNetworkEndpointInline(admin.TabularInline):
@@ -72,6 +80,33 @@ class AssetAdminForm(forms.ModelForm):
             validate_image_upload(photo)
         return photo
 
+    def clean(self):
+        cleaned = super().clean()
+        domain = cleaned.get('domain')
+        code_source = cleaned.get('code_source')
+        if not domain:
+            self.add_error('domain', '必须选择资产归属。')
+        if code_source == Asset.CodeSource.MARKET_GENERATED:
+            if not cleaned.get('asset_type_code') or not cleaned.get('product_model_code'):
+                self.add_error('asset_type_code', '生成 SC 编码前必须选择设备类型和型号。')
+            elif not cleaned['product_model_code'].sc_prefix:
+                self.add_error('product_model_code', '所选型号尚未维护源表 SC 编码前缀。')
+        elif code_source == Asset.CodeSource.ADMIN_ASSIGNED:
+            value = (cleaned.get('asset_code') or '').strip().upper()
+            if not value.startswith(('DZSB-', 'ZSB-', 'QTZC-')):
+                self.add_error(
+                    'asset_code',
+                    '行政/ERP 资产编码必须以 DZSB- 开头（历史遗留的 ZSB-、QTZC- 也可接受）。',
+                )
+        elif code_source == Asset.CodeSource.WAREHOUSE_ASSIGNED:
+            value = (cleaned.get('asset_code') or '').strip().upper()
+            if not value.startswith(('SC-', 'DZSB-', 'ZSB-', 'QTZC-')):
+                self.add_error(
+                    'asset_code',
+                    '源表既有资产编码必须以 SC-、DZSB-、ZSB- 或 QTZC- 开头。',
+                )
+        return cleaned
+
 
 class BusinessReferenceAdmin(ChineseModelAdmin):
     list_display = ('name', 'code', 'is_active', 'updated_at')
@@ -100,6 +135,120 @@ class CustomerAdmin(BusinessReferenceAdmin):
 @admin.register(Supplier)
 class SupplierAdmin(BusinessReferenceAdmin):
     pass
+
+
+@admin.register(Manufacturer)
+class ManufacturerAdmin(BusinessReferenceAdmin):
+    pass
+
+
+@admin.register(InventoryDomain)
+class InventoryDomainAdmin(ChineseModelAdmin):
+    list_display = ('name', 'code', 'code_scheme', 'is_active')
+    list_filter = ('code_scheme', 'is_active')
+    search_fields = ('name', 'code')
+    readonly_fields = ('code', 'code_scheme')
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(AssetTypeCode)
+class AssetTypeCodeAdmin(ChineseModelAdmin):
+    list_display = ('name', 'code', 'is_active', 'updated_at')
+    list_filter = ('is_active',)
+    search_fields = ('name', 'code', 'description')
+
+    def save_model(self, request, obj, form, change):
+        if not obj.created_by_id:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+        record_operation(request.user, 'asset_type_code_updated' if change else 'asset_type_code_created', obj, summary=f'{"修改" if change else "新建设备类型代码"} {obj}')
+
+    def has_delete_permission(self, request, obj=None):
+        return bool(obj and not obj.assets.exists() and not obj.product_models.exists())
+
+
+@admin.register(ProductModelCode)
+class ProductModelCodeAdmin(ChineseModelAdmin):
+    list_display = ('name', 'code', 'sc_prefix', 'sc_serial_width', 'asset_type_code', 'manufacturer', 'is_active', 'updated_at')
+    list_filter = ('asset_type_code', 'manufacturer', 'is_active')
+    search_fields = ('name', 'code', 'sc_prefix', 'asset_type_code__name', 'manufacturer__name')
+
+    def save_model(self, request, obj, form, change):
+        if not obj.created_by_id:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+        record_operation(request.user, 'product_model_code_updated' if change else 'product_model_code_created', obj, summary=f'{"修改" if change else "新建型号代码"} {obj}')
+
+    def has_delete_permission(self, request, obj=None):
+        return bool(obj and not obj.assets.exists())
+
+
+@admin.register(AssetIdentifier)
+class AssetIdentifierAdmin(ChineseModelAdmin):
+    list_display = ('value', 'identifier_type', 'asset', 'is_primary', 'is_active', 'valid_from')
+    list_filter = ('identifier_type', 'is_primary', 'is_active')
+    search_fields = ('value', 'normalized_value', 'asset__system_asset_no', 'asset__asset_code')
+    readonly_fields = [field.name for field in AssetIdentifier._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(AssetCodeSequence)
+class AssetCodeSequenceAdmin(ChineseModelAdmin):
+    list_display = ('scheme', 'prefix', 'last_number', 'width', 'is_exhausted')
+    readonly_fields = [field.name for field in AssetCodeSequence._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(AssetDomainChange)
+class AssetDomainChangeAdmin(ChineseModelAdmin):
+    list_display = ('asset', 'from_domain', 'to_domain', 'requested_by', 'changed_at')
+    search_fields = ('asset__system_asset_no', 'asset__asset_code', 'reason')
+    readonly_fields = [field.name for field in AssetDomainChange._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(AssetAssemblyLink)
+class AssetAssemblyLinkAdmin(ChineseModelAdmin):
+    list_display = ('parent_asset', 'child_asset', 'installed_at', 'removed_at', 'operator')
+    list_filter = ('removed_at',)
+    search_fields = ('parent_asset__system_asset_no', 'child_asset__system_asset_no', 'note')
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        record_operation(request.user, 'asset_assembly_updated' if change else 'asset_assembly_created', obj, summary=f'{"修改" if change else "登记"}资产装配履历 {obj}')
+
+    def delete_model(self, request, obj):
+        record_operation(request.user, 'asset_assembly_deleted', obj, summary=f'删除资产装配履历 {obj}')
+        super().delete_model(request, obj)
 
 
 @admin.register(ServiceProvider)
@@ -200,7 +349,7 @@ class StockItemHoldingAdmin(ChineseModelAdmin):
 class AssetAdmin(ChineseModelAdmin):
     actions = ('print_qr_labels',)
     form = AssetAdminForm
-    field_labels = {'system_asset_no': '仓库系统资产编号', 'asset_code': '公司 ERP 资产编码', 'name': '资产名称', 'item_type': '物品类型', 'manufacturer': '生产厂家', 'model': '型号', 'serial_number': '生产厂家 SN / 序列号', 'manufacturer_barcode': '生产厂家条码 / 二维码内容', 'qr_value': '本系统二维码内容', 'search_aliases': '别名 / 搜索标签', 'received_date': '到货日期', 'purchase_order_no': '采购订单号', 'supplier': '供应商', 'purchase_amount': '采购金额（元）', 'warranty_until': '质保到期日', 'source_import_batch': '导入批次', 'warehouse': '所属仓库', 'location': '所在库位', 'current_holder': '当前持有人', 'external_holder_name': '外部持有人姓名', 'external_holder_company': '外部持有人单位', 'external_holder_phone': '外部持有人联系电话', 'department': '所属部门', 'status': '旧版综合状态（兼容）', 'location_state': '实物位置状态', 'availability_state': '可用性状态', 'quality_state': '质量状态', 'disposition_state': '处置状态', 'photo_url': '资产照片访问地址（上传后自动生成）', 'remarks': '备注'}
+    field_labels = {'system_asset_no': '系统永久编号', 'asset_code': '主资产编码', 'name': '资产名称', 'item_type': '物品类型', 'manufacturer': '生产厂家', 'model': '型号', 'serial_number': '生产厂家 SN / 序列号', 'manufacturer_barcode': '生产厂家条码 / 二维码内容', 'qr_value': '本系统二维码内容', 'search_aliases': '别名 / 搜索标签', 'received_date': '到货日期', 'purchase_order_no': '采购订单号', 'supplier': '供应商', 'purchase_amount': '采购金额（元）', 'warranty_until': '质保到期日', 'source_import_batch': '导入批次', 'warehouse': '所属仓库', 'location': '所在库位', 'current_holder': '当前持有人', 'external_holder_name': '外部持有人姓名', 'external_holder_company': '外部持有人单位', 'external_holder_phone': '外部持有人联系电话', 'department': '所属部门', 'status': '旧版综合状态（兼容）', 'location_state': '实物位置状态', 'availability_state': '可用性状态', 'quality_state': '质量状态', 'disposition_state': '处置状态', 'photo_url': '资产照片访问地址（上传后自动生成）', 'remarks': '备注'}
     column_options = (
         ('system_asset_no', '仓库系统资产编号'),
         ('asset_code', '公司 ERP 资产编码'),
@@ -242,7 +391,13 @@ class AssetAdmin(ChineseModelAdmin):
         return super().get_queryset(request).select_related('item_type', 'warehouse', 'location', 'current_holder', 'department').prefetch_related('network_endpoints')
 
     def save_model(self, request, obj, form, change):
-        super().save_model(request, obj, form, change)
+        try:
+            apply_asset_identity(
+                obj, actor=request.user,
+                reason='管理员后台修改资产身份' if change else '管理员后台录入资产',
+            )
+        except AssetCodeError as exc:
+            raise forms.ValidationError(str(exc)) from exc
         photo = form.cleaned_data.get('photo_file')
         if photo:
             sanitized_photo = sanitize_image_upload(photo)
@@ -275,31 +430,24 @@ class AssetAdmin(ChineseModelAdmin):
         if not asset_ids:
             self.message_user(request, '请先在资产列表中勾选需要打印标签的资产。', messages.WARNING)
             return redirect('admin:inventory_asset_changelist')
-        assets_by_id = {
-            str(asset.id): asset
-            for asset in Asset.objects.select_related('item_type').filter(id__in=asset_ids)
-        }
-        labels = []
-        skipped = []
-        for asset_id in asset_ids:
-            asset = assets_by_id.get(asset_id)
-            if not asset:
-                continue
-            if not asset.system_asset_no:
-                skipped.append(asset)
-                continue
-            image = qrcode.make(asset.qr_value or asset.system_asset_no)
-            buffer = BytesIO()
-            image.save(buffer, format='PNG')
-            labels.append({
-                'asset': asset,
-                'qr_image': base64.b64encode(buffer.getvalue()).decode('ascii'),
-            })
-        if skipped:
+        assets = list(
+            Asset.objects.select_related('item_type')
+            .filter(id__in=asset_ids)
+            .order_by('asset_code', 'system_asset_no')
+        )
+        labels = build_asset_labels(assets)
+        missing = [label for label in labels if not label.permanent_no]
+        if missing:
             self.message_user(
                 request,
-                f'{len(skipped)} 件资产尚未生成仓库系统编号（{ ", ".join(a.name for a in skipped[:5]) }等），未生成标签。',
+                f'{len(missing)} 件资产尚未生成系统永久编号，标签会显示为待赋码。',
                 messages.WARNING,
+            )
+        for label, asset in zip(labels, assets):
+            record_operation(
+                request.user, 'asset_label_printed', asset,
+                summary=f'打印资产标签 {asset.system_asset_no}',
+                after={'qr_value': asset.qr_value, 'label_version': asset.label_version},
             )
         return render(request, 'admin/inventory/asset/print_qr_labels.html', {
             **self.admin_site.each_context(request),
@@ -441,6 +589,14 @@ class ImportIssueInline(admin.TabularInline):
     readonly_fields = ('sheet_name', 'row_number', 'severity', 'code', 'message')
 
 
+class ImportMutationInline(admin.TabularInline):
+    model = ImportMutation
+    extra = 0
+    fields = ('object_type', 'object_id', 'operation', 'rolled_back_at', 'rolled_back_by')
+    readonly_fields = fields
+    can_delete = False
+
+
 @admin.register(ImportBatch)
 class ImportBatchAdmin(ChineseModelAdmin):
     field_labels = {'source_filename': '源文件名', 'mode': '导入模式', 'source_sha256': '文件校验值', 'status': '状态', 'summary': '预检结果', 'imported_asset_count': '已导入资产数', 'imported_stock_item_count': '已导入耗材配件数', 'imported_network_endpoint_count': '已导入网络接口数', 'created_by': '执行人'}
@@ -448,7 +604,24 @@ class ImportBatchAdmin(ChineseModelAdmin):
     list_filter = ('mode', 'status')
     search_fields = ('source_filename', 'source_sha256')
     readonly_fields = ('source_filename', 'source_sha256', 'summary', 'imported_asset_count', 'imported_stock_item_count', 'imported_network_endpoint_count', 'created_by')
-    inlines = [ImportIssueInline]
+    inlines = [ImportIssueInline, ImportMutationInline]
+
+
+@admin.register(ImportMutation)
+class ImportMutationAdmin(ChineseModelAdmin):
+    list_display = ('batch', 'object_type', 'object_id', 'operation', 'rolled_back_at', 'rolled_back_by')
+    list_filter = ('object_type', 'operation', 'rolled_back_at')
+    search_fields = ('batch__source_filename', 'object_id')
+    readonly_fields = [field.name for field in ImportMutation._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 class InventoryCheckLineInline(admin.TabularInline):

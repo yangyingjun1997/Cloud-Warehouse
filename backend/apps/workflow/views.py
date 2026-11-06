@@ -7,7 +7,11 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.common.permissions import IsWarehouseOperator
+from apps.common.permissions import (
+    IsInventoryExecutor,
+    IsWarehouseOperator,
+    IsWorkflowApprover,
+)
 from apps.common.database import retry_database_operation
 from .models import ApprovalLog, ApprovalTask, InventoryTransaction, WorkflowRequest, WorkflowRequestLine
 from .serializers import (
@@ -87,8 +91,10 @@ class WorkflowRequestViewSet(viewsets.ModelViewSet):
     serializer_class = WorkflowRequestSerializer
 
     def get_permissions(self):
-        if self.action in {'approve', 'reject', 'process'}:
-            return [IsWarehouseOperator()]
+        if self.action in {'approve', 'reject'}:
+            return [IsWorkflowApprover()]
+        if self.action == 'process':
+            return [IsInventoryExecutor()]
         return [IsAuthenticated()]
 
     def get_queryset(self):
@@ -125,15 +131,15 @@ class WorkflowRequestViewSet(viewsets.ModelViewSet):
     def hide(self, request, pk=None):
         return self._service_response(hide_request_for_applicant, request)
 
-    @action(detail=True, methods=['post'], permission_classes=[IsWarehouseOperator])
+    @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         return self._service_response(approve_request, request, comment=request.data.get('comment', ''))
 
-    @action(detail=True, methods=['post'], permission_classes=[IsWarehouseOperator])
+    @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         return self._service_response(reject_request, request, comment=request.data.get('comment', ''))
 
-    @action(detail=True, methods=['post'], permission_classes=[IsWarehouseOperator])
+    @action(detail=True, methods=['post'])
     def process(self, request, pk=None):
         try:
             obj = retry_database_operation(lambda: process_request(

@@ -15,6 +15,7 @@
 必须同步更新 URL 配置，否则会 404。
 """
 from django.contrib import messages
+from django.core.exceptions import PermissionDenied
 from django.contrib.auth import logout as auth_logout
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
@@ -31,7 +32,7 @@ from urllib.parse import quote, urlencode
 
 import qrcode
 from django.db import DatabaseError, IntegrityError, connection, transaction
-from django.db.models import Count, F, IntegerField, Max, Q, Sum
+from django.db.models import Case, Count, F, IntegerField, Max, Q, Sum, Value, When
 from django.db.models.deletion import ProtectedError
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.core.paginator import Paginator
@@ -40,14 +41,19 @@ from django.utils import timezone
 from django.db.models.functions import Coalesce, TruncDay, TruncMonth, TruncWeek, TruncYear
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.views.decorators.http import require_POST
 
 from apps.common.audit import form_change_data, record_operation
+from apps.common.api_throttle import client_ip_from_request, consume_scan_quota
 from apps.common.database import retry_database_operation
 from apps.common.consistency import build_consistency_issues
 from apps.common.decorators import role_required
 from apps.common.models import OperationAuditLog, UserListPreference
 from apps.common.permissions import (
-    PERMISSION_GROUPS, can_approve_workflow, can_execute_inventory, can_manage_inventory, can_view_reports,
+    PERMISSION_GROUPS, can_approve_workflow, can_change_asset_domain, can_execute_inventory,
+    can_import_inventory, can_manage_admin_code, can_manage_code_master, can_manage_inventory,
+    can_print_asset_labels, can_correct_asset_state, can_view_financials,
+    can_view_reports,
     is_system_administrator, is_warehouse_operator,
 )
 from apps.accounts.models import Department, UserProfile
@@ -55,6 +61,8 @@ from apps.inventory.forms import (
     AssetAttachmentForm,
     AssetHandoverForm,
     AssetManagementForm,
+    AssetStateCorrectionForm,
+    AssetDomainChangeForm,
     CategoryManagementForm,
     CustomerManagementForm,
     ItemTypeManagementForm,
@@ -67,6 +75,9 @@ from apps.inventory.forms import (
     ServiceProviderManagementForm,
     StockItemManagementForm,
     SupplierManagementForm,
+    ManufacturerManagementForm,
+    AssetTypeCodeManagementForm,
+    ProductModelCodeManagementForm,
     WarehouseManagementForm,
     ProjectManagementForm,
     WorkOrderManagementForm,
@@ -82,19 +93,42 @@ from apps.inventory.lifecycle_services import (
     finish_maintenance_record,
     update_maintenance_record,
 )
+from apps.inventory.state_services import (
+    AssetStateCorrectionError,
+    RETURNABLE_ASSET_STATUSES,
+    correct_asset_states,
+)
 from apps.inventory.availability import available_asset_filter, in_warehouse_asset_filter, is_asset_available
 from apps.inventory.conversion_services import (
     InventoryConversionError,
     convert_assets_to_stock,
     convert_stock_to_assets,
 )
-from apps.inventory.import_services import (
-    InventoryImportError,
-    apply_inventory_import,
-    build_inventory_import_template,
-    create_import_batch,
-    parse_inventory_workbook,
-    validate_inventory_records,
+from apps.inventory.import_batch_services import create_import_batch
+from apps.inventory.v2_import_services import (
+    AssetV2ImportError,
+    apply_asset_v2_import,
+    build_asset_v2_template,
+    export_asset_v2_workbook,
+    is_asset_v2_workbook,
+    parse_asset_v2_workbook,
+    validate_asset_v2_records,
+)
+from apps.inventory.v3_import_services import (
+    InventoryV3ImportError,
+    apply_inventory_v3_import,
+    build_inventory_v3_template,
+    export_inventory_v3_workbook,
+    is_inventory_v3_workbook,
+    parse_inventory_v3_workbook,
+    validate_inventory_v3_records,
+)
+from apps.inventory.import_recovery_services import (
+    ControlledAssetDeletionError,
+    ImportRecoveryError,
+    asset_deletion_blockers,
+    controlled_delete_test_asset,
+    rollback_import_batch,
 )
 from apps.inventory.assembly_import import BomImportError, build_bom_template, import_unit_bom
 from apps.inventory.assembly_services import (
@@ -109,8 +143,10 @@ from apps.inventory.models import (
     Asset,
     AssetAttachment,
     AssetHandover,
+    AssetStateCorrection,
     AssetLifecycleEvent,
     AssetNetworkEndpoint,
+    AssetTypeCode,
     Category,
     ComponentLink,
     CompositeUnit,
@@ -124,8 +160,10 @@ from apps.inventory.models import (
     InventoryConversion,
     ItemType,
     Location,
+    Manufacturer,
     MaintenanceRecord,
     Project,
+    ProductModelCode,
     ServiceProvider,
     StockItem,
     StockItemHolding,
@@ -133,7 +171,8 @@ from apps.inventory.models import (
     Supplier,
     WorkOrder,
 )
-from apps.inventory.search import asset_search_query
+from apps.inventory.code_services import AssetCodeError, apply_asset_identity, change_asset_domain
+from apps.inventory.search import asset_search_query, normalize_scan_value
 from apps.inventory.check_services import (
     InventoryCheckError,
     cancel_check_task,
@@ -191,20 +230,104 @@ SETUP_SECTIONS = {
     'item-types': ('物品类型', ItemType, ItemTypeManagementForm),
     'customers': ('客户资料', Customer, CustomerManagementForm),
     'suppliers': ('供应商资料', Supplier, SupplierManagementForm),
+    'manufacturers': ('生产厂家资料', Manufacturer, ManufacturerManagementForm),
+    'asset-type-codes': ('设备类型代码', AssetTypeCode, AssetTypeCodeManagementForm),
+    'product-model-codes': ('型号与 SC 前缀', ProductModelCode, ProductModelCodeManagementForm),
     'service-providers': ('维修服务商', ServiceProvider, ServiceProviderManagementForm),
     'projects': ('项目资料', Project, ProjectManagementForm),
     'work-orders': ('工单资料', WorkOrder, WorkOrderManagementForm),
 }
 
 
+# 编码基础资料：这几类由仓管通过 `warehouse_code_master` 权限维护，
+# 其余基础资料（仓库、库位、客户等）仍只允许系统管理员。
+CODE_MASTER_SECTIONS = {'asset-type-codes', 'product-model-codes', 'manufacturers'}
+
+
+def _can_manage_setup_section(user, section: str) -> bool:
+    """基础资料维护入口的准入判断。
+
+    编码基础资料（设备类型、型号、厂家）本来由仓管维护，权限项是
+    `warehouse_code_master`；其它基础资料仍归系统管理员。按 section 区分，
+    避免仓管因为在编码页面获得准入，就顺带能改仓库、库位、客户等资料。
+    """
+    if is_system_administrator(user):
+        return True
+    if section in CODE_MASTER_SECTIONS:
+        return can_manage_code_master(user)
+    return False
+
+
+def _preserved_query(request, exclude=None) -> str:
+    """把当前页面的查询参数拼成可直接追加到相对链接后面的串。
+
+    返回形如 `&q=robot&status=active`，永不以 `?` 开头，方便模板写成
+    `?unit={{ id }}{{ unit_list_query }}`。没有需要保留的参数时返回空串。
+    """
+    skip = set(exclude or ())
+    items = [
+        (key, value)
+        for key, values in request.GET.lists()
+        for value in values
+        if key not in skip and value != ''
+    ]
+    if not items:
+        return ''
+    return '&' + urlencode(items)
+
+
+def _safe_next_url(request, param='next') -> str:
+    """取出仅供站内回跳的目标地址，拒绝绝对地址和协议相对地址。
+
+    允许两种形态：
+    - `/warehouse/?tab=assets`：站内绝对路径；
+    - `?tab=assets&status=in_stock` / `&tab=assets`：只带查询串，回跳到当前视图。
+    以 `//`、`/\\`、`http://` 开头的值一律丢弃，避免开放重定向。
+    """
+    value = (request.POST.get(param) or request.GET.get(param) or '').strip()
+    if not value:
+        return ''
+    if value[0] in '?&':
+        return value
+    if not value.startswith('/') or value.startswith('//') or value.startswith('/\\'):
+        return ''
+    return value
+
+
+def _asset_return_target(request) -> str:
+    """资产保存后要跳回的地址。
+
+    - 带整段路径的 next 直接使用；
+    - 只带查询串（`&tab=assets&…`）时补回台账路径；
+    - 什么都没带时退回台账首页。
+    """
+    value = _safe_next_url(request)
+    if not value:
+        return reverse('warehouse_management')
+    if value[0] in '?&':
+        query = value.lstrip('?&')
+        return f'{reverse("warehouse_management")}?{query}' if query else reverse('warehouse_management')
+    return value
+
+
 def _asset_qr_image(asset) -> str:
     """Return a compact inline QR image for authenticated warehouse screens.
 
-    仓库系统编号是本系统二维码的稳定内容。
+    仓库系统编号是本系统二维码的稳定内容。标签按 30x20mm 打印，600dpi 下
+    二维码实际约 7mm，默认尺寸的位图会糊成一片，所以这里直接按打印精度
+    生成，并加静区、用高纠错等级，扫描枪在仓库光线下也能读。
     """
     if not asset or not asset.system_asset_no:
         return ''
-    image = qrcode.make(asset.qr_value or asset.system_asset_no)
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(asset.qr_value or asset.system_asset_no)
+    qr.make(fit=True)
+    image = qr.make_image(fill_color='black', back_color='white')
     buffer = BytesIO()
     image.save(buffer, format='PNG')
     return base64.b64encode(buffer.getvalue()).decode('ascii')
@@ -261,14 +384,16 @@ def list_preference_save(request):
 
 def service_worker(request):
     response = HttpResponse(
-        """const STATIC_CACHE = 'warehouse-static-v4';
+        """const STATIC_CACHE = 'warehouse-static-v5';
 const STATIC_ASSETS = [
   '/static/warehouse/manifest.webmanifest',
   '/static/warehouse/icon.svg',
-  '/static/warehouse/scanner.js',
-  '/static/warehouse/offline.js',
   '/static/warehouse/vendor/zxing-browser-0.1.5.min.js',
 ];
+const FRESH_STATIC_PATHS = new Set([
+  '/static/warehouse/scanner.js',
+  '/static/warehouse/offline.js',
+]);
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(STATIC_CACHE).then(cache => cache.addAll(STATIC_ASSETS)));
@@ -296,6 +421,14 @@ self.addEventListener('fetch', event => {
   const request = event.request;
   if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
   const url = new URL(request.url);
+  if (FRESH_STATIC_PATHS.has(url.pathname)) {
+    event.respondWith(fetch(request, {cache: 'no-store'}).then(response => {
+      const copy = response.clone();
+      caches.open(STATIC_CACHE).then(cache => cache.put(request, copy));
+      return response;
+    }).catch(() => caches.match(request)));
+    return;
+  }
   if (url.pathname.startsWith('/static/')) {
     event.respondWith(caches.match(request).then(cached => cached || fetch(request).then(response => {
       const copy = response.clone();
@@ -480,7 +613,6 @@ def _attach_request_candidate_state(assets, stock_items, user, *, quick=False):
             quantity__gt=0,
         )
     }
-    terminal_statuses = {Asset.Status.SOLD, Asset.Status.RETURNED_TO_VENDOR, Asset.Status.SCRAPPED}
     reserved_asset_ids = set(
         InventoryReservation.objects.filter(
             asset_id__in=[asset.id for asset in assets],
@@ -521,16 +653,19 @@ def _attach_request_candidate_state(assets, stock_items, user, *, quick=False):
                     WorkflowRequest.RequestType.TRANSFER,
                 ])
         if quick and not asset.is_reserved:
-            if asset.status != Asset.Status.IN_STOCK and asset.status not in terminal_statuses:
+            if asset.status in RETURNABLE_ASSET_STATUSES:
                 allowed.append(WorkflowRequest.RequestType.RETURN)
-            if asset.status not in terminal_statuses:
+            if asset.status not in {
+                Asset.Status.SOLD, Asset.Status.RETURNED_TO_VENDOR, Asset.Status.SCRAPPED,
+                Asset.Status.CONVERTED_TO_STOCK, Asset.Status.DISABLED,
+            }:
                 allowed.extend([
                     WorkflowRequest.RequestType.REPAIR,
                     WorkflowRequest.RequestType.DAMAGE,
                     WorkflowRequest.RequestType.RETURN_TO_VENDOR,
                     WorkflowRequest.RequestType.SCRAP,
                 ])
-        elif asset.current_holder_id == user.id and asset.status != Asset.Status.IN_STOCK:
+        elif asset.current_holder_id == user.id and asset.status in RETURNABLE_ASSET_STATUSES:
             allowed.append(WorkflowRequest.RequestType.RETURN)
         asset.allowed_request_types = ','.join(dict.fromkeys(allowed))
     for stock_item in stock_items:
@@ -692,7 +827,9 @@ def home(request):
 
 @login_required
 def asset_lookup(request):
-    query = request.GET.get('q', '').strip()
+    # 扫码枪会把二维码原文直接敲进来，可能带全角标点或尾随换行，
+    # 必须先归一化再匹配，否则"看着一模一样却查不到"。
+    query = normalize_scan_value(request.GET.get('q', ''))
     user_is_operator = is_warehouse_operator(request.user)
     user_is_system_admin = is_system_administrator(request.user)
     assets = Asset.objects.none()
@@ -1136,9 +1273,10 @@ def warehouse_management(request):
     quality_state = request.GET.get('quality_state', '').strip()
     disposition_state = request.GET.get('disposition_state', '').strip()
     warehouse_id = request.GET.get('warehouse', '').strip()
+    location_id = request.GET.get('location', '').strip()
     item_type_id = request.GET.get('item_type', '').strip()
     tab = request.GET.get('tab', 'assets')
-    assets = Asset.objects.select_related('item_type', 'warehouse', 'location').order_by('-updated_at')
+    assets = Asset.objects.select_related('item_type', 'warehouse', 'location')
     stock_items = StockItem.objects.select_related('item_type', 'warehouse', 'location').order_by('name')
     if query:
         assets = assets.filter(asset_search_query(query)).distinct()
@@ -1166,6 +1304,9 @@ def warehouse_management(request):
     if warehouse_id:
         assets = assets.filter(warehouse_id=warehouse_id)
         stock_items = stock_items.filter(warehouse_id=warehouse_id)
+    if location_id:
+        assets = assets.filter(location_id=location_id)
+        stock_items = stock_items.filter(location_id=location_id)
     if item_type_id:
         assets = assets.filter(item_type_id=item_type_id)
         stock_items = stock_items.filter(item_type_id=item_type_id)
@@ -1183,6 +1324,40 @@ def warehouse_management(request):
         if preference and isinstance(preference.columns, dict):
             page_size = str(preference.columns.get('page_size', ''))
     page_size = int(page_size) if page_size in {'50', '100', '200'} else 100
+    # 列排序：同一列再次点击切换升降序，白名单之外一律回落默认排序。
+    asset_sort_fields = {
+        'code': 'asset_code',
+        'name': 'name',
+        'sn': 'serial_number',
+        'item_type': 'item_type__name',
+        'status': 'status',
+        'warehouse': 'warehouse__name',
+        'system': 'system_asset_no',
+    }
+    sort = request.GET.get('sort', '').strip()
+    direction = request.GET.get('dir', 'asc').strip()
+    if sort not in asset_sort_fields:
+        sort = ''
+    if direction not in {'asc', 'desc'}:
+        direction = 'asc'
+    if sort:
+        order = asset_sort_fields[sort]
+        # 空编码在库里是空字符串而不是 NULL，nulls_last 对它无效，
+        # 而空串在升序时会排到最前，把“待赋码”全部顶到首页。
+        # 这里显式用「非空优先」打一层排序键，保证空值始终沉底。
+        field = F(order)
+        blank_flag = Case(
+            When(**{f'{order}__isnull': True}, then=Value(1)),
+            When(**{f'{order}__exact': ''}, then=Value(1)),
+            default=Value(0),
+            output_field=IntegerField(),
+        )
+        order_expr = field.asc() if direction == 'asc' else field.desc()
+        assets = assets.annotate(_blank=blank_flag).order_by('_blank', order_expr)
+    else:
+        assets = assets.order_by(
+            'warehouse__name', 'location__code', 'asset_code', 'system_asset_no',
+        )
     asset_page = Paginator(assets, page_size).get_page(request.GET.get('asset_page'))
     stock_page = Paginator(stock_items, page_size).get_page(request.GET.get('stock_page'))
     filter_params = {
@@ -1193,10 +1368,32 @@ def warehouse_management(request):
         'quality_state': quality_state,
         'disposition_state': disposition_state,
         'warehouse': warehouse_id,
+        'location': location_id,
         'item_type': item_type_id,
         'page_size': page_size,
+        'sort': sort,
+        'dir': direction if sort else '',
     }
     filter_params = {key: value for key, value in filter_params.items() if value not in ('', None)}
+    # 检索框常驻，其余筛选条件收进面板；这里统计面板里有几项生效。
+    advanced_count = sum(1 for value in (
+        status, location_state, availability_state, quality_state,
+        disposition_state, warehouse_id, location_id, item_type_id,
+    ) if value not in ('', None))
+    # 表头点击链接：升序 → 降序 → 还原初始顺序，三态循环。
+    base_params = {k: v for k, v in filter_params.items() if k not in {'sort', 'dir'}}
+    asset_sort_links = {}
+    for key in asset_sort_fields:
+        if sort == key:
+            next_dir = '' if direction == 'desc' else 'desc'
+        else:
+            next_dir = 'asc'
+        params = {**base_params, 'tab': 'assets'}
+        if next_dir:
+            params.update({'sort': key, 'dir': next_dir})
+        asset_sort_links[key] = urlencode(params)
+    # 「还原初始顺序」：丢掉 sort/dir，回到默认的按更新时间倒序。
+    asset_reset_sort_url = urlencode({**base_params, 'tab': 'assets'})
     return render(request, 'warehouse_management.html', {
         'assets': asset_page,
         'stock_items': stock_page,
@@ -1209,9 +1406,11 @@ def warehouse_management(request):
         'selected_disposition_state': disposition_state,
         'page_size': page_size,
         'selected_warehouse': warehouse_id,
+        'selected_location': location_id,
         'selected_item_type': item_type_id,
         'active_tab': tab if tab in {'assets', 'stock'} else 'assets',
         'warehouses': Warehouse.objects.filter(is_active=True).order_by('name'),
+        'locations': Location.objects.select_related('warehouse').order_by('warehouse__name', 'code'),
         'item_types': ItemType.objects.order_by('name'),
         'status_choices': Asset.Status.choices,
         'location_state_choices': Asset.LocationState.choices,
@@ -1224,6 +1423,25 @@ def warehouse_management(request):
         'stock_item_count': stock_items.count(),
         'low_stock_count': low_stock,
         'low_serialized_types': low_serialized_types,
+        # 资产行“查看 / 编辑”的返程地址：带着当前筛选和页码进去，
+        # 编辑页保存后按这个地址跳回，仓管不会每次都被弹回第一页。
+        'asset_return_query': _preserved_query(request),
+        'sort': sort,
+        'dir': direction,
+        'asset_sort_links': asset_sort_links,
+        'asset_reset_sort_url': asset_reset_sort_url,
+        'sort_label': {
+            'code': '资产编码',
+            'name': '资产名称',
+            'sn': '生产厂家 SN',
+            'item_type': '物品类型',
+            'status': '状态',
+            'warehouse': '仓库 / 库位',
+            'system': '系统编号',
+        }.get(sort, ''),
+        # 高级筛选面板：有任一条件生效时默认展开，并在摘要上显示条件数。
+        'advanced_active': advanced_count > 0,
+        'advanced_count': advanced_count,
         'user_can_manage_inventory': can_manage_inventory(request.user),
         'user_can_use_admin': is_system_administrator(request.user),
         'user_is_operator': True,
@@ -1235,6 +1453,7 @@ def warehouse_management(request):
 @role_required(can_manage_inventory, message='当前账号没有库存资料维护权限。')
 def warehouse_item_create(request):
     return render(request, 'warehouse_item_create.html', {
+        'can_edit_asset': is_system_administrator(request.user),
         'user_can_use_admin': is_system_administrator(request.user),
         'user_is_operator': True,
         'user_is_system_admin': is_system_administrator(request.user),
@@ -2092,6 +2311,9 @@ def composite_unit_management(request):
         'status_choices': CompositeUnit.Status.choices,
         'status_filter': status_filter,
         'query': query,
+        # 点击表格行要带回去的筛选参数：模板用相对路径拼 ?unit=… 时若不追加
+        # 这些参数，已筛选好的列表会在点行后整片复位，看起来像“点一下就乱跳”。
+        'unit_list_query': _preserved_query(request, exclude={'unit'}),
         'asset_query': asset_query,
         'user_can_use_admin': is_system_administrator(request.user),
         'user_is_operator': True,
@@ -2154,14 +2376,14 @@ def inventory_conversion(request):
     })
 
 
-@role_required(is_system_administrator, message='当前账号没有库存导入权限。')
+@role_required(can_import_inventory, message='当前账号没有库存导入权限。')
 def inventory_import(request):
     if request.GET.get('download') == 'template':
         response = HttpResponse(
-            build_inventory_import_template().getvalue(),
+            build_inventory_v3_template().getvalue(),
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
-        response['Content-Disposition'] = "attachment; filename*=UTF-8''inventory-import-template.xlsx"
+        response['Content-Disposition'] = "attachment; filename*=UTF-8''warehouse-inventory-v3-template.xlsx"
         return response
 
     if request.method == 'POST':
@@ -2181,8 +2403,15 @@ def inventory_import(request):
         else:
             try:
                 content = upload.read()
-                records, issues, summary = parse_inventory_workbook(content)
-                issues.extend(validate_inventory_records(records))
+                if is_inventory_v3_workbook(content):
+                    template_version = 3
+                    records, issues, summary = parse_inventory_v3_workbook(content)
+                    issues.extend(validate_inventory_v3_records(records))
+                elif is_asset_v2_workbook(content):
+                    template_version = 2
+                    records = parse_asset_v2_workbook(content)
+                    issues = validate_asset_v2_records(records)
+                    summary = {'valid_row_count': len(records), 'asset_count': len(records), 'stock_item_count': 0, 'template_version': 2}
                 summary = {
                     **summary,
                     'error_count': sum(issue['severity'] == 'error' for issue in issues),
@@ -2196,12 +2425,21 @@ def inventory_import(request):
                     if summary['error_count']:
                         messages.error(request, '预检存在阻断问题，未写入正式库存。请打开批次查看并修正 Excel。')
                     else:
-                        apply_inventory_import(actor=request.user, batch=batch, records=records)
+                        if template_version == 3:
+                            apply_inventory_v3_import(
+                                actor=request.user, batch=batch, records=records,
+                                warning_reason=request.POST.get('warning_confirmation', ''),
+                            )
+                        elif template_version == 2:
+                            apply_asset_v2_import(
+                                actor=request.user, batch=batch, records=records,
+                                warning_reason=request.POST.get('warning_confirmation', ''),
+                            )
                         messages.success(request, f'{batch.get_mode_display()}完成，共处理 {len(records)} 行。')
                 else:
                     messages.success(request, f'预检完成：可处理 {len(records)} 行，发现 {summary["error_count"]} 个阻断问题。')
                 return redirect(f'{reverse("inventory_import")}?batch={batch.id}')
-            except InventoryImportError as exc:
+            except (AssetV2ImportError, InventoryV3ImportError) as exc:
                 messages.error(request, str(exc))
     selected_batch = _get_by_uuid(ImportBatch, request.GET.get('batch'))
     return render(request, 'inventory_import.html', {
@@ -2214,6 +2452,56 @@ def inventory_import(request):
         'user_is_system_admin': True,
         'user_role_label': _user_role_label(request.user, True, True),
     })
+
+
+@role_required(is_system_administrator, message='当前账号没有资产导出权限。')
+def asset_v2_export(request):
+    output = export_asset_v2_workbook()
+    response = HttpResponse(
+        output.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = "attachment; filename*=UTF-8''asset-identity-v2-export.xlsx"
+    record_operation(
+        request.user, 'asset_v2_exported', request.user,
+        summary='导出资产身份 V2 工作簿',
+        after={'asset_count': Asset.objects.count()},
+    )
+    return response
+
+
+@role_required(can_import_inventory, message='当前账号没有库存导出权限。')
+def inventory_v3_export(request):
+    output = export_inventory_v3_workbook(include_financials=can_view_financials(request.user))
+    response = HttpResponse(
+        output.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = "attachment; filename*=UTF-8''warehouse-inventory-v3-export.xlsx"
+    record_operation(
+        request.user, 'inventory_v3_exported', request.user,
+        summary='导出库存 V3 工作簿',
+        after={'asset_count': Asset.objects.count(), 'stock_item_count': StockItem.objects.count()},
+    )
+    return response
+
+
+@require_POST
+@role_required(is_system_administrator, message='只有超级管理员可以撤销导入批次。')
+def inventory_import_rollback(request, batch_id):
+    batch = get_object_or_404(ImportBatch, pk=batch_id)
+    try:
+        rollback_import_batch(
+            actor=request.user,
+            batch=batch,
+            confirmation=request.POST.get('confirmation', ''),
+            reason=request.POST.get('reason', ''),
+        )
+    except ImportRecoveryError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, f'导入批次 {batch.source_filename} 已完整撤销。')
+    return redirect(f'{reverse("inventory_import")}?batch={batch.id}')
 
 
 @login_required
@@ -2233,6 +2521,8 @@ def inventory_check_list(request):
         'tasks': tasks,
         'status_choices': InventoryCheckTask.Status.choices,
         'selected_status': status,
+        # 任务详情看完返回时保持按状态筛选，不弹回全部任务。
+        'check_return_query': _preserved_query(request),
         'can_create_check': is_system_administrator(request.user),
         'user_can_use_admin': is_system_administrator(request.user),
         'user_is_operator': True,
@@ -2381,29 +2671,119 @@ def inventory_check_export(request, task_id):
 def warehouse_asset_edit(request, asset_id=None):
     asset = Asset.objects.filter(pk=asset_id).first() if asset_id else None
     is_create = asset is None
+    is_admin = is_system_administrator(request.user)
+    if is_create and not is_admin:
+        messages.error(request, '只有管理员可以新增资产。')
+        return redirect('warehouse_management')
+    if request.method == 'POST' and not is_admin:
+        raise PermissionDenied('只有管理员可以编辑资产。')
     form = AssetManagementForm(request.POST or None, instance=asset)
+    if not is_admin:
+        for field in form.fields.values():
+            field.disabled = True
+    if not can_view_financials(request.user):
+        form.fields.pop('purchase_amount', None)
+    if request.method == 'POST' and form.is_valid():
+        identity_fields = {'asset_code', 'code_source', 'asset_type_code', 'product_model_code'}
+        requested_identity_fields = identity_fields.intersection(request.POST.keys())
+        if not is_create and requested_identity_fields.intersection(form.changed_data) and not can_manage_admin_code(request.user):
+            form.add_error(None, '当前账号没有行政资产编码维护权限。')
     if request.method == 'POST' and form.is_valid():
         before, after = form_change_data(form)
-        with transaction.atomic():
-            asset = form.save()
-            record_operation(
-                request.user,
-                'asset_created' if is_create else 'asset_updated',
-                asset,
-                summary=f'{"录入" if is_create else "修改"}资产 {asset.system_asset_no}',
-                before=before,
-                after=after,
-            )
-        messages.success(request, f'已保存资产 {asset.system_asset_no}。')
-        return redirect('warehouse_management')
+        try:
+            with transaction.atomic():
+                asset = form.save(commit=False)
+                asset = apply_asset_identity(
+                    asset,
+                    actor=request.user,
+                    reason=form.cleaned_data.get('identity_change_reason', '').strip(),
+                )
+                form.save_m2m()
+                record_operation(
+                    request.user,
+                    'asset_created' if is_create else 'asset_updated',
+                    asset,
+                    summary=f'{"录入" if is_create else "修改"}资产 {asset.system_asset_no}',
+                    before=before,
+                    after=after,
+                )
+        except AssetCodeError as exc:
+            form.add_error(None, str(exc))
+        else:
+            for warning in form.sn_warnings:
+                messages.warning(request, warning)
+            messages.success(request, f'已保存资产 {asset.system_asset_no}。')
+            return redirect(_asset_return_target(request))
     return render(request, 'warehouse_asset_form.html', {
         'form': form,
         'asset': asset,
+        # 表单里带下去的回跳地址，POST 校验失败时也能原样保留。
+        'return_to': _safe_next_url(request),
         'asset_qr_image': _asset_qr_image(asset) if asset else '',
-        'user_can_use_admin': is_system_administrator(request.user),
+        'can_edit_asset': is_admin,
+        'user_can_use_admin': is_admin,
         'user_is_operator': True,
-        'user_is_system_admin': is_system_administrator(request.user),
-        'user_role_label': _user_role_label(request.user, True, is_system_administrator(request.user)),
+        'user_is_system_admin': is_admin,
+        'user_role_label': _user_role_label(request.user, True, is_admin),
+    })
+
+
+@role_required(is_system_administrator, message='只有超级管理员可以删除无历史测试资产。')
+def controlled_asset_delete(request, asset_id):
+    asset = get_object_or_404(Asset, pk=asset_id)
+    blockers = asset_deletion_blockers(asset)
+    if request.method == 'POST':
+        try:
+            label = controlled_delete_test_asset(
+                actor=request.user,
+                asset=asset,
+                confirmation=request.POST.get('confirmation', ''),
+                reason=request.POST.get('reason', ''),
+            )
+        except ControlledAssetDeletionError as exc:
+            messages.error(request, str(exc))
+        else:
+            messages.success(request, f'无业务历史测试资产 {label} 已删除，完整快照已写入审计日志。')
+            return redirect('warehouse_management')
+    return render(request, 'controlled_asset_delete.html', {
+        'asset': asset,
+        'blockers': blockers,
+        'user_can_use_admin': True,
+        'user_is_operator': True,
+        'user_is_system_admin': True,
+        'user_role_label': _user_role_label(request.user, True, True),
+    })
+
+
+@role_required(can_change_asset_domain, message='当前账号没有资产归属调整权限。')
+def asset_domain_change(request, asset_id):
+    asset = get_object_or_404(
+        Asset.objects.select_related('domain', 'asset_type_code', 'product_model_code'),
+        pk=asset_id,
+    )
+    form = AssetDomainChangeForm(request.POST or None, asset=asset)
+    if request.method == 'POST' and form.is_valid():
+        try:
+            change_asset_domain(
+                asset=asset,
+                to_domain=form.cleaned_data['to_domain'],
+                actor=request.user,
+                reason=form.cleaned_data['reason'],
+                asset_type_code=form.cleaned_data.get('asset_type_code'),
+                product_model_code=form.cleaned_data.get('product_model_code'),
+            )
+        except AssetCodeError as exc:
+            form.add_error(None, str(exc))
+        else:
+            messages.success(request, '资产归属已调整，原资产编码保持不变。')
+            return redirect('warehouse_asset_edit', asset_id=asset.id)
+    return render(request, 'asset_domain_change.html', {
+        'asset': asset,
+        'form': form,
+        'user_can_use_admin': True,
+        'user_is_operator': True,
+        'user_is_system_admin': True,
+        'user_role_label': _user_role_label(request.user, True, True),
     })
 
 
@@ -2418,8 +2798,9 @@ def asset_lifecycle(request, asset_id):
     )
     can_manage = can_manage_inventory(request.user)
     can_handover = can_execute_inventory(request.user)
+    can_correct = can_correct_asset_state(request.user)
     tab = request.GET.get('tab', 'timeline')
-    if tab not in {'timeline', 'repairs', 'handover', 'attachments'}:
+    if tab not in {'timeline', 'repairs', 'handover', 'attachments', 'corrections'}:
         tab = 'timeline'
 
     holder_name = asset.external_holder_name
@@ -2437,6 +2818,11 @@ def asset_lifecycle(request, asset_id):
         },
     )
     attachment_form = AssetAttachmentForm(prefix='attachment', asset=asset)
+    correction_form = AssetStateCorrectionForm(
+        prefix='correction',
+        user=request.user,
+        initial={'target_warehouse': asset.warehouse, 'target_location': asset.location},
+    )
     scrap_form = ScrapApprovalForm(prefix='scrap')
     damage_form = DamageApprovalForm(prefix='damage')
 
@@ -2451,10 +2837,18 @@ def asset_lifecycle(request, asset_id):
         maintenance_update_form = MaintenanceUpdateForm(instance=selected_maintenance, prefix='repair')
         maintenance_finish_form = MaintenanceFinishForm(
             prefix='finish',
+            historical=selected_maintenance.source == MaintenanceRecord.Source.LEGACY_IMPORT,
             initial={
                 'resolution': selected_maintenance.resolution,
                 'actual_cost': selected_maintenance.actual_cost,
                 'returned_date': selected_maintenance.returned_date,
+                'destination': (
+                    MaintenanceFinishForm.Destination.WAREHOUSE
+                    if selected_maintenance.source == MaintenanceRecord.Source.LEGACY_IMPORT
+                    else MaintenanceFinishForm.Destination.RESTORE
+                ),
+                'target_warehouse': asset.warehouse,
+                'target_location': asset.location,
             },
         )
 
@@ -2490,7 +2884,11 @@ def asset_lifecycle(request, asset_id):
                     return redirect(f'{reverse("asset_lifecycle", args=[asset.id])}?tab=repairs&maintenance={record.id}')
             elif action in {'complete_maintenance', 'cancel_maintenance'} and can_manage and selected_maintenance:
                 redirect_tab = 'repairs'
-                maintenance_finish_form = MaintenanceFinishForm(request.POST, prefix='finish')
+                maintenance_finish_form = MaintenanceFinishForm(
+                    request.POST,
+                    prefix='finish',
+                    historical=selected_maintenance.source == MaintenanceRecord.Source.LEGACY_IMPORT,
+                )
                 if maintenance_finish_form.is_valid():
                     record = finish_maintenance_record(
                         selected_maintenance,
@@ -2538,6 +2936,22 @@ def asset_lifecycle(request, asset_id):
                     )
                     messages.success(request, f'附件“{attachment.display_name}”已归档。')
                     return redirect(f'{reverse("asset_lifecycle", args=[asset.id])}?tab=attachments')
+            elif action == 'correct_state' and can_correct:
+                redirect_tab = 'corrections'
+                correction_form = AssetStateCorrectionForm(request.POST, prefix='correction', user=request.user)
+                if correction_form.is_valid():
+                    data = correction_form.cleaned_data
+                    correction = correct_asset_states(
+                        assets=[asset],
+                        actor=request.user,
+                        to_status=data['to_status'],
+                        source=data['source'],
+                        reason=data['reason'],
+                        warehouse=data['target_warehouse'],
+                        location=data['target_location'],
+                    )[0]
+                    messages.success(request, f'台账校正已记录：{correction.get_to_status_display()}。')
+                    return redirect(f'{reverse("asset_lifecycle", args=[asset.id])}?tab=corrections')
             elif action == 'request_scrap' and can_manage:
                 scrap_form = ScrapApprovalForm(request.POST, prefix='scrap')
                 if scrap_form.is_valid():
@@ -2560,7 +2974,7 @@ def asset_lifecycle(request, asset_id):
                     return redirect('workflow_detail', request_id=request_obj.id)
             else:
                 raise AssetLifecycleError('当前账号或资产状态不允许执行该操作。')
-        except (AssetLifecycleError, WorkflowError) as exc:
+        except (AssetLifecycleError, AssetStateCorrectionError, WorkflowError) as exc:
             messages.error(request, str(exc))
         tab = redirect_tab
 
@@ -2569,6 +2983,9 @@ def asset_lifecycle(request, asset_id):
     ).prefetch_related('attachments')
     handovers = asset.handovers.select_related('to_user', 'created_by', 'confirmed_by').prefetch_related('attachments')
     attachments = asset.attachments.select_related('maintenance', 'handover', 'uploaded_by')
+    corrections = asset.state_corrections.select_related(
+        'actor', 'verified_by', 'target_warehouse', 'target_location',
+    )
 
     timeline = []
     for event in asset.lifecycle_events.select_related('actor'):
@@ -2623,10 +3040,13 @@ def asset_lifecycle(request, asset_id):
         'handover_form': handover_form,
         'attachments': attachments,
         'attachment_form': attachment_form,
+        'corrections': corrections,
+        'correction_form': correction_form,
         'scrap_form': scrap_form,
         'damage_form': damage_form,
         'can_manage_lifecycle': can_manage,
         'can_handover': can_handover,
+        'can_correct_state': can_correct,
         'user_can_use_admin': is_system_administrator(request.user),
         'user_is_operator': True,
         'user_is_system_admin': is_system_administrator(request.user),
@@ -2685,8 +3105,10 @@ def warehouse_stock_item_edit(request, stock_item_id=None):
     })
 
 
-@role_required(is_system_administrator, message='当前账号没有基础资料维护权限。')
 def warehouse_setup(request, section):
+    if not _can_manage_setup_section(request.user, section):
+        messages.error(request, '当前账号没有基础资料维护权限。')
+        return redirect('warehouse_management')
     config = SETUP_SECTIONS.get(section)
     if not config:
         messages.error(request, '未找到该基础资料页面。')
@@ -2701,6 +3123,8 @@ def warehouse_setup(request, section):
         entries = entries.select_related('customer')
     elif section == 'work-orders':
         entries = entries.select_related('project', 'customer')
+    elif section == 'product-model-codes':
+        entries = entries.select_related('asset_type_code', 'manufacturer')
     return render(request, 'warehouse_setup.html', {
         'section': section,
         'section_title': title,
@@ -2713,8 +3137,10 @@ def warehouse_setup(request, section):
     })
 
 
-@role_required(is_system_administrator, message='当前账号没有基础资料维护权限。')
 def warehouse_setup_edit(request, section, object_id=None):
+    if not _can_manage_setup_section(request.user, section):
+        messages.error(request, '当前账号没有基础资料维护权限。')
+        return redirect('warehouse_management')
     config = SETUP_SECTIONS.get(section)
     if not config:
         messages.error(request, '未找到该基础资料页面。')
@@ -2729,7 +3155,11 @@ def warehouse_setup_edit(request, section, object_id=None):
         is_create = instance is None
         before, after = form_change_data(form)
         with transaction.atomic():
-            instance = form.save()
+            instance = form.save(commit=False)
+            if hasattr(instance, 'created_by_id') and not instance.created_by_id:
+                instance.created_by = request.user
+            instance.save()
+            form.save_m2m()
             record_operation(
                 request.user,
                 f'{section}_created' if is_create else f'{section}_updated',
@@ -2753,9 +3183,9 @@ def warehouse_setup_edit(request, section, object_id=None):
     })
 
 
-@role_required(can_manage_inventory, message='当前账号没有二维码标签管理权限。')
+@role_required(can_print_asset_labels, message='当前账号没有二维码标签管理权限。')
 def warehouse_qr_labels(request):
-    asset_ids = request.POST.getlist('asset_ids')
+    asset_ids = request.POST.getlist('asset_ids') or request.GET.getlist('asset_ids')
     if not asset_ids:
         messages.error(request, '请先勾选至少一项资产再打印二维码。')
         return redirect('warehouse_management')
@@ -2774,8 +3204,36 @@ def warehouse_qr_labels(request):
         messages.warning(request, f'{skipped} 件资产尚未生成仓库系统编号，未生成标签。')
     if not labels:
         return redirect('warehouse_management')
+
+    # 勾选「发送到贴纸打印机」时直接建作业，由打印电脑上的客户端取走；
+    # 否则退回浏览器打印预览页（兼容没有客户端的场景）。
+    if request.POST.get('send_to_printer'):
+        from apps.inventory.label_services import build_asset_labels, labels_to_print_payload
+        from apps.inventory.models import AssetLabelPrintJob
+        from apps.common.audit import record_operation
+
+        printable = [label['asset'] for label in labels]
+        built = build_asset_labels(printable)
+        job = AssetLabelPrintJob.objects.create(
+            payload=labels_to_print_payload(built),
+            asset_count=len(built),
+            printer_name=str(request.POST.get('printer_name') or '')[:128],
+            template='asset-label-60x40',
+            requested_by=request.user,
+        )
+        record_operation(
+            request.user, 'asset_label_job_created', job,
+            summary=f'创建标签打印作业，共 {len(built)} 张',
+            after={'asset_count': job.asset_count, 'template': job.template, 'source': 'warehouse_management'},
+        )
+        messages.success(
+            request,
+            f'已发送 {len(built)} 张标签到贴纸打印机，打印机会自动取走。',
+        )
+
     return render(request, 'warehouse_qr_labels.html', {
         'labels': labels,
+        'asset_ids': asset_ids,
         'user_can_use_admin': is_system_administrator(request.user),
         'user_is_operator': True,
         'user_is_system_admin': is_system_administrator(request.user),
@@ -3060,7 +3518,7 @@ def quick_inventory_process(request):
     if query:
         assets = list(Asset.objects.select_related(
             'item_type', 'warehouse', 'location', 'current_holder'
-        ).filter(asset_search_query(query)).order_by('asset_code')[:24])
+        ).filter(asset_search_query(query)).distinct().order_by('asset_code')[:24])
         stock_items = list(StockItem.objects.select_related(
             'item_type', 'warehouse', 'location'
         ).filter(
@@ -3289,8 +3747,10 @@ def stale_inventory_report(request):
         return stale_inventory_export(request)
     rows, days, query, warehouse_text, item_type_text, cutoff = _stale_inventory_rows(request)
     page = Paginator(rows, 50).get_page(request.GET.get('page'))
-    total_cost = sum((row['cost_value'] for row in rows), Decimal('0'))
+    show_financials = can_view_financials(request.user)
+    total_cost = sum((row['cost_value'] for row in rows), Decimal('0')) if show_financials else None
     return render(request, 'stale_inventory_report.html', {
+        'can_view_financials': show_financials,
         'rows': page,
         'row_count': len(rows),
         'total_cost': total_cost,
@@ -3315,12 +3775,19 @@ def stale_inventory_export(request):
     response['Content-Disposition'] = 'attachment; filename="stale-inventory.csv"'
     response.write('\ufeff')
     writer = csv.writer(response)
-    writer.writerow(['管理方式', '名称', '系统编号/编码', '物品类型', '仓库', '库位', '当前数量', '单位', '最后活动日期', '闲置天数', '库存成本价值（元）'])
+    show_financials = can_view_financials(request.user)
+    header = ['管理方式', '名称', '系统编号/编码', '物品类型', '仓库', '库位', '当前数量', '单位', '最后活动日期', '闲置天数']
+    if show_financials:
+        header.append('库存成本价值（元）')
+    writer.writerow(header)
     for row in rows:
-        writer.writerow([
+        values = [
             row['kind'], row['name'], row['code'], row['item_type'], row['warehouse'], row['location'],
-            row['quantity'], row['unit'], row['last_activity'].isoformat(), row['idle_days'], row['cost_value'],
-        ])
+            row['quantity'], row['unit'], row['last_activity'].isoformat(), row['idle_days'],
+        ]
+        if show_financials:
+            values.append(row['cost_value'])
+        writer.writerow(values)
     return response
 
 
@@ -3578,7 +4045,7 @@ def request_create(request, request_id=None):
     if query:
         assets = list(Asset.objects.select_related(
             'item_type', 'warehouse', 'location', 'current_holder'
-        ).filter(asset_search_query(query)).order_by('asset_code')[:24])
+        ).filter(asset_search_query(query)).distinct().order_by('asset_code')[:24])
         stock_items = list(StockItem.objects.select_related(
             'item_type', 'warehouse', 'location'
         ).filter(
@@ -3681,8 +4148,21 @@ def request_template_delete(request, template_id):
 
 @login_required
 def request_candidate_scan(request):
-    value = request.GET.get('value', '').strip()
+    value = normalize_scan_value(request.GET.get('value', ''))
     request_type = request.GET.get('request_type', WorkflowRequest.RequestType.BORROW)
+    # 扫码是申请页的常规操作，所有登录用户都要能用；但它也是枚举台账的
+    # 入口，所以按人和 IP 双重限流，避免被批量刷。
+    allowed, wait_seconds = consume_scan_quota(
+        username=request.user.get_username(),
+        client_ip=client_ip_from_request(request),
+    )
+    if not allowed:
+        response = JsonResponse({
+            'ok': False,
+            'message': f'扫码查询过于频繁，请 {wait_seconds} 秒后再试。',
+        }, status=429)
+        response['Retry-After'] = str(wait_seconds)
+        return response
     quick = request.GET.get('quick') == '1' and can_execute_inventory(request.user)
     if not value:
         return JsonResponse({'ok': False, 'message': '请输入扫码内容。'}, status=400)
@@ -3703,6 +4183,9 @@ def request_candidate_scan(request):
     if len(assets) + len(stock_items) > 1:
         return JsonResponse({'ok': False, 'message': '该编码匹配多个物品，请使用搜索列表确认。'}, status=409)
     _attach_request_candidate_state(assets, stock_items, request.user, quick=quick)
+    # 是否可见完整台账字段（厂家、库位、保管人等）取决于是否具备查看资产权限。
+    # 普通申请人只需要知道「这是什么、能不能申请」，给最小信息集即可。
+    can_view_detail = request.user.has_perm('inventory.view_asset')
     if assets:
         asset = assets[0]
         payload = {
@@ -3714,6 +4197,13 @@ def request_candidate_scan(request):
             'status_label': asset.request_status_label,
             'allowed_types': asset.allowed_request_types,
         }
+        if not can_view_detail:
+            # 不具备查看权限时，不暴露系统编号与原始状态机字段，避免枚举台账。
+            payload.pop('system_asset_no', None)
+            payload.pop('status', None)
+            payload.pop('code', None)
+            payload['code'] = asset.asset_code or ''
+            payload['meta'] = asset.request_status_label
     else:
         stock_item = stock_items[0]
         payload = {

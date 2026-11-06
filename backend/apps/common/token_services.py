@@ -17,15 +17,25 @@ def hash_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode('utf-8')).hexdigest()
 
 
-def issue_token(user) -> tuple[ApiAccessToken, str]:
-    """创建令牌；数据库只保存哈希，原文仅返回给当前调用者一次。"""
+def issue_token(user, ttl_seconds: int | None = None) -> tuple[ApiAccessToken, str]:
+    """创建令牌；数据库只保存哈希，原文仅返回给当前调用者一次。
+
+    ``ttl_seconds`` 传 0 表示长期令牌（``expires_at`` 留空，永不自然过期），
+    只用于固定在岗设备这类无法自动换凭证的场景。默认仍按
+    ``settings.API_TOKEN_TTL_SECONDS`` 签发普通令牌。
+    """
 
     raw_token = secrets.token_urlsafe(48)
+    if ttl_seconds is None:
+        ttl_seconds = max(60, settings.API_TOKEN_TTL_SECONDS)
+    expires_at = None
+    if ttl_seconds > 0:
+        expires_at = timezone.now() + timedelta(seconds=ttl_seconds)
     token = ApiAccessToken.objects.create(
         user=user,
         token_hash=hash_token(raw_token),
         token_prefix=raw_token[:12],
-        expires_at=timezone.now() + timedelta(seconds=max(60, settings.API_TOKEN_TTL_SECONDS)),
+        expires_at=expires_at,
     )
     return token, raw_token
 

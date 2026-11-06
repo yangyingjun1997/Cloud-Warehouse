@@ -15,7 +15,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 
-CONFIG_PATH = Path('/etc/after-sales-warehouse/quick-tunnel-dingtalk.env')
+CONFIG_PATH = Path('/opt/after-sales-warehouse/backend/.env')
 
 
 def load_config(path: Path) -> dict[str, str]:

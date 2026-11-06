@@ -1,6 +1,7 @@
 param(
     [string]$OutputDir = "dist",
-    [string]$Version = ""
+    [string]$Version = "",
+    [switch]$AllowDirty
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,9 +11,14 @@ $repoRoot = Resolve-Path (Join-Path $scriptDir "..\..")
 $repoRootPath = $repoRoot.Path
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 
-function Get-GitRevision {
+function Get-GitRevision([bool]$Short = $false) {
     try {
-        $rev = git -C $repoRootPath rev-parse --short HEAD 2>$null
+        $arguments = @('-C', $repoRootPath, 'rev-parse')
+        if ($Short) {
+            $arguments += '--short'
+        }
+        $arguments += 'HEAD'
+        $rev = & git @arguments 2>$null
         if ($LASTEXITCODE -eq 0 -and $rev) {
             return $rev.Trim()
         }
@@ -22,17 +28,28 @@ function Get-GitRevision {
     return "nogit"
 }
 
+function Get-GitStatus {
+    try {
+        $status = @(git -C $repoRootPath status --porcelain=v1 --untracked-files=all 2>$null)
+        if ($LASTEXITCODE -eq 0) {
+            return $status
+        }
+    }
+    catch {
+    }
+    return @('__GIT_STATUS_UNAVAILABLE__')
+}
+
 $revision = Get-GitRevision
-if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = "$timestamp-$revision"
+$shortRevision = Get-GitRevision $true
+$gitStatus = @(Get-GitStatus)
+$workingTreeDirty = $gitStatus.Count -gt 0
+if ($workingTreeDirty -and -not $AllowDirty) {
+    throw 'Working tree is not clean. Commit/stash changes first, or use -AllowDirty for an explicitly marked emergency package.'
 }
 
 $outputPath = Join-Path $repoRootPath $OutputDir
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
-
-$packageName = "after-sales-warehouse-$Version.zip"
-$packagePath = Join-Path $outputPath $packageName
-$shaPath = "$packagePath.sha256"
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "after-sales-warehouse-package-$timestamp"
 
 if (Test-Path -LiteralPath $tempRoot) {
@@ -40,8 +57,22 @@ if (Test-Path -LiteralPath $tempRoot) {
 }
 New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
 
+$includedPaths = @(
+    "backend",
+    "deploy\ubuntu22",
+    "tools\label_printer_client",
+    "README.md",
+    "LICENSE"
+)
+$includedFilePatterns = @("Ubuntu22.04*.md")
 $excludedRootDirs = @(".git", ".venv", ".venv312", "venv", "node_modules", "dist", "miniprogram")
-$excludedRelativeDirs = @("backend\media", "backend\staticfiles")
+$excludedRelativeDirs = @(
+    "backend\backups",
+    "backend\media",
+    "backend\staticfiles",
+    "tools\label_printer_client\build",
+    "tools\label_printer_client\dist"
+)
 
 function Get-RelativePath([string]$FullPath) {
     $relative = $FullPath.Substring($repoRootPath.Length).TrimStart("\", "/")
@@ -86,7 +117,27 @@ function Test-IsExcluded([string]$FullPath, [bool]$IsDirectory) {
     return $false
 }
 
-Get-ChildItem -LiteralPath $repoRootPath -Force -Recurse -File |
+$sourceFiles = foreach ($includedPath in $includedPaths) {
+    $absolutePath = Join-Path $repoRootPath $includedPath
+    if (-not (Test-Path -LiteralPath $absolutePath)) {
+        throw "Required package path does not exist: $includedPath"
+    }
+    if ((Get-Item -LiteralPath $absolutePath).PSIsContainer) {
+        Get-ChildItem -LiteralPath $absolutePath -Force -Recurse -File
+    }
+    else {
+        Get-Item -LiteralPath $absolutePath
+    }
+}
+foreach ($pattern in $includedFilePatterns) {
+    $patternFiles = @(Get-ChildItem -Path (Join-Path $repoRootPath $pattern) -File)
+    if ($patternFiles.Count -eq 0) {
+        throw "Required package file pattern did not match: $pattern"
+    }
+    $patternFiles
+}
+
+$sourceFiles |
     Where-Object { -not (Test-IsExcluded $_.FullName $false) } |
     ForEach-Object {
         $relative = Get-RelativePath $_.FullName
@@ -106,11 +157,37 @@ $manifestFiles = foreach ($file in $files) {
     }
 }
 
+$fingerprintInput = ($manifestFiles | ForEach-Object {
+    "$($_.path)`n$($_.size)`n$($_.sha256)"
+}) -join "`n"
+$hasher = [System.Security.Cryptography.SHA256]::Create()
+try {
+    $fingerprintBytes = [System.Text.Encoding]::UTF8.GetBytes($fingerprintInput)
+    $contentHash = -join ($hasher.ComputeHash($fingerprintBytes) | ForEach-Object { $_.ToString('x2') })
+}
+finally {
+    $hasher.Dispose()
+}
+
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = "$timestamp-$shortRevision"
+}
+if ($workingTreeDirty) {
+    $Version = "$Version-dirty-$($contentHash.Substring(0, 12))"
+}
+
+$packageName = "after-sales-warehouse-$Version.zip"
+$packagePath = Join-Path $outputPath $packageName
+$shaPath = "$packagePath.sha256"
+
 $manifest = [PSCustomObject]@{
     app = "after-sales-warehouse"
     version = $Version
     created_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     source_revision = $revision
+    source_revision_short = $shortRevision
+    working_tree_dirty = $workingTreeDirty
+    source_content_sha256 = $contentHash
     build_host = $env:COMPUTERNAME
     file_count = @($manifestFiles).Count
     files = $manifestFiles
@@ -153,7 +230,11 @@ finally {
 }
 
 $packageHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $packagePath).Hash.ToLowerInvariant()
-"$packageHash  $packageName" | Set-Content -LiteralPath $shaPath -Encoding ASCII
+[System.IO.File]::WriteAllText(
+    $shaPath,
+    "$packageHash  $packageName`n",
+    [System.Text.Encoding]::ASCII
+)
 
 Remove-Item -LiteralPath $tempRoot -Recurse -Force
 

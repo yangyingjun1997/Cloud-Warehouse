@@ -2,6 +2,8 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core.management.base import BaseCommand
 
+from apps.common.permissions import PERMISSION_GROUPS
+
 
 class Command(BaseCommand):
     help = 'Create warehouse roles and assign initial system accounts.'
@@ -11,6 +13,8 @@ class Command(BaseCommand):
         parser.add_argument('--warehouse-user', action='append', default=[])
 
     def handle(self, *args, **options):
+        for group_name in PERMISSION_GROUPS:
+            Group.objects.get_or_create(name=group_name)
         warehouse_staff, _ = Group.objects.get_or_create(name='warehouse_staff')
         warehouse_admin, _ = Group.objects.get_or_create(name='warehouse_admin')
         user_model = get_user_model()

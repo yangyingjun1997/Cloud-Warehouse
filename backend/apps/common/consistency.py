@@ -145,11 +145,13 @@ def build_consistency_issues():
                 '当前库存大于 0，但没有所属仓库。', url)
 
     duplicate_fields = (
-        ('serial_number', '生产厂家 SN', 'duplicate_serial_number'),
-        ('manufacturer_barcode', '生产厂家条码', 'duplicate_manufacturer_barcode'),
-        ('qr_value', '系统二维码内容', 'duplicate_qr_value'),
+        # 厂家 SN 可能缺失、复用或手工书写不规范，只提醒人工核对；
+        # 厂家条码和系统二维码承担扫码定位，重复仍属于阻断错误。
+        ('serial_number', '生产厂家 SN', 'duplicate_serial_number', 'warning'),
+        ('manufacturer_barcode', '生产厂家条码', 'duplicate_manufacturer_barcode', 'error'),
+        ('qr_value', '系统二维码内容', 'duplicate_qr_value', 'error'),
     )
-    for field, label, code in duplicate_fields:
+    for field, label, code, severity in duplicate_fields:
         values = list(
             Asset.objects.exclude(**{field: ''})
             .values(field)
@@ -161,7 +163,7 @@ def build_consistency_issues():
             matched = list(Asset.objects.filter(**{field: value}).order_by('system_asset_no'))
             target = '、'.join(asset.system_asset_no for asset in matched)
             url = f'{reverse("asset_lookup")}?q={quote(value)}'
-            add('error', code, '资产识别码', target,
+            add(severity, code, '资产识别码', target,
                 f'{label}“{value}”被 {len(matched)} 件资产重复使用。', url)
 
     reserved_by_stock = defaultdict(int)

@@ -143,7 +143,8 @@ class ApiAccessToken(UUIDModel, TimeStampedModel):
     )
     token_hash = models.CharField(max_length=64, unique=True)
     token_prefix = models.CharField(max_length=16)
-    expires_at = models.DateTimeField()
+    # 为空表示长期令牌，不会自然过期；只能通过撤销或轮换失效。
+    expires_at = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
     replaced_by = models.ForeignKey(
         'self',
@@ -160,7 +161,14 @@ class ApiAccessToken(UUIDModel, TimeStampedModel):
 
     @property
     def is_active(self):
-        return self.revoked_at is None and self.expires_at > timezone.now()
+        if self.revoked_at is not None:
+            return False
+        # expires_at 为空 = 长期令牌，永不自然过期。
+        return self.expires_at is None or self.expires_at > timezone.now()
+
+    @property
+    def is_never_expiring(self):
+        return self.expires_at is None
 
 
 class SecurityAuditEvent(ImmutableAuditMixin, UUIDModel, TimeStampedModel):

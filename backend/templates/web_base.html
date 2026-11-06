@@ -1,4 +1,4 @@
-{% load static %}
+{% load static nav %}
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -27,6 +27,9 @@
     .nav-link:hover, .nav-link.active { color: #fff; background: #285159; }
     .nav-link.active::before { width: 4px; height: 4px; margin-right: 9px; content: ""; background: #8ed7cf; border-radius: 50%; }
     .nav-link:not(.active) { padding-left: 23px; }
+    .module-tabs { display: flex; gap: 4px; min-height: 44px; padding: 6px 40px; overflow-x: auto; border-bottom: 1px solid var(--line); background: #fff; scrollbar-width: thin; }
+    .module-tab { display: inline-flex; flex: 0 0 auto; align-items: center; min-height: 32px; padding: 0 11px; color: var(--muted); border-radius: 5px; font-size: 12px; }
+    .module-tab:hover, .module-tab.active { color: var(--teal); background: var(--teal-soft); font-weight: 700; }
     .nav-section { margin-top: 8px; }
     .nav-section summary { display: flex; align-items: center; justify-content: space-between; min-height: 34px; padding: 0 10px; color: #c1d1d3; border-radius: 6px; cursor: pointer; list-style: none; font-size: 12px; font-weight: 650; }
     .nav-section summary::-webkit-details-marker { display: none; }
@@ -102,16 +105,32 @@
     .queue-item:last-child { border-bottom: 0; }
     .queue-title { color: var(--ink); font-size: 12px; font-weight: 650; }
     .queue-meta { margin-top: 4px; color: var(--muted); font-size: 10px; }
-    .tag { display: inline-flex; align-items: center; width: fit-content; padding: 4px 6px; border-radius: 4px; font-size: 10px; white-space: nowrap; }
-    .tag.pending { color: #90601b; background: var(--amber-soft); }
-    .tag.waiting { color: #385fa7; background: var(--blue-soft); }
-    .tag.in-stock { color: #176e68; background: var(--teal-soft); }
-    .tag.borrowed { color: #90601b; background: var(--amber-soft); }
-    .tag.issued { color: #385fa7; background: var(--blue-soft); }
-    .tag.maintenance, .tag.repairing, .tag.damaged { color: #a34e42; background: var(--coral-soft); }
-    .tag.neutral { color: #596e73; background: #edf2f2; }
+    /* 默认中性色兜底：状态值来自数据库（下划线命名），任何新增状态都不会退化成无底色的裸文本。 */
+    .tag { display: inline-flex; align-items: center; width: fit-content; padding: 4px 6px; border-radius: 4px; font-size: 10px; white-space: nowrap; color: #596e73; background: #edf2f2; font-weight: 650; }
+    .tag.in-stock, .tag.in_stock, .tag.neutral { color: #176e68; background: var(--teal-soft); }
+    .tag.pending, .tag.waiting { color: #90601b; background: var(--amber-soft); }
+    .tag.pending-out, .tag.pending_out, .tag.pending-return, .tag.pending_return, .tag.pending-inspection, .tag.pending_inspection { color: #385fa7; background: var(--blue-soft); }
+    /* 借用与领用代表设备已离库：实心底色 + 加粗，保证仓管一眼识别。 */
+    .tag.borrowed, .tag.internal_borrow, .tag.internal-borrow { color: #fff; background: #b45309; font-weight: 700; }
+    .tag.issued { color: #fff; background: #c2410c; font-weight: 700; }
+    /* 售出属于最终处置，单独用深蓝实心，避免与在库混淆。 */
+    .tag.sold, .tag.converted-to-stock, .tag.converted_to_stock { color: #fff; background: #1f4e79; font-weight: 700; }
+    .tag.maintenance, .tag.repairing, .tag.damaged, .tag.lost { color: #a34e42; background: var(--coral-soft); }
+    /* 已发货与领用同属离库状态，用深青实心区分于内部领用。 */
+    .tag.shipped-out, .tag.shipped_out { color: #fff; background: #0f766e; font-weight: 700; }
+    /* 已组装：设备仍在库但已被占用，浅青底提示不可单独申请。 */
+    .tag.assembled { color: #176e68; background: #d6ece8; }
+    .tag.disabled { color: #fff; background: #6b7280; font-weight: 700; }
+    .tag.returned-to-vendor, .tag.returned_to_vendor, .tag.scrapped { color: #596e73; background: #e3e8e8; }
+    /* 表头排序：整格可点，当前排序列高亮并显示箭头。 */
+    .sort-link { display: inline-flex; align-items: center; gap: 3px; color: inherit; text-decoration: none; white-space: nowrap; }
+    .sort-link:hover { color: var(--teal); }
+    .sort-link.active { color: var(--teal); font-weight: 700; }
+    .sort-arrow { font-size: 9px; line-height: 1; }
+    .sort-reset { margin-left: 6px; color: var(--teal); font-weight: 650; white-space: nowrap; }
+    .sort-reset:hover { text-decoration: underline; }
     .data-table { width: 100%; border-collapse: collapse; }
-    .data-table th, .data-table td { padding: 11px 7px; border-bottom: 1px solid #edf2f2; text-align: left; }
+    .data-table th, .data-table td { padding: 7px 8px; border-bottom: 1px solid #edf2f2; text-align: left; vertical-align: middle; }
     .data-table th { color: var(--muted); font-size: 10px; font-weight: 600; }
     .data-table td { font-size: 12px; }
     .data-table tr:last-child td { border-bottom: 0; }
@@ -119,6 +138,9 @@
     .audit-detail strong { display: block; margin-top: 7px; color: var(--muted); font-size: 10px; }
     .audit-detail pre { max-height: 180px; margin: 4px 0 8px; padding: 8px; overflow: auto; color: var(--ink); background: #f6f9f9; border: 1px solid var(--line); border-radius: 4px; font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
     .code { color: var(--teal); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; font-weight: 650; }
+    /* 系统内部编号（AST-）只给系统用，库管不看：弱化到接近背景色，且排在最后一列。 */
+    .code-col-muted { color: var(--muted); font-weight: 400; font-size: 10px; opacity: 0.65; }
+    .code-col-muted:hover { opacity: 1; }
     .empty-state { padding: 30px 0; color: var(--muted); font-size: 12px; text-align: center; }
     .lookup-card { max-width: 1240px; margin: 28px auto 0; padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
     .lookup-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 24px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
@@ -174,6 +196,7 @@
     .notice.error { color: #a34e42; background: var(--coral-soft); border-color: #efc2ba; }
     .network-status { display: inline-flex; align-items: center; min-height: 27px; padding: 0 8px; color: #176e68; background: var(--teal-soft); border: 1px solid #b9dcd7; border-radius: 4px; font-size: 10px; white-space: nowrap; }
     .network-status.offline { color: #986319; background: var(--amber-soft); border-color: #e8cd9b; }
+    .scanner-status { cursor: pointer; font: inherit; font-size: 10px; }
     .offline-queue-count { display: inline-flex; align-items: center; min-height: 22px; padding: 0 7px; color: #986319; background: var(--amber-soft); border-radius: 4px; font-size: 10px; white-space: nowrap; }
     .compact-record-list { display: grid; gap: 8px; }
     .compact-record-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
@@ -266,20 +289,79 @@
     .account-role-form .permission-choices { flex: 1 1 100%; }
     .dingtalk-input { min-height: 32px; min-width: 150px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 5px; font-size: 11px; }
     .page-actions, .form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
-    .management-metrics { margin-top: 18px; }
+    .management-metrics { margin-top: 14px; }
     .warning-metric { border-color: #e8cd9b; background: #fffaf0; }
-    .management-filter { margin-top: 14px; padding: 14px 18px; }
-    .management-filter-form { display: grid; grid-template-columns: minmax(210px, 1.4fr) repeat(4, minmax(120px, .7fr)) auto; align-items: end; gap: 10px; }
-    .management-filter .form-field { gap: 5px; }
-    .management-filter .form-field input, .management-filter .form-field select { min-height: 34px; padding: 7px 9px; }
-    .management-tabs { display: flex; gap: 18px; margin-top: 18px; border-bottom: 1px solid var(--line); }
-    .management-tab { padding: 10px 2px; color: var(--muted); border-bottom: 2px solid transparent; font-size: 13px; font-weight: 650; }
+    /* 工具入口与概览默认收起，把垂直空间让给台账表格。 */
+    .management-more { margin-top: 14px; }
+    .management-more > summary { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; font-size: 12px; list-style: none; }
+    .management-more > summary::-webkit-details-marker { display: none; }
+    .management-more > summary::after { content: "▾"; font-size: 10px; }
+    .management-more[open] > summary::after { content: "▴"; }
+    .management-more > summary:hover { color: var(--teal); border-color: #8ebbb6; }
+    /* 检索框常驻一行，其他条件收进“更多筛选”下拉面板。 */
+    .management-bar { display: flex; align-items: center; gap: 9px; margin-top: 14px; padding: 11px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+    .management-search { flex: 1 1 auto; min-width: 0; min-height: 36px; padding: 8px 11px; background: #fff; border: 1px solid var(--line); border-radius: 5px; font-size: 13px; }
+    .management-search:focus { outline: 2px solid var(--teal-soft); border-color: var(--teal); }
+    .management-advanced { position: relative; flex: 0 0 auto; }
+    .management-advanced > summary { display: flex; align-items: center; gap: 5px; min-height: 36px; padding: 0 12px; color: var(--muted); background: #fff; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; font-size: 12px; list-style: none; white-space: nowrap; }
+    .management-advanced > summary::-webkit-details-marker { display: none; }
+    .management-advanced > summary::after { content: "▾"; font-size: 10px; }
+    .management-advanced[open] > summary { color: var(--teal); border-color: var(--teal); }
+    .filter-badge { display: inline-grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; color: #fff; background: var(--teal); border-radius: 8px; font-size: 10px; font-weight: 700; }
+    .management-advanced-body { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; display: grid; grid-template-columns: repeat(2, minmax(160px, 1fr)); gap: 10px; width: min(540px, 86vw); padding: 14px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 12px 30px rgba(24, 58, 62, .16); }
+    .management-advanced-body .form-field { gap: 4px; }
+    .management-advanced-body .form-field select { min-height: 32px; padding: 6px 8px; }
+    .management-advanced-actions { grid-column: 1 / -1; display: flex; gap: 8px; padding-top: 4px; border-top: 1px solid var(--line); }
+    /* 台账表格撑满视口剩余高度：整页用弹性列布局，表格吃掉所有剩余空间，
+       翻页和筛选都不会让页面整体跳动。 */
+    /* 台账表格撑满视口剩余高度：整页用弹性列布局，表格吃掉所有剩余空间，
+       翻页和筛选都不会让页面整体跳动。高度由脚本按实际顶栏位置精确设定。 */
+    .management-page { display: flex; flex-direction: column; min-height: 0; margin-top: -20px; }
+    .management-page .page-heading { display: none; }
+    .management-page .management-more { margin-top: 0; margin-bottom: 6px; }
+    .management-page .management-more > summary { padding: 4px 10px; font-size: 11px; }
+    .management-page .management-bar { margin-top: 0; padding: 7px 10px; }
+    .management-page .management-search { min-height: 32px; font-size: 12px; }
+    .management-page .management-advanced > summary { min-height: 32px; font-size: 11px; }
+    .management-page .management-tabs { margin-top: 6px; }
+    .management-page .management-tab { padding: 6px 2px; font-size: 12px; }
+    .management-page .management-table { margin-top: 6px; }
+    .management-page .management-table .panel-head { padding: 6px 12px; min-height: 0; }
+    .management-page .management-table .panel-head h2 { font-size: 13px; }
+    .management-page .management-table .panel-head span { font-size: 11px; }
+    .management-page .management-table .panel-head .button { min-height: 28px; padding: 4px 10px; font-size: 11px; }
+    .management-page .management-table .data-table th,
+    .management-page .management-table .data-table td { padding: 5px 7px; line-height: 1.35; }
+    .management-page .management-table .queue-meta { margin-top: 1px; font-size: 9px; }
+    .management-page .management-table .tag { padding: 1px 6px; font-size: 10px; }
+    .management-page .management-table { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+    .management-page .table-scroll { flex: 1 1 auto; min-height: 0; max-height: none; overflow: auto; }
+    .management-table thead th { position: sticky; top: 0; z-index: 2; background: var(--surface); }
+    .management-tabs { display: flex; gap: 18px; margin-top: 14px; border-bottom: 1px solid var(--line); }
+    .management-tab { padding: 9px 2px; color: var(--muted); border-bottom: 2px solid transparent; font-size: 13px; font-weight: 650; }
     .management-tab.active { color: var(--teal); border-bottom-color: var(--teal); }
     .management-tab span { margin-left: 5px; color: var(--muted); font-size: 11px; font-weight: 400; }
     .table-panel { margin-top: 0; border-top: 0; border-radius: 0 0 7px 7px; }
     .table-scroll { max-height: 64vh; overflow: auto; }
     .table-scroll thead th { position: sticky; top: 0; z-index: 1; background: #f6f8f7; }
     .table-action { color: var(--teal); font-size: 12px; font-weight: 650; }
+    /* 全局扫码提示：扫码枪没有屏幕，必须给反馈否则用户不知道扫上了 */
+    .scan-toast { position: fixed; left: 50%; bottom: 28px; z-index: 60; max-width: 88vw; padding: 10px 18px; transform: translateX(-50%); color: #fff; background: #1f3b38; border-radius: 999px; box-shadow: 0 6px 20px rgba(0,0,0,.22); font-size: 13px; font-weight: 650; }
+    .scan-toast.is-error { background: #8c2f2f; }
+    /* 整行点击：给出可点击的手型和悬停高亮，否则用户不知道能点 */
+    tr.row-clickable { cursor: pointer; }
+    tr.row-clickable:hover > td { background: #f2f8f7; }
+    tr.row-clickable:focus-visible { outline: 2px solid var(--teal); outline-offset: -2px; }
+    tr.row-clickable .cell-select, tr.row-clickable .cell-action { cursor: default; }
+    /* 打印按钮组：数量提示 + 主按钮，避免"点了没反应"的困惑 */
+    .print-actions { display: flex; align-items: center; gap: 8px; }
+    .print-count { padding: 4px 9px; color: var(--teal); background: var(--teal-soft); border-radius: 999px; font-size: 12px; font-weight: 650; white-space: nowrap; }
+    .print-count.is-empty { color: var(--muted); background: #f1f4f4; }
+    .print-main { display: inline-flex; align-items: center; gap: 6px; }
+    .print-main-icon { font-size: 14px; line-height: 1; }
+    .print-main:disabled { opacity: .45; cursor: not-allowed; }
+    .print-main.is-busy { opacity: .8; }
+    tr.row-clickable + tr.row-clickable > td { box-shadow: inset 0 1px 0 #f0f4f4; }
     .inline-correction-form { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; min-width: 245px; }
     .inline-correction-form input { width: 62px; min-height: 30px; padding: 5px 6px; border: 1px solid var(--line); border-radius: 4px; font: inherit; font-size: 12px; }
     .inline-correction-form input[name="correction_note"] { width: 132px; }
@@ -383,14 +465,58 @@
     .lifecycle-form-grid textarea { min-height: 64px; }
     .related-document { margin: -5px 0 12px; padding: 8px 10px; color: var(--muted); background: #f3f8f7; border-radius: 5px; font-size: 10px; }
     .related-document a { color: var(--teal); font-weight: 650; }
-    .qr-label-sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; margin-top: 22px; }
-    .qr-label { display: grid; grid-template-columns: 104px minmax(0, 1fr); align-items: center; gap: 14px; min-height: 132px; padding: 14px; background: #fff; border: 1px solid var(--line); border-radius: 6px; break-inside: avoid; }
-    .qr-label img { display: block; width: 104px; height: 104px; image-rendering: pixelated; }
-    .qr-label strong, .qr-label span, .qr-label small { display: block; overflow-wrap: anywhere; }
-    .qr-label strong { font-size: 14px; }
-    .qr-label span { margin-top: 8px; color: var(--teal); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; font-weight: 650; }
-    .qr-label small { margin-top: 6px; color: var(--muted); font-size: 11px; }
-    @media print { @page { size: auto; margin: 10mm; } body { background: #fff; } .sidebar, .topbar, .no-print, .notice { display: none !important; } .main { width: 100%; margin: 0; } .content { max-width: none; padding: 0; } .qr-label-sheet { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8mm; margin: 0; } .qr-label { min-height: 35mm; padding: 4mm; border-color: #999; border-radius: 0; } .qr-label img { width: 29mm; height: 29mm; } }
+    .qr-label-sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-top: 22px; }
+    /* 标签版式：目标纸卷 30 x 20 mm（由 60x40 裁成 4 份）。
+       屏幕预览按同比例放大 3.7 倍显示（约 111 x 74 mm），方便直接核对
+       文字有没有被截断；打印时由下面的 @media print 换回真实毫米尺寸。 */
+    .qr-label { display: flex; flex-direction: column; gap: 6px; padding: 10px 11px; background: #fff; border: 1px solid var(--line); border-radius: 5px; break-inside: avoid; }
+    .qr-label-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; }
+    .qr-label-logo { display: block; line-height: 0; }
+    .qr-label-logo img { display: block; width: 108px; height: auto; }
+    .qr-label-logo .logo-print { display: none; }
+    .qr-label-qr { flex: 0 0 auto; line-height: 0; }
+    .qr-label-qr img { display: block; width: 108px; height: 108px; image-rendering: pixelated; }
+    /* 三组信息：前缀在上、值在下，各占一行。30mm 标签的宽度刚好够放
+       22 字符的 DZSB 编码，所以值必须独占整行，前缀不能与值并排。 */
+    .qr-label-info { display: flex; flex-direction: column; gap: 4px; margin: 0; min-width: 0; }
+    .qr-label-info dt { color: var(--muted); font-size: 15px; line-height: 1.1; }
+    .qr-label-info dd { margin: 0; min-width: 0; font-size: 24px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .qr-label-field { display: flex; flex-direction: column; min-width: 0; }
+    .qr-label-code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-weight: 750; color: var(--teal); }
+    .qr-label-code.pending { color: #a35200; }
+    .qr-label-sn { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    /* 按字符数分档降字号：编码 22 字符（DZSB）以内正常，超出逐档缩小。 */
+    .qr-label-code[data-len="23"], .qr-label-code[data-len="24"] { font-size: 21px; }
+    .qr-label-code[data-len="25"], .qr-label-code[data-len="26"] { font-size: 19px; }
+    .qr-label-code[data-len="27"], .qr-label-code[data-len="28"] { font-size: 17px; }
+    .qr-label-code[data-len="29"], .qr-label-code[data-len="30"] { font-size: 15px; }
+    .qr-label-sn[data-len="17"], .qr-label-sn[data-len="18"], .qr-label-sn[data-len="19"], .qr-label-sn[data-len="20"] { font-size: 21px; }
+    .qr-label-sn[data-len="21"], .qr-label-sn[data-len="22"], .qr-label-sn[data-len="23"], .qr-label-sn[data-len="24"] { font-size: 19px; }
+    @media print { @page { size: auto; margin: 0; } body { background: #fff; } .sidebar, .topbar, .mobile-bottom-nav, .mobile-brand, .no-print, .notice { display: none !important; } .main { width: 100%; margin: 0; } .content { max-width: none; padding: 0; } .qr-label-sheet { display: block; margin: 0; }
+      /* 目标纸卷 30 x 20 mm（由 60x40 裁成 4 份）。版式：logo 左上、二维码右上，
+         下方三组「前缀在上、值在下」。30mm 宽只够放 22 字符的 DZSB 编码，
+         所以值必须独占整行。实测上限：二维码/logo 各 8mm、值字号 6.4pt、
+         行距 0.3mm，再往上会顶破 20mm 或压到编码末尾。
+         改动前请先跑 .worktmp\\compact.py 复测。 */
+      .qr-label { width: 30mm; height: 20mm; padding: 0.6mm 1mm; gap: 0.1mm; border: none; border-radius: 0; overflow: hidden; page-break-inside: avoid; page-break-after: always; }
+      /* 打印用黑白 logo：热转印是单色，彩色图会被抖动成灰点。 */
+      .qr-label-logo .logo-screen { display: none; }
+      .qr-label-logo .logo-print { display: block; }
+      .qr-label-logo img { width: 8mm; }
+      .qr-label-qr img { width: 8mm; height: 8mm; }
+      /* 行距在 30x20 上是稀缺资源：三组字段全满时，0.3mm 会顶破纸高，
+         压到 0.15mm 并把内边距收到 0.6mm，才稳得住 20mm。 */
+      .qr-label-info { gap: 0.15mm; }
+      .qr-label-info dt { font-size: 4pt; line-height: 1; }
+      .qr-label-info dd { font-size: 6.2pt; line-height: 1; }
+      .qr-label-code[data-len="21"], .qr-label-code[data-len="22"] { font-size: 6pt; }
+      .qr-label-code[data-len="23"], .qr-label-code[data-len="24"] { font-size: 5.6pt; }
+      .qr-label-code[data-len="25"], .qr-label-code[data-len="26"] { font-size: 5.2pt; }
+      .qr-label-code[data-len="27"], .qr-label-code[data-len="28"] { font-size: 4.8pt; }
+      .qr-label-code[data-len="29"], .qr-label-code[data-len="30"] { font-size: 4.4pt; }
+      .qr-label-sn[data-len="17"], .qr-label-sn[data-len="18"], .qr-label-sn[data-len="19"], .qr-label-sn[data-len="20"] { font-size: 5.6pt; }
+      .qr-label-sn[data-len="21"], .qr-label-sn[data-len="22"], .qr-label-sn[data-len="23"], .qr-label-sn[data-len="24"] { font-size: 5.2pt; }
+    }
     .form-section + .form-section { margin-top: 25px; padding-top: 21px; border-top: 1px solid #edf2f2; }
     .form-section h2 { margin-bottom: 14px; font-size: 14px; }
     .field-error { margin-top: 3px; color: var(--coral); font-size: 11px; }
@@ -521,7 +647,7 @@
     .low-stock-mobile-details strong { margin-top: 4px; font-size: 11px; }
     .mobile-action-grid { display: none; }
     @media (min-width: 1101px) { .content:has(.request-workspace), .content:has(.reservation-page) { padding-bottom: 10px; } }
-    @media (max-width: 1100px) { .sidebar { width: 198px; } .main { width: calc(100% - 198px); margin-left: 198px; } .topbar, .content { padding-left: 24px; padding-right: 24px; } .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .request-workspace, .lifecycle-layout, .lifecycle-layout.timeline-layout { grid-template-columns: 1fr; } .request-candidates, .request-form, .lifecycle-scroll { height: auto; min-height: auto; overflow: visible; } .request-candidates { display: block; } .candidate-list { max-height: 330px; } .asset-lifecycle-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+    @media (max-width: 1100px) { .sidebar { width: 198px; } .main { width: calc(100% - 198px); margin-left: 198px; } .topbar, .content, .module-tabs { padding-left: 24px; padding-right: 24px; } .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .request-workspace, .lifecycle-layout, .lifecycle-layout.timeline-layout { grid-template-columns: 1fr; } .request-candidates, .request-form, .lifecycle-scroll { height: auto; min-height: auto; overflow: visible; } .request-candidates { display: block; } .candidate-list { max-height: 330px; } .asset-lifecycle-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
     @media (max-width: 760px) {
       body { padding-bottom: 72px; }
       .asset-lifecycle-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -537,6 +663,7 @@
       .sidebar { display: none; }
       .main { width: 100%; margin: 0; }
       .topbar { position: sticky; top: 0; z-index: 10; min-height: 58px; padding: 0 14px; gap: 8px; box-shadow: 0 1px 0 rgba(28,45,52,.05); }
+      .module-tabs { padding: 5px 12px; }
       .mobile-brand { display: flex; align-items: center; gap: 8px; min-width: 0; margin-right: auto; }
       .mobile-brand .brand-mark { width: 30px; height: 30px; font-size: 12px; }
       .mobile-brand strong { max-width: 112px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
@@ -656,52 +783,49 @@
     }
     @media (max-width: 480px) { .metric { min-height: 90px; padding: 12px; } .metric-value { font-size: 22px; } .lookup-result { grid-template-columns: 1fr; gap: 12px; } .page-heading .button { max-width: 105px; white-space: normal; } }
   </style>
+  <!-- build: 2026-11-05 scanner-status -->
 </head>
 <body data-user-id="{{ request.user.pk }}" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  {% nav_active 'request_list' 'request_create' 'request_edit' 'request_detail' 'my_loans' 'quick_inventory_process' as module_business %}
+  {% nav_active 'approval_queue' 'workflow_detail' 'inventory_check_list' 'inventory_check_create' 'inventory_check_detail' 'reservation_dashboard' 'transaction_list' 'offline_operation_list' as module_tasks %}
+  {% nav_active 'warehouse_management' 'warehouse_item_create' 'warehouse_item_edit' 'warehouse_asset_create' 'warehouse_asset_edit' 'warehouse_stock_item_create' 'warehouse_stock_item_edit' 'asset_lifecycle' 'asset_domain_change' 'low_stock_alerts' 'inventory_conversion' 'inventory_import' 'warehouse_qr_labels' 'composite_unit_management' as module_inventory %}
+  {% nav_active 'replenishment_suggestions' 'purchase_draft_list' 'purchase_draft_detail' 'purchase_draft_edit' 'purchase_order_list' 'purchase_order_detail' 'report_dashboard' 'stale_inventory_report' 'supplier_price_history' 'supplier_reconciliation' as module_purchase %}
   <div class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="/"><span class="brand-mark">仓</span><span><strong class="brand-name">售后仓库</strong><small class="brand-sub">资产与出入库管理</small></span></a>
-      <div class="nav-label">工作区</div>
-      <nav class="nav" aria-label="业务导航">
-        <a class="nav-link {% if request.resolver_match.url_name == 'home' %}active{% endif %}" href="/">工作台</a>
-        <a class="nav-link {% if request.resolver_match.url_name == 'asset_lookup' %}active{% endif %}" href="{% url 'asset_lookup' %}">资产检索</a>
-        <a class="nav-link {% if request.resolver_match.url_name == 'request_list' or request.resolver_match.url_name == 'request_create' or request.resolver_match.url_name == 'request_edit' %}active{% endif %}" href="{% url 'request_list' %}">我的申请</a>
-        <a class="nav-link {% if request.resolver_match.url_name == 'my_loans' %}active{% endif %}" href="{% url 'my_loans' %}">我的借用</a>
-        <a class="nav-link {% if request.resolver_match.url_name == 'notification_center' or request.resolver_match.url_name == 'notification_open' %}active{% endif %}" href="{% url 'notification_center' %}">通知中心</a>
+      <div class="nav-label">主导航</div>
+      <nav class="nav" aria-label="主导航" data-primary-nav>
+        {% nav_active 'home' as on_home %}<a data-primary-link class="nav-link {% if on_home %}active{% endif %}" href="/">工作台</a>
+        <a data-primary-link class="nav-link {% if module_business %}active{% endif %}" href="{% url 'request_list' %}">业务办理</a>
+        {% if global_user_is_operator %}
+          {% if global_can_approve_workflow or global_can_execute_inventory %}<a data-primary-link class="nav-link {% if module_tasks %}active{% endif %}" href="{% url 'approval_queue' %}">任务中心</a>{% else %}<a data-primary-link class="nav-link {% if module_tasks %}active{% endif %}" href="{% url 'inventory_check_list' %}">任务中心</a>{% endif %}
+          <a data-primary-link class="nav-link {% if module_inventory %}active{% endif %}" href="{% url 'warehouse_management' %}">库存中心</a>
+          {% if global_can_manage_inventory or global_can_execute_inventory or global_can_view_reports %}
+            {% if global_can_manage_inventory %}<a data-primary-link class="nav-link {% if module_purchase %}active{% endif %}" href="{% url 'purchase_draft_list' %}">采购与报表</a>{% elif global_can_execute_inventory %}<a data-primary-link class="nav-link {% if module_purchase %}active{% endif %}" href="{% url 'purchase_order_list' %}">采购与报表</a>{% else %}<a data-primary-link class="nav-link {% if module_purchase %}active{% endif %}" href="{% url 'report_dashboard' %}">采购与报表</a>{% endif %}
+          {% endif %}
+        {% endif %}
       </nav>
-      {% if global_user_is_operator %}
-        <details class="nav-section" {% if request.resolver_match.url_name == 'warehouse_management' or request.resolver_match.url_name == 'warehouse_item_create' or request.resolver_match.url_name == 'warehouse_asset_create' or request.resolver_match.url_name == 'warehouse_asset_edit' or request.resolver_match.url_name == 'asset_lifecycle' or request.resolver_match.url_name == 'warehouse_stock_item_create' or request.resolver_match.url_name == 'warehouse_stock_item_edit' or request.resolver_match.url_name == 'low_stock_alerts' or request.resolver_match.url_name == 'inventory_conversion' or request.resolver_match.url_name == 'inventory_import' or request.resolver_match.url_name == 'purchase_draft_list' or request.resolver_match.url_name == 'purchase_draft_detail' or request.resolver_match.url_name == 'purchase_draft_edit' or request.resolver_match.url_name == 'purchase_order_list' or request.resolver_match.url_name == 'purchase_order_detail' or request.resolver_match.url_name == 'composite_unit_management' or request.resolver_match.url_name == 'inventory_check_list' or request.resolver_match.url_name == 'inventory_check_create' or request.resolver_match.url_name == 'inventory_check_detail' or request.resolver_match.url_name == 'approval_queue' or request.resolver_match.url_name == 'workflow_detail' or request.resolver_match.url_name == 'reservation_dashboard' or request.resolver_match.url_name == 'transaction_list' or request.resolver_match.url_name == 'offline_operation_list' or request.resolver_match.url_name == 'report_dashboard' or request.resolver_match.url_name == 'stale_inventory_report' %}open{% endif %}>
-          <summary>仓库工具</summary>
-          <nav class="nav" aria-label="仓库工具">
-            <a class="nav-link {% if request.resolver_match.url_name == 'warehouse_management' or request.resolver_match.url_name == 'warehouse_item_create' or request.resolver_match.url_name == 'warehouse_asset_create' or request.resolver_match.url_name == 'warehouse_asset_edit' or request.resolver_match.url_name == 'asset_lifecycle' or request.resolver_match.url_name == 'warehouse_stock_item_create' or request.resolver_match.url_name == 'warehouse_stock_item_edit' or request.resolver_match.url_name == 'low_stock_alerts' or request.resolver_match.url_name == 'inventory_conversion' or request.resolver_match.url_name == 'inventory_import' %}active{% endif %}" href="{% url 'warehouse_management' %}">资产与库存</a>
-            {% if global_can_manage_inventory %}<a class="nav-link {% if request.resolver_match.url_name == 'replenishment_suggestions' or request.resolver_match.url_name == 'purchase_draft_list' or request.resolver_match.url_name == 'purchase_draft_detail' or request.resolver_match.url_name == 'purchase_draft_edit' %}active{% endif %}" href="{% url 'purchase_draft_list' %}">采购申请</a>{% endif %}
-            {% if global_can_manage_inventory or global_can_execute_inventory %}<a class="nav-link {% if request.resolver_match.url_name == 'purchase_order_list' or request.resolver_match.url_name == 'purchase_order_detail' %}active{% endif %}" href="{% url 'purchase_order_list' %}">采购订单</a>{% endif %}
-            <a class="nav-link {% if request.resolver_match.url_name == 'composite_unit_management' %}active{% endif %}" href="{% url 'composite_unit_management' %}">成品设备</a>
-            <a class="nav-link {% if request.resolver_match.url_name == 'inventory_check_list' or request.resolver_match.url_name == 'inventory_check_create' or request.resolver_match.url_name == 'inventory_check_detail' %}active{% endif %}" href="{% url 'inventory_check_list' %}">盘点任务</a>
-            {% if global_can_approve_workflow or global_can_execute_inventory %}<a class="nav-link {% if request.resolver_match.url_name == 'approval_queue' or request.resolver_match.url_name == 'workflow_detail' %}active{% endif %}" href="{% url 'approval_queue' %}">审批与执行</a><a class="nav-link {% if request.resolver_match.url_name == 'reservation_dashboard' %}active{% endif %}" href="{% url 'reservation_dashboard' %}">库存占用</a><a class="nav-link {% if request.resolver_match.url_name == 'transaction_list' %}active{% endif %}" href="{% url 'transaction_list' %}">出入库记录</a>{% if global_can_execute_inventory %}<a class="nav-link {% if request.resolver_match.url_name == 'offline_operation_list' %}active{% endif %}" href="{% url 'offline_operation_list' %}">离线操作</a>{% endif %}{% endif %}
-            {% if global_can_view_reports %}<a class="nav-link {% if request.resolver_match.url_name == 'report_dashboard' %}active{% endif %}" href="{% url 'report_dashboard' %}">报表中心</a><a class="nav-link {% if request.resolver_match.url_name == 'stale_inventory_report' %}active{% endif %}" href="{% url 'stale_inventory_report' %}">呆滞库存</a><a class="nav-link {% if request.resolver_match.url_name == 'supplier_price_history' %}active{% endif %}" href="{% url 'supplier_price_history' %}">价格历史</a><a class="nav-link {% if request.resolver_match.url_name == 'supplier_reconciliation' %}active{% endif %}" href="{% url 'supplier_reconciliation' %}">采购与到货汇总</a>{% endif %}
-          </nav>
-        </details>
-      {% endif %}
-      {% if user_is_system_admin %}
-        <details class="nav-section" {% if request.resolver_match.url_name == 'permission_management' or request.resolver_match.url_name == 'audit_log_list' or request.resolver_match.url_name == 'consistency_check' %}open{% endif %}>
-          <summary>系统设置</summary>
-          <nav class="nav" aria-label="系统设置"><a class="nav-link {% if request.resolver_match.url_name == 'permission_management' %}active{% endif %}" href="{% url 'permission_management' %}">账号与权限</a><a class="nav-link {% if request.resolver_match.url_name == 'audit_log_list' %}active{% endif %}" href="{% url 'audit_log_list' %}">审计日志</a><a class="nav-link {% if request.resolver_match.url_name == 'consistency_check' %}active{% endif %}" href="{% url 'consistency_check' %}">数据一致性</a><a class="nav-link" href="/admin/">系统配置</a></nav>
-        </details>
-      {% endif %}
       <div class="sidebar-foot"><strong>内网部署</strong>资产动作与审批记录以服务端账本为准。</div>
     </aside>
     <main class="main">
-      <header class="topbar"><a class="mobile-brand" href="/"><span class="brand-mark">仓</span><strong>售后仓库</strong></a><div class="crumb"><strong>售后部门</strong> / {% block crumb %}工作台{% endblock %}</div><form class="quick-search" action="{% url 'asset_lookup' %}" method="get" role="search"><input name="q" placeholder="全局搜索：资产/成品/单号/人员/备注" aria-label="全局搜索"><button type="submit">查询</button></form><span id="network-status" class="network-status">网络正常</span>{% if global_can_execute_inventory %}<a href="{% url 'offline_operation_list' %}" data-offline-queue-count class="offline-queue-count" hidden>已同步</a>{% else %}<span data-offline-queue-count class="offline-queue-count" hidden>已同步</span>{% endif %}<button id="pwa-install" class="pwa-install" type="button" hidden>安装到手机</button><a id="notification-bell" class="notification-bell {% if global_unread_notification_count %}has-unread{% endif %}" href="{% url 'notification_center' %}" aria-label="通知中心">&#128276;</a><details class="user-menu"><summary><span><strong class="user-name">{{ request.user.get_username }}</strong><small class="user-role">{{ user_role_label }}</small></span><span class="avatar">{{ request.user.get_username|slice:':1' }}</span></summary><div class="menu-popover"><a href="{% url 'password_change' %}">修改密码</a>{% if user_is_system_admin %}<a href="/admin/">系统管理</a>{% endif %}<form method="post" action="{% url 'logout' %}">{% csrf_token %}<button type="submit">退出登录</button></form></div></details></header>
+      <header class="topbar"><a class="mobile-brand" href="/"><span class="brand-mark">仓</span><strong>售后仓库</strong></a><div class="crumb"><strong>售后部门</strong> / {% block crumb %}工作台{% endblock %}</div><form class="quick-search" action="{% url 'asset_lookup' %}" method="get" role="search"><input name="q" placeholder="全局搜索：资产/成品/单号/人员/备注" aria-label="全局搜索"><button type="submit">查询</button></form><button id="scanner-status" class="network-status scanner-status" type="button" aria-label="打开设备与扫码状态" title="打开设备与扫码状态">设备状态</button>{% if global_can_execute_inventory %}<a href="{% url 'offline_operation_list' %}" data-offline-queue-count class="offline-queue-count" hidden>已同步</a>{% else %}<span data-offline-queue-count class="offline-queue-count" hidden>已同步</span>{% endif %}<button id="pwa-install" class="pwa-install" type="button" hidden>安装到手机</button><a id="notification-bell" class="notification-bell {% if global_unread_notification_count %}has-unread{% endif %}" href="{% url 'notification_center' %}" aria-label="通知中心">&#128276;</a><details class="user-menu"><summary><span><strong class="user-name">{{ request.user.get_username }}</strong><small class="user-role">{{ user_role_label }}</small></span><span class="avatar">{{ request.user.get_username|slice:':1' }}</span></summary><div class="menu-popover"><a href="{% url 'password_change' %}">修改密码</a>{% if global_user_is_system_admin %}<a href="{% url 'warehouse_setup' section='manufacturers' %}">基础资料</a><a href="{% url 'permission_management' %}">账号与权限</a><a href="{% url 'audit_log_list' %}">审计日志</a><a href="{% url 'consistency_check' %}">数据一致性</a><a href="/admin/">高级配置</a>{% endif %}<form method="post" action="{% url 'logout' %}">{% csrf_token %}<button type="submit">退出登录</button></form></div></details></header>
+      {% if module_business %}
+        <nav class="module-tabs" aria-label="业务办理">{% nav_active 'request_list' 'request_edit' 'request_detail' as tab_requests %}<a class="module-tab {% if tab_requests %}active{% endif %}" href="{% url 'request_list' %}">我的申请</a>{% nav_active 'request_create' as tab_request_new %}<a class="module-tab {% if tab_request_new %}active{% endif %}" href="{% url 'request_create' %}">新建申请</a>{% nav_active 'my_loans' as tab_loans %}<a class="module-tab {% if tab_loans %}active{% endif %}" href="{% url 'my_loans' %}">我的借用</a>{% if global_can_execute_inventory %}{% nav_active 'quick_inventory_process' as tab_quick %}<a class="module-tab {% if tab_quick %}active{% endif %}" href="{% url 'quick_inventory_process' %}">快速出入库</a>{% endif %}</nav>
+      {% elif module_tasks %}
+        <nav class="module-tabs" aria-label="任务中心">{% if global_can_approve_workflow or global_can_execute_inventory %}{% nav_active 'approval_queue' 'workflow_detail' as tab_approval %}<a class="module-tab {% if tab_approval %}active{% endif %}" href="{% url 'approval_queue' %}">审批与执行</a>{% nav_active 'reservation_dashboard' as tab_reservations %}<a class="module-tab {% if tab_reservations %}active{% endif %}" href="{% url 'reservation_dashboard' %}">库存占用</a>{% nav_active 'transaction_list' as tab_transactions %}<a class="module-tab {% if tab_transactions %}active{% endif %}" href="{% url 'transaction_list' %}">出入库记录</a>{% endif %}{% nav_active 'inventory_check_list' 'inventory_check_create' 'inventory_check_detail' as tab_checks %}<a class="module-tab {% if tab_checks %}active{% endif %}" href="{% url 'inventory_check_list' %}">盘点任务</a>{% if global_can_execute_inventory %}{% nav_active 'offline_operation_list' as tab_offline %}<a class="module-tab {% if tab_offline %}active{% endif %}" href="{% url 'offline_operation_list' %}">离线待复核</a>{% endif %}</nav>
+      {% elif module_inventory %}
+        <nav class="module-tabs" aria-label="库存中心">{% nav_active 'warehouse_management' 'warehouse_item_create' 'warehouse_item_edit' 'warehouse_asset_create' 'warehouse_asset_edit' 'warehouse_stock_item_create' 'warehouse_stock_item_edit' 'asset_lifecycle' 'asset_domain_change' as tab_inventory %}<a class="module-tab {% if tab_inventory %}active{% endif %}" href="{% url 'warehouse_management' %}">资产与耗材</a>{% nav_active 'composite_unit_management' as tab_units %}<a class="module-tab {% if tab_units %}active{% endif %}" href="{% url 'composite_unit_management' %}">成品设备</a>{% nav_active 'low_stock_alerts' as tab_alerts %}<a class="module-tab {% if tab_alerts %}active{% endif %}" href="{% url 'low_stock_alerts' %}">库存预警</a>{% if global_can_import_inventory %}{% nav_active 'inventory_import' as tab_import %}<a class="module-tab {% if tab_import %}active{% endif %}" href="{% url 'inventory_import' %}">导入导出</a>{% endif %}{% if global_can_manage_inventory %}{% nav_active 'inventory_conversion' as tab_conversion %}<a class="module-tab {% if tab_conversion %}active{% endif %}" href="{% url 'inventory_conversion' %}">受控转换</a>{% endif %}</nav>
+      {% elif module_purchase %}
+        <nav class="module-tabs" aria-label="采购与报表">{% if global_can_manage_inventory %}{% nav_active 'replenishment_suggestions' 'purchase_draft_list' 'purchase_draft_detail' 'purchase_draft_edit' as tab_drafts %}<a class="module-tab {% if tab_drafts %}active{% endif %}" href="{% url 'purchase_draft_list' %}">采购申请</a>{% endif %}{% if global_can_manage_inventory or global_can_execute_inventory %}{% nav_active 'purchase_order_list' 'purchase_order_detail' as tab_orders %}<a class="module-tab {% if tab_orders %}active{% endif %}" href="{% url 'purchase_order_list' %}">采购订单</a>{% endif %}{% if global_can_view_reports %}{% nav_active 'report_dashboard' as tab_reports %}<a class="module-tab {% if tab_reports %}active{% endif %}" href="{% url 'report_dashboard' %}">报表中心</a>{% nav_active 'stale_inventory_report' as tab_stale %}<a class="module-tab {% if tab_stale %}active{% endif %}" href="{% url 'stale_inventory_report' %}">呆滞库存</a>{% nav_active 'supplier_price_history' as tab_prices %}<a class="module-tab {% if tab_prices %}active{% endif %}" href="{% url 'supplier_price_history' %}">价格历史</a>{% nav_active 'supplier_reconciliation' as tab_reconciliation %}<a class="module-tab {% if tab_reconciliation %}active{% endif %}" href="{% url 'supplier_reconciliation' %}">采购到货</a>{% endif %}</nav>
+      {% endif %}
       <div class="content">{% if messages %}{% for message in messages %}<div class="notice {{ message.tags }}">{{ message }}</div>{% endfor %}{% endif %}{% block content %}{% endblock %}</div>
     </main>
   </div>
   <nav class="mobile-bottom-nav" aria-label="移动端主导航">
-    <a class="mobile-nav-link {% if request.resolver_match.url_name == 'home' %}active{% endif %}" href="/"><span class="mobile-nav-symbol">⌂</span><span>工作台</span></a>
-    <a class="mobile-nav-link {% if request.resolver_match.url_name == 'asset_lookup' %}active{% endif %}" href="{% url 'asset_lookup' %}"><span class="mobile-nav-symbol">⌕</span><span>资产</span></a>
-    <a class="mobile-nav-link {% if request.resolver_match.url_name == 'request_list' or request.resolver_match.url_name == 'request_create' %}active{% endif %}" href="{% url 'request_list' %}"><span class="mobile-nav-symbol">＋</span><span>申请</span></a>
-    {% if global_can_approve_workflow or global_can_execute_inventory %}<a class="mobile-nav-link {% if request.resolver_match.url_name == 'approval_queue' or request.resolver_match.url_name == 'workflow_detail' %}active{% endif %}" href="{% url 'approval_queue' %}"><span class="mobile-nav-symbol">✓</span><span>审批</span></a>{% endif %}
-    <a class="mobile-nav-link {% if request.resolver_match.url_name == 'notification_center' %}active{% endif %}" href="{% url 'notification_center' %}"><span class="mobile-nav-symbol">铃</span><span>通知</span></a>
+    {% nav_active 'home' as m_home %}<a class="mobile-nav-link {% if m_home %}active{% endif %}" href="/"><span class="mobile-nav-symbol">⌂</span><span>工作台</span></a>
+    <a class="mobile-nav-link {% if module_business %}active{% endif %}" href="{% url 'request_list' %}"><span class="mobile-nav-symbol">＋</span><span>业务</span></a>
+    {% if global_user_is_operator %}<a class="mobile-nav-link {% if module_tasks %}active{% endif %}" href="{% if global_can_approve_workflow or global_can_execute_inventory %}{% url 'approval_queue' %}{% else %}{% url 'inventory_check_list' %}{% endif %}"><span class="mobile-nav-symbol">✓</span><span>任务</span></a><a class="mobile-nav-link {% if module_inventory %}active{% endif %}" href="{% url 'warehouse_management' %}"><span class="mobile-nav-symbol">▦</span><span>库存</span></a>{% endif %}
+    {% if global_can_manage_inventory or global_can_execute_inventory or global_can_view_reports %}<a class="mobile-nav-link {% if module_purchase %}active{% endif %}" href="{% if global_can_manage_inventory %}{% url 'purchase_draft_list' %}{% elif global_can_execute_inventory %}{% url 'purchase_order_list' %}{% else %}{% url 'report_dashboard' %}{% endif %}"><span class="mobile-nav-symbol">表</span><span>采购报表</span></a>{% endif %}
   </nav>
   <script>
     (() => {
@@ -785,5 +909,159 @@
     })();
   </script>
   <script src="{% static 'warehouse/offline.js' %}"></script>
+  {# 全局扫码：页面空闲时捕获扫码枪；业务输入框由各页面自行累加处理 #}
+  <script src="{% static 'warehouse/scanner.js' %}?v=20261105-3"></script>
+  <script>
+    (() => {
+      if (!window.WarehouseScanner?.watchGlobalScan) return;
+
+      // 只在需要识别物品的业务页启用；其它页面不监听按键。
+      const path = window.location.pathname;
+      const scanPages = [
+        /^\/warehouse\/quick-process\//,
+        /^\/inventory-checks\//,
+        /^\/warehouse\/assets\/[^/]+\/lifecycle\//,
+        /^\/requests\/new\//,
+        /^\/my-loans\//,
+        /^\/approvals\//,
+        /^\/workflow\//,
+      ];
+      const targetInput = document.getElementById('item-query')
+        || document.querySelector('input[name="scanned_value"]')
+        || document.querySelector('input[placeholder*="扫码枪"]');
+      const cameraButton = document.getElementById('scan-start')
+        || Array.from(document.querySelectorAll('button')).find((item) => item.textContent.trim() === '扫码');
+      const supported = scanPages.some((pattern) => pattern.test(path)) && Boolean(targetInput || cameraButton);
+      const STORAGE_KEY = 'warehouse-scan-enabled';
+      let enabled = supported && window.localStorage.getItem(STORAGE_KEY) !== '0';
+
+      const status = document.getElementById('scanner-status');
+      if (!status) return;
+
+      const panel = document.createElement('div');
+      panel.hidden = true;
+      Object.assign(panel.style, {
+        position: 'fixed', top: '46px', right: '16px', zIndex: 9999, width: '330px',
+        background: '#fff', border: '1px solid #d9e3e4', borderRadius: '8px',
+        boxShadow: '0 8px 24px rgba(0,0,0,.12)', padding: '12px',
+        fontSize: '12px', lineHeight: '1.7', color: '#1c2d34',
+      });
+      panel.innerHTML = '<strong>设备与扫码状态</strong>'
+        + '<div id="scan-diag-body" style="margin-top:6px;"></div>'
+        + '<div style="margin-top:8px;display:flex;gap:8px;">'
+        + '<button id="diag-toggle" type="button" style="padding:4px 10px;border-radius:6px;border:1px solid #176e68;background:#e6f4f1;color:#176e68;cursor:pointer;">切换监听</button>'
+        + '<button id="diag-close" type="button" style="padding:4px 10px;border-radius:6px;border:1px solid #cbd5d6;background:#fff;cursor:pointer;">关闭</button>'
+        + '</div>'
+        + '<div style="margin-top:8px;color:#6e8086;">扫码一次后，可在这里确认当前页面是否收到扫码数据。</div>';
+      document.body.appendChild(panel);
+
+      let lastGap = 0;
+      let lastScan = null;
+      let lastScanAt = '';
+      const normalize = (value) => (value || '').normalize('NFKC')
+        .replace(/[\u200b\u200c\u200d\ufeff\r\n\t]/g, '').trim();
+
+      function render() {
+        const body = panel.querySelector('#scan-diag-body');
+        if (!body) return;
+        const rows = [
+          '<div>扫码监听：<b>' + (supported ? (enabled ? '开' : '关') : '本页不适用') + '</b></div>',
+          '<div>本会话验证：<b>' + (lastScan ? '已扫码验证' : '未验证') + '</b>' + (lastScanAt ? ' · ' + lastScanAt : '') + '</div>',
+        ];
+        if (lastScan) {
+          const raw = lastScan.replace(/[<>&]/g, '');
+          rows.push('<div>最近扫码原文：<code style="word-break:break-all">' + raw + '</code></div>');
+          rows.push('<div>归一化结果：<code style="word-break:break-all">' + normalize(lastScan) + '</code></div>');
+          rows.push('<div>最大字符间隔：<b>' + lastGap + ' ms</b></div>');
+        } else {
+          rows.push('<div>最近扫码：尚未捕获</div>');
+        }
+        rows.push('<div style="margin-top:6px;color:#6e8086;">扫码枪应插在当前打开仓库页面的电脑上，并配置为 HID 键盘模式、以 Enter 或 Tab 结尾。</div>');
+        body.innerHTML = rows.join('');
+        status.title = '打开设备与扫码状态';
+      }
+
+      status.addEventListener('click', () => {
+        panel.hidden = !panel.hidden;
+        render();
+      });
+      panel.querySelector('#diag-close').addEventListener('click', () => { panel.hidden = true; });
+      panel.querySelector('#diag-toggle').addEventListener('click', () => {
+        if (!supported) return;
+        enabled = !enabled;
+        window.localStorage.setItem(STORAGE_KEY, enabled ? '1' : '0');
+        render();
+      });
+      render();
+      if (!supported) return;
+
+      const toast = document.createElement('div');
+      toast.className = 'scan-toast';
+      toast.hidden = true;
+      document.body.appendChild(toast);
+
+      let hideTimer = null;
+      const flash = (message, isError) => {
+        toast.textContent = message;
+        toast.classList.toggle('is-error', Boolean(isError));
+        toast.hidden = false;
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => { toast.hidden = true; }, 2600);
+      };
+
+      window.WarehouseScanner.watchGlobalScan({
+        shouldCapture: () => enabled,
+        captureEditable: (element) => element?.id === 'item-query',
+        onDetected: (value, detail) => {
+          lastScan = value;
+          lastGap = detail?.maxIntervalMs || 0;
+          lastScanAt = new Date().toLocaleTimeString();
+          if (targetInput && document.activeElement === targetInput) {
+            targetInput.dataset.hidScanAt = String(Date.now());
+          }
+          render();
+        },
+        onScan: async (value) => {
+          const candidateInput = document.getElementById('item-query')
+            || document.querySelector('input[placeholder*="扫码枪"]');
+          if (candidateInput) {
+            if (candidateInput.id === 'item-query') {
+              candidateInput.dispatchEvent(new CustomEvent('warehouse:hid-scan', {
+                bubbles: false,
+                detail: {value},
+              }));
+              flash(`已扫码：${value}，正在加入清单…`, false);
+              return;
+            }
+            candidateInput.value = value;
+            candidateInput.focus();
+            candidateInput.dispatchEvent(new KeyboardEvent('keydown', {
+              key: 'Enter', bubbles: true, cancelable: true,
+            }));
+            flash(`已扫码：${value}，正在加入清单…`, false);
+            return;
+          }
+          flash(`已扫码：${value}，正在查找…`, false);
+          try {
+            // 直接走检索接口，命中唯一记录会 302 到资产详情
+            const url = `/assets/lookup/?q=${encodeURIComponent(value)}`;
+            const response = await fetch(url, {
+              headers: { 'X-Requested-With': 'fetch' },
+              redirect: 'follow',
+              credentials: 'same-origin',
+            });
+            if (response.redirected) {
+              window.location.href = response.url;
+              return;
+            }
+            // 没跳转说明不是唯一命中，把用户带到检索页看结果
+            window.location.href = url;
+          } catch (error) {
+            flash('扫码后查询失败，请手动检索', true);
+          }
+        },
+      });
+    })();
+  </script>
 </body>
 </html>

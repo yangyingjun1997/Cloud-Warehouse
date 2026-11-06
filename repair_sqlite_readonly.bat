@@ -2,9 +2,10 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 cd /d "%~dp0"
-set "DB_FILE=%~dp0backend\db.sqlite3"
-set "TEMP_DB=%~dp0backend\db.sqlite3.repaired"
-set "PYTHON_EXE=%~dp0.venv312\Scripts\python.exe"
+set "DATA_DIR=%LOCALAPPDATA%\AfterSalesWarehouse\data"
+set "DB_FILE=%DATA_DIR%\db.sqlite3"
+set "TEMP_DB=%DATA_DIR%\db.sqlite3.repaired"
+set "PYTHON_EXE=%~dp0.venv\Scripts\python.exe"
 
 echo.
 echo ================================================
@@ -12,8 +13,10 @@ echo   SQLite read-only repair tool
 echo ================================================
 echo.
 
+if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
+if not exist "%DB_FILE%" if exist "%~dp0runtime-data\db.sqlite3" copy /Y "%~dp0runtime-data\db.sqlite3" "%DB_FILE%" >nul
 if not exist "%DB_FILE%" (
-    echo [ERROR] backend\db.sqlite3 was not found.
+    echo [ERROR] %LOCALAPPDATA%\AfterSalesWarehouse\data\db.sqlite3 was not found.
     pause
     exit /b 1
 )
@@ -30,7 +33,7 @@ if not errorlevel 1 (
 )
 
 for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set "STAMP=%%i"
-set "BACKUP_FILE=%~dp0backend\db.sqlite3.before-repair-!STAMP!"
+set "BACKUP_FILE=%DATA_DIR%\db.sqlite3.before-repair-!STAMP!"
 
 echo This operation keeps a full backup and rebuilds only the file permissions.
 set /p "CONFIRM=Type REPAIR to continue: "
@@ -42,7 +45,7 @@ if /I not "!CONFIRM!"=="REPAIR" (
 
 copy /Y "%DB_FILE%" "!BACKUP_FILE!" >nul || goto :failed
 copy /Y "%DB_FILE%" "%TEMP_DB%" >nul || goto :failed
-set "DB_NAME=db.sqlite3.repaired"
+set "DB_NAME=%TEMP_DB%"
 pushd "%~dp0backend"
 "%PYTHON_EXE%" manage.py migrate --noinput || (popd & goto :failed)
 popd

@@ -22,8 +22,8 @@
       <div class="candidate-list">
         {% if query %}
           {% for asset in assets %}
-            <button class="candidate-row candidate-add" type="button" data-kind="asset" data-id="{{ asset.id }}" data-name="{{ asset.name }}" data-code="{{ asset.system_asset_no }}" data-meta="{{ asset.item_type.name }}{% if asset.manufacturer or asset.model %} · {{ asset.manufacturer }} {{ asset.model }}{% endif %}{% if asset.serial_number %} · SN {{ asset.serial_number }}{% endif %}" data-status-label="{{ asset.request_status_label }}" data-allowed-types="{{ asset.allowed_request_types }}">
-              <span class="candidate-main"><strong>{{ asset.name }}</strong><small>{{ asset.item_type.name }}{% if asset.manufacturer or asset.model %} · {{ asset.manufacturer }} {{ asset.model }}{% endif %}</small><small class="candidate-identifiers">仓库系统编号 {{ asset.system_asset_no }}{% if asset.asset_code %} · ERP {{ asset.asset_code }}{% endif %}{% if asset.serial_number %} · 生产厂家 SN {{ asset.serial_number }}{% endif %}</small><small>{{ asset.warehouse.name|default:'未分配仓库' }} / {{ asset.location.code|default:'未分配库位' }} · {{ asset.get_status_display }}{% if asset.current_holder %} · 持有人 {{ asset.current_holder.username }}{% elif asset.external_holder_name %} · 持有人 {{ asset.external_holder_name }}{% endif %}</small></span>
+            <button class="candidate-row candidate-add" type="button" data-kind="asset" data-id="{{ asset.id }}" data-name="{{ asset.name }}" data-code="{{ asset.asset_code|default:'待赋码' }}" data-meta="{{ asset.item_type.name }}{% if asset.manufacturer or asset.model %} · {{ asset.manufacturer }} {{ asset.model }}{% endif %}{% if asset.serial_number %} · SN {{ asset.serial_number }}{% endif %}" data-status-label="{{ asset.request_status_label }}" data-allowed-types="{{ asset.allowed_request_types }}">
+              <span class="candidate-main"><strong>{{ asset.name }}</strong><small>{{ asset.item_type.name }}{% if asset.manufacturer or asset.model %} · {{ asset.manufacturer }} {{ asset.model }}{% endif %}</small><small class="candidate-identifiers">{% if asset.asset_code %}资产编码 {{ asset.asset_code }}{% else %}暂未赋码{% endif %}{% if asset.serial_number %} · 生产厂家 SN {{ asset.serial_number }}{% endif %}</small><small>{{ asset.warehouse.name|default:'未分配仓库' }} / {{ asset.location.code|default:'未分配库位' }} · {{ asset.get_status_display }}{% if asset.current_holder %} · 持有人 {{ asset.current_holder.username }}{% elif asset.external_holder_name %} · 持有人 {{ asset.external_holder_name }}{% endif %}</small></span>
               <span class="availability {% if not asset.allowed_request_types %}unavailable{% endif %}">{% if asset.is_reserved %}已预约{% else %}加入{% endif %}</span>
             </button>
           {% endfor %}
@@ -96,7 +96,7 @@
   </div>
 
   <script src="{% static 'warehouse/vendor/zxing-browser-0.1.5.min.js' %}"></script>
-  <script src="{% static 'warehouse/scanner.js' %}"></script>
+  <script src="{% static 'warehouse/scanner.js' %}?v=20261105-3"></script>
   <script>
     (() => {
       const requestForm = document.getElementById('request-form');
@@ -123,6 +123,7 @@
       let torchEnabled = false;
       let lastScannedValue = '';
       let lastScannedAt = 0;
+      let scanQueue = Promise.resolve();
       const typeLabels = {borrow: '借用', return: '归还', issue: '领用', transfer: '调拨', repair: '维修', damage: '报损', sale: '出售', return_to_vendor: '退货给供应商', scrap: '报废'};
       const targetWarehouse = document.getElementById('target_warehouse');
       const targetLocation = document.getElementById('target_location');
@@ -261,7 +262,6 @@
             scanMessage.textContent = added
               ? `已加入待修正：${result.item.name}。${result.message}`
               : `${result.item.name} 已在清单中。${result.message}`;
-            queryInput.value = '';
             return {state, item: result.item, message};
           }
           if (!response.ok || !result.ok) throw new Error(result.message || '扫码内容无法加入。');
@@ -269,12 +269,19 @@
           const state = added ? 'added' : 'existing';
           const message = added ? '已加入待处理清单' : '已在待处理清单中';
           scanMessage.textContent = added ? `已加入：${result.item.name}` : `${result.item.name} 已在清单中`;
-          queryInput.value = '';
           return {state, item: result.item, message};
         } catch (error) {
           if (!quietFailure) scanMessage.textContent = error.message;
           return {state: 'error', message: error.message};
         }
+      }
+
+      function enqueueScan(value, quietFailure = false) {
+        const captured = String(value || '').trim();
+        if (!captured) return Promise.resolve({state: 'error', message: '请输入扫码内容。'});
+        const task = scanQueue.then(() => scanAndAdd(captured, quietFailure));
+        scanQueue = task.catch(() => null);
+        return task;
       }
 
       function stopScan(showSummary = false) {
@@ -308,7 +315,7 @@
               if (value === lastScannedValue && now - lastScannedAt <= 1500) return;
               lastScannedValue = value;
               lastScannedAt = now;
-              const outcome = await scanAndAdd(value);
+              const outcome = await enqueueScan(value);
               scanResults.record(value, outcome);
               if (outcome.state === 'added') await WarehouseScanner.feedback();
               cameraStatus.textContent = outcome.state === 'added'
@@ -333,10 +340,26 @@
       });
       type.addEventListener('change', refresh);
       queryInput.addEventListener('keydown', async (event) => {
-        if (event.key !== 'Enter') return;
+        if (event.key !== 'Enter' && event.key !== 'Tab') return;
+        if (event.key === 'Tab' && !queryInput.value.trim()) return;
         event.preventDefault();
-        const exactMatch = await scanAndAdd(queryInput.value, true);
-        if (exactMatch.state === 'error') searchForm.requestSubmit(document.getElementById('item-search'));
+        const scannedValue = queryInput.value;
+        queryInput.value = '';
+        const hidScanAt = Number(queryInput.dataset.hidScanAt || 0);
+        if (hidScanAt && Date.now() - hidScanAt < 500) queryInput.blur();
+        const exactMatch = await enqueueScan(scannedValue, true);
+        if (exactMatch.state === 'added') await WarehouseScanner.feedback();
+        if (exactMatch.state === 'error') {
+          queryInput.value = scannedValue;
+          searchForm.requestSubmit(document.getElementById('item-search'));
+        }
+      });
+      queryInput.addEventListener('warehouse:hid-scan', async (event) => {
+        const scannedValue = String(event.detail?.value || '').trim();
+        queryInput.value = '';
+        queryInput.blur();
+        const outcome = await enqueueScan(scannedValue);
+        if (outcome.state === 'added') await WarehouseScanner.feedback();
       });
       document.getElementById('scan-start').addEventListener('click', () => startScan(true));
       document.getElementById('scan-stop').addEventListener('click', () => stopScan(true));

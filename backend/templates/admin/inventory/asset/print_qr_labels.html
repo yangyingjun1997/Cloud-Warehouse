@@ -3,28 +3,114 @@
 {% block extrastyle %}
   {{ block.super }}
   <style>
-    .label-toolbar { display: flex; gap: 10px; margin: 0 0 18px; }
-    .labels { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-    .asset-label { display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: center; min-height: 112px; padding: 10px; border: 1px solid #2f3e46; border-radius: 2px; background: #fff; color: #111; break-inside: avoid; }
-    .asset-label img { width: 88px; height: 88px; image-rendering: pixelated; }
-    .asset-label strong, .asset-label span { display: block; overflow-wrap: anywhere; }
-    .asset-label strong { font-size: 14px; line-height: 1.35; }
-    .asset-label span { margin-top: 5px; color: #333; font-size: 11px; line-height: 1.4; }
-    .asset-label .code { font-family: ui-monospace, Consolas, monospace; font-weight: 700; }
-    @media print { #header, .breadcrumbs, .label-toolbar, #footer { display: none; } #content { padding: 0; } .labels { grid-template-columns: repeat(2, 1fr); gap: 5mm; } .asset-label { min-height: 34mm; padding: 3mm; border-color: #000; } }
+    /* 版式按需求固定：LOGO 左上，二维码右上，下方两行编码信息。
+       尺寸默认按 60mm × 40mm 标签，仓管可在浏览器的打印预览里缩放。 */
+    .label-toolbar { display: flex; gap: 10px; align-items: center; margin: 0 0 18px; flex-wrap: wrap; }
+    .label-toolbar .hint { color: #666; font-size: 12px; }
+
+    .labels { display: grid; grid-template-columns: repeat(auto-fill, minmax(60mm, 1fr)); gap: 8px; }
+
+    .asset-label {
+      width: 60mm; height: 40mm; box-sizing: border-box;
+      padding: 2.5mm; border: 1px solid #999; border-radius: 1mm;
+      background: #fff; color: #000; overflow: hidden;
+      display: flex; flex-direction: column;
+      break-inside: avoid; page-break-inside: avoid;
+    }
+    /* 上半部：左 LOGO、右二维码 */
+    .asset-label .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 2mm; }
+    .asset-label .logo {
+      font-size: 13pt; font-weight: 800; letter-spacing: 0.5mm;
+      line-height: 1.1; color: #111;
+    }
+    .asset-label .logo small { display: block; font-size: 6pt; font-weight: 500; letter-spacing: 0; color: #555; }
+    .asset-label .qr { width: 20mm; height: 20mm; flex: 0 0 auto; }
+    .asset-label .qr img { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+
+    /* 下半部：编码信息 */
+    .asset-label .body { margin-top: auto; }
+    .asset-label .row { font-size: 7.5pt; line-height: 1.45; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .asset-label .row .k { color: #555; }
+    .asset-label .row .v { font-family: ui-monospace, Consolas, monospace; font-weight: 700; }
+    .asset-label .code-main { font-size: 9pt; }
+    .asset-label .pending .v { color: #a35200; }
+
+    @media print {
+      @page { margin: 0; }
+      #header, .breadcrumbs, .label-toolbar, #footer, .messagelist { display: none !important; }
+      #content { padding: 0 !important; }
+      .labels { grid-template-columns: repeat(2, 60mm); gap: 3mm; }
+      .asset-label { border-color: #000; }
+    }
   </style>
 {% endblock %}
 
 {% block content %}
   <div id="content-main">
-    <div class="label-toolbar"><button class="default" type="button" onclick="window.print()">打印二维码标签</button><a class="button" href="{% url 'admin:inventory_asset_changelist' %}">返回资产列表</a></div>
-    <div class="labels">
+    <div class="label-toolbar">
+      <button class="default" type="button" onclick="window.print()">直接打印（浏览器）</button>
+      <button class="button" type="button" id="send-to-printer">发送到贴纸打印机</button>
+      <span class="hint">共 {{ labels|length }} 张 · 尺寸 60mm × 40mm</span>
+    </div>
+
+    <div class="labels" id="label-sheet">
       {% for label in labels %}
-        <section class="asset-label">
-          <img src="data:image/png;base64,{{ label.qr_image }}" alt="{{ label.asset.system_asset_no }} 二维码">
-          <div><strong>{{ label.asset.name }}</strong><span class="code">仓库系统编号：{{ label.asset.system_asset_no }}</span>{% if label.asset.asset_code %}<span>公司 ERP 资产编码：{{ label.asset.asset_code }}</span>{% endif %}<span>物品类型：{{ label.asset.item_type.name }}</span><span>本系统二维码：{{ label.asset.qr_value }}</span>{% if label.asset.serial_number %}<span>生产厂家 SN：{{ label.asset.serial_number }}</span>{% endif %}</div>
+        <section class="asset-label" data-asset-id="{{ label.asset_id }}">
+          <div class="head">
+            <div class="logo">{{ label.logo_text }}<small>资产标签</small></div>
+            <div class="qr"><img src="data:image/png;base64,{{ label.qr_image }}" alt="{{ label.primary_code }} 二维码"></div>
+          </div>
+          <div class="body">
+            <div class="row code-main {% if label.pending_code %}pending{% endif %}">
+              <span class="k">资产编码：</span><span class="v">{{ label.primary_code }}</span>
+            </div>
+            <div class="row">
+              <span class="k">厂家SN：</span><span class="v">{{ label.manufacture_sn|default:"—" }}</span>
+            </div>
+          </div>
         </section>
+      {% empty %}
+        <p>没有可打印的标签。</p>
       {% endfor %}
     </div>
   </div>
+
+  <script>
+    (function () {
+      const button = document.getElementById('send-to-printer');
+      if (!button) return;
+      const assetIds = Array.from(document.querySelectorAll('.asset-label'))
+        .map(function (node) { return node.dataset.assetId; })
+        .filter(Boolean);
+
+      button.addEventListener('click', function () {
+        button.disabled = true;
+        button.textContent = '正在提交…';
+        fetch('{% url "label-job-create" %}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}',
+          },
+          body: JSON.stringify({ asset_ids: assetIds }),
+        })
+          .then(function (response) { return response.json().then(function (body) { return { ok: response.ok, body: body }; }); })
+          .then(function (result) {
+            if (!result.ok) {
+              alert(result.body.detail || '提交失败。');
+              button.disabled = false;
+              button.textContent = '发送到贴纸打印机';
+              return;
+            }
+            alert('已提交打印作业：' + result.body.asset_count + ' 张，打印机会自动取走。');
+            button.textContent = '已提交';
+          })
+          .catch(function () {
+            alert('网络异常，提交失败。');
+            button.disabled = false;
+            button.textContent = '发送到贴纸打印机';
+          });
+      });
+    })();
+  </script>
 {% endblock %}

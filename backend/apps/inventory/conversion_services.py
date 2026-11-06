@@ -31,7 +31,7 @@ def _serial_numbers(value: str, quantity: int) -> list[str]:
 def convert_stock_to_assets(*, actor, stock_item_id, quantity: int, serial_numbers='', note=''):
     if quantity <= 0:
         raise InventoryConversionError('转换数量必须大于 0。')
-    stock_item = StockItem.objects.select_for_update().select_related(
+    stock_item = StockItem.objects.select_for_update(of=('self',)).select_related(
         'item_type', 'warehouse', 'location'
     ).filter(pk=stock_item_id).first()
     if not stock_item:
@@ -91,7 +91,7 @@ def convert_assets_to_stock(*, actor, asset_ids, target_stock_item_id=None, note
     if not normalized_ids:
         raise InventoryConversionError('请至少选择一件在库资产。')
     try:
-        assets = list(Asset.objects.select_for_update().select_related(
+        assets = list(Asset.objects.select_for_update(of=('self',)).select_related(
             'item_type', 'warehouse', 'location'
         ).filter(pk__in=normalized_ids).order_by('asset_code'))
     except (ValidationError, ValueError):

@@ -9,10 +9,6 @@
   -> Nginx :80（内网入口、静态文件、上传文件）
   -> Gunicorn 127.0.0.1:8000（运行 Django）
   -> PostgreSQL 127.0.0.1:5432（保存业务数据）
-
-Cloudflare Quick Tunnel（可选）
-  -> 主动连接 Cloudflare
-  -> 转发到 Nginx 127.0.0.1:80
 ```
 
 - Nginx 不处理业务规则，只负责入口、文件和反向代理。
@@ -21,6 +17,25 @@ Cloudflare Quick Tunnel（可选）
 - PostgreSQL 保存结构化业务数据。
 - `/srv/after-sales-warehouse/media` 保存照片和附件。
 - systemd 负责开机启动、失败重启和定时任务。
+
+### 当前生产环境实际部署信息（2026-11-04）
+
+| 项目 | 值 |
+| --- | --- |
+| 主机名 | `robot` |
+| 系统 | Ubuntu 22.04.5 LTS |
+| WiFi 网卡 | `wlp89s0` → `192.168.23.41/22`（**DHCP，地址会变**） |
+| 有线 1 | `enp87s0` → `192.168.25.119/23` |
+| 有线 2 | `enp88s0` → `192.168.123.101/24` |
+| 默认路由 | `192.168.20.1`（走 WiFi） |
+| 程序目录 | `/opt/after-sales-warehouse/{backend,venv,releases}` |
+| 数据目录 | `/srv/after-sales-warehouse/{backups,media,static}` |
+| 运行账号 | `warehouse` |
+| 访问入口 | 纯内网，三个 IP 均可；**无公网入口、无隧道** |
+| 地址自动登记 | `/usr/local/bin/auto-register-host.sh` + cron 每 2 分钟 |
+
+> WiFi 是 DHCP，网段切换后 IP 会变。已部署自动登记脚本，
+> 详见第十六节「DHCP 环境下的自动登记」。
 
 ## 二、部署前准备
 
@@ -438,26 +453,81 @@ sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
 
 站内通知始终保留；个人通知失败时会回退群机器人，不会影响业务事务提交。
 
-## 十六、启用 Cloudflare 临时 HTTPS
+## 十六、登记访问入口（IP 或域名）
 
-该步骤可选，只用于零成本远程测试：
-
-```bash
-sudo bash deploy/ubuntu22/enable-quick-tunnel.sh
-sudo systemctl status after-sales-warehouse-quick-tunnel --no-pager
-sudo /usr/local/sbin/after-sales-warehouse-quick-tunnel-url
-```
-
-服务器上的 `cloudflared` 主动建立出站连接，外部手机不需要安装任何客户端。临时域名变化不会影响 PostgreSQL 或媒体数据。
-
-配置地址变化通知：
+服务器默认监听全部网卡的 80 端口，Django 只接受 `ALLOWED_HOSTS` 白名单里的主机名。
+增加一个访问入口（新的 IP 或域名）用统一脚本登记：
 
 ```bash
-sudo /usr/local/sbin/configure-after-sales-warehouse-dingtalk
-sudo /usr/local/sbin/after-sales-warehouse-quick-tunnel-dingtalk-test
+# 添加
+sudo bash deploy/ubuntu22/register-host.sh wms.bwt.local
+
+# 移除
+sudo bash deploy/ubuntu22/register-host.sh wms.bwt.local --remove
 ```
 
-业务机器人与 Tunnel 地址机器人可以使用不同 Webhook，避免业务消息和运维消息混在一起。
+脚本会一次性完成三件事：
+
+1. 写入 `.env` 的 `ALLOWED_HOSTS`（否则 Django 返回 400）
+2. 写入 `CSRF_TRUSTED_ORIGINS`（否则网页表单提交失败）
+3. 更新 nginx 的 `server_name`，然后重载 nginx 并重启应用
+
+IP 和域名都支持，带不带 `http://` 都行：
+
+```bash
+sudo bash deploy/ubuntu22/register-host.sh 192.168.23.41
+sudo bash deploy/ubuntu22/register-host.sh https://wms.bwt.local
+```
+
+**域名的前提是 DNS 能解析到本机**，脚本不改 DNS：
+
+```bash
+getent hosts wms.bwt.local    # 有输出才算配好
+```
+
+### DHCP 环境下的自动登记
+
+如果服务器 WiFi 网卡走 DHCP（`nmcli` 的 `ipv4.method` 为 `auto`），**IP 会在租约变化或换网段时改变**，变了不登记就会返回 400。
+
+用 `auto-register-host.sh` 自动跟上：
+
+```bash
+# 预览会改什么
+sudo bash deploy/ubuntu22/auto-register-host.sh --dry-run
+
+# 正式执行
+sudo bash deploy/ubuntu22/auto-register-host.sh
+```
+
+脚本行为：
+
+1. 采集本机所有内网 IPv4，**排除** `lo`、`utun`（VPN）、`docker0`、`br-*`、`veth*`
+2. 把新地址写进 `ALLOWED_HOSTS`、`CSRF_TRUSTED_ORIGINS`、nginx `server_name`
+3. 只有真的发生变更才重启应用和重载 nginx
+
+配合 cron 每 2 分钟检查一次：
+
+```bash
+( crontab -l 2>/dev/null | grep -v auto-register-host.sh; \
+  echo "*/2 * * * * /usr/local/bin/auto-register-host.sh >/dev/null 2>&1" ) | crontab -
+```
+
+> **注意**：不要用 systemd timer 配这个脚本。若 service 加了 `RemainAfterExit=yes`，
+> unit 会长期停在 `active`，timer 到点触发时被判定为空操作而永不执行。
+> 如果一定要用 timer，service 里必须去掉 `RemainAfterExit=yes`。
+
+### 关于内网穿透
+
+按公司网络安全规定，**本项目不使用任何内网穿透方案**。
+ZeroTier、Tailscale、Cloudflare Tunnel、frp 等一律不部署。
+
+跨网段访问不通时，正确做法是让网络管理员开通内网路由，而不是打隧道。
+如需固定 HTTPS，应由网络管理员签发证书并在 nginx 配置 TLS，不使用第三方隧道服务。
+
+> **2026-11-04 实测记录**：曾按临时需求试用 Cloudflare Quick Tunnel，结论是不可用 ——
+> 公司 DNS 拦截 `*.trycloudflare.com` 子域；绕过 DNS 直连 Cloudflare IP（`curl --resolve`）
+> 同样 25 秒超时，说明整个 Cloudflare IP 段被封。隧道方案已彻底移除，
+> 系统恢复纯内网运行，`cloudflared` 进程数为 0。
 
 ## 十七、防火墙和安全边界
 
@@ -470,7 +540,7 @@ sudo ufw enable
 sudo ufw status verbose
 ```
 
-不要开放 `5432` 和 `8000`。Quick Tunnel 不需要在路由器上做端口映射。
+不要开放 `5432` 和 `8000`，只在公司网段内开放 80。
 
 正式固定 HTTPS 上线前再设置 `USE_HTTPS=1`。HSTS 初始保持 0，证书和域名稳定后才能启用，避免客户端永久记住错误 HTTPS 地址。
 
@@ -563,9 +633,9 @@ sudo /usr/local/sbin/after-sales-warehouse-health
 sudo journalctl -u after-sales-warehouse-health.service -n 100 --no-pager
 ```
 
-健康脚本每五分钟检查服务、监听端口、PostgreSQL、本机 HTTP、磁盘、内存以及已启用的 Tunnel 公网健康页。状态从正常变为故障时通知一次，恢复时再通知一次。备份失败也使用同一个运维钉钉发送器；配置读取 `/etc/after-sales-warehouse/quick-tunnel-dingtalk.env`，密钥不进入发布包。
+健康脚本每五分钟检查服务、监听端口、PostgreSQL、本机 HTTP、磁盘和内存。状态从正常变为故障时通知一次，恢复时再通知一次。备份失败也使用同一个运维钉钉发送器；钉钉配置直接读取 `/opt/after-sales-warehouse/backend/.env` 里的 `DINGTALK_WEBHOOK` / `DINGTALK_SECRET`，密钥不进入发布包。
 
-Nginx 使用独立的 `after-sales-warehouse.access.log` 和 `after-sales-warehouse.error.log`，由 Ubuntu 自带的 Nginx logrotate 规则轮转。Gunicorn 和 Tunnel 输出到 journald，安装脚本将系统日志总量限制为 1 GB、最长保留 14 天。临时文件通过 systemd-tmpfiles 清理。
+Nginx 使用独立的 `after-sales-warehouse.access.log` 和 `after-sales-warehouse.error.log`，由 Ubuntu 自带的 Nginx logrotate 规则轮转。Gunicorn 输出到 journald，安装脚本将系统日志总量限制为 1 GB、最长保留 14 天。临时文件通过 systemd-tmpfiles 清理。
 
 ## 二十二、常见故障定位
 
@@ -606,14 +676,22 @@ sudo -u postgres psql -d warehouse -c 'SELECT 1;'
 sudo journalctl -u after-sales-warehouse -n 100 --no-pager
 ```
 
-### Tunnel 可访问但登录后异常
+### 域名可访问但登录后异常
 
 ```bash
 grep '^CSRF_TRUSTED_ORIGINS=' /opt/after-sales-warehouse/backend/.env
-sudo journalctl -u after-sales-warehouse-quick-tunnel -n 100 --no-pager
+grep '^ALLOWED_HOSTS=' /opt/after-sales-warehouse/backend/.env
 ```
 
-Quick Tunnel 脚本应自动加入 `https://*.trycloudflare.com` 信任来源，并把转发 Host 固定为 `127.0.0.1`。
+两个配置都必须包含该域名。用 `register-host.sh` 登记可以避免漏改其中一项：
+
+```bash
+sudo bash deploy/ubuntu22/register-host.sh wms.bwt.local
+```
+
+### 域名访问返回 400 Bad Request
+
+说明域名没进 `ALLOWED_HOSTS`，执行上面的 `register-host.sh` 即可。
 
 ## 二十三、一键脚本与手工步骤的对应关系
 

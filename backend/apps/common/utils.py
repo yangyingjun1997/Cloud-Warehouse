@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import datetime
 from uuid import uuid4
 
 from django.db import IntegrityError, transaction
@@ -44,31 +44,7 @@ def build_daily_code(prefix: str, sequence_date=None) -> str:
 
 @transaction.atomic
 def build_asset_no() -> str:
-    """Allocate the immutable warehouse asset number (AST-000001...).
+    """分配永久且与业务日期无关的 8 位系统资产编号。"""
+    from apps.inventory.code_services import allocate_system_asset_code
 
-    The sequence is stored in the existing locked DailySequence table. A fixed
-    sequence date keeps the number independent from the business date while
-    preserving the table's unique/concurrency guarantees.
-    """
-    from .models import DailySequence
-
-    sequence_date = date(1900, 1, 1)
-    sequence = DailySequence.objects.select_for_update().filter(
-        prefix='AST', sequence_date=sequence_date,
-    ).first()
-    if sequence is None:
-        try:
-            with transaction.atomic():
-                sequence = DailySequence.objects.create(
-                    prefix='AST', sequence_date=sequence_date, last_number=1,
-                )
-        except IntegrityError:
-            sequence = DailySequence.objects.select_for_update().get(
-                prefix='AST', sequence_date=sequence_date,
-            )
-            sequence.last_number += 1
-            sequence.save(update_fields=['last_number', 'updated_at'])
-    else:
-        sequence.last_number += 1
-        sequence.save(update_fields=['last_number', 'updated_at'])
-    return f'AST-{sequence.last_number:06d}'
+    return allocate_system_asset_code()

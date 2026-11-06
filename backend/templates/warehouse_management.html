@@ -4,55 +4,71 @@
 {% block crumb %}仓库管理{% endblock %}
 
 {% block content %}
+  <div class="management-page">
   <div class="page-heading management-heading">
-    <div><h1>仓库管理</h1><p class="page-copy">集中查看单件资产和耗材配件，库存变化通过申请、出入库或受控转换记录。</p></div>
+    <div><h1>仓库管理</h1></div>
   </div>
 
-  <nav class="management-toolbar" aria-label="仓库管理工具">
-    <a class="primary-tool" href="{% url 'warehouse_item_create' %}"><strong>新增物品</strong><span>录入资产或耗材配件</span></a>
-    <a href="{% url 'quick_inventory_process' %}"><strong>直接办理出入库</strong><span>仓库代办并立即记账</span></a>
-    <a href="{% url 'inventory_check_list' %}"><strong>库存盘点</strong><span>扫码核对和差异修正</span></a>
-    <a href="{% url 'inventory_conversion' %}"><strong>管理方式转换</strong><span>资产与耗材配件受控转换</span></a>
-    {% if user_is_system_admin %}<a href="{% url 'inventory_import' %}"><strong>Excel 导入</strong><span>增量或全量基准导入</span></a>{% endif %}
-    {% if user_is_system_admin %}<a href="{% url 'warehouse_setup' 'warehouses' %}"><strong>仓库与库位</strong><span>维护存放位置</span></a><a href="{% url 'warehouse_setup' 'item-types' %}"><strong>物品类型</strong><span>维护类型和库存提醒值</span></a>{% endif %}
-    {% if user_is_system_admin %}<a href="{% url 'warehouse_setup' 'projects' %}"><strong>业务基础资料</strong><span>项目、工单、客户和供应商</span></a>{% endif %}
-    {% if user_can_manage_inventory %}<a href="{% url 'replenishment_suggestions' %}"><strong>补货建议</strong><span>按安全库存生成清单</span></a><a href="{% url 'purchase_draft_list' %}"><strong>采购草稿</strong><span>核对需要采购的物品</span></a>{% endif %}
-  </nav>
+  {# 工具入口与概览默认收起：台账才是本页主体，先把屏幕让给数据。 #}
+  <details class="management-more">
+    <summary>工具入口与概览</summary>
+    <nav class="management-toolbar" aria-label="仓库管理工具">
+      <a class="primary-tool" href="{% url 'warehouse_item_create' %}"><strong>新增物品</strong><span>录入资产或耗材配件</span></a>
+      <a href="{% url 'quick_inventory_process' %}"><strong>直接办理出入库</strong><span>仓库代办并立即记账</span></a>
+      <a href="{% url 'inventory_check_list' %}"><strong>库存盘点</strong><span>扫码核对和差异修正</span></a>
+      <a href="{% url 'inventory_conversion' %}"><strong>管理方式转换</strong><span>资产与耗材配件受控转换</span></a>
+      {% if user_is_system_admin %}<a href="{% url 'inventory_import' %}"><strong>Excel 导入</strong><span>增量或全量基准导入</span></a>{% endif %}
+      {% if user_is_system_admin %}{% if global_can_print_asset_labels %}<a href="{% url 'warehouse_qr_labels' %}"><strong>标签打印队列</strong><span>查看作业、重试或取消</span></a>{% endif %}<a href="{% url 'warehouse_setup' 'warehouses' %}"><strong>仓库与库位</strong><span>维护存放位置</span></a><a href="{% url 'warehouse_setup' 'item-types' %}"><strong>物品类型</strong><span>维护类型和库存提醒值</span></a>{% endif %}
+      {% if user_is_system_admin %}<a href="{% url 'warehouse_setup' 'projects' %}"><strong>业务基础资料</strong><span>项目、工单、客户和供应商</span></a>{% endif %}
+      {% if user_can_manage_inventory %}<a href="{% url 'replenishment_suggestions' %}"><strong>补货建议</strong><span>按安全库存生成清单</span></a><a href="{% url 'purchase_draft_list' %}"><strong>采购草稿</strong><span>核对需要采购的物品</span></a>{% endif %}
+    </nav>
+    <section class="metric-grid management-metrics" aria-label="仓库管理概览">
+      <a class="metric metric-link" href="?tab=assets"><div class="metric-label">当前筛选资产</div><div class="metric-value">{{ asset_count }}</div><div class="metric-note">逐件编号并独立追溯</div></a>
+      <a class="metric metric-link" href="?tab=stock"><div class="metric-label">当前筛选耗材配件</div><div class="metric-value">{{ stock_item_count }}</div><div class="metric-note">按数量管理的耗材与配件</div></a>
+      <a class="metric metric-link warning-metric" href="{% if user_can_manage_inventory %}{% url 'replenishment_suggestions' %}{% else %}{% url 'low_stock_alerts' %}{% endif %}"><div class="metric-label">需要补货</div><div class="metric-value">{{ low_stock_count }}</div><div class="metric-note">打开缺口{% if user_can_manage_inventory %}和补货建议{% endif %}</div></a>
+      <a class="metric metric-link" href="{% url 'inventory_check_list' %}"><div class="metric-label">库存盘点</div><div class="metric-value">盘</div><div class="metric-note">创建或继续盘点任务</div></a>
+    </section>
+  </details>
 
-  <section class="metric-grid management-metrics" aria-label="仓库管理概览">
-    <a class="metric metric-link" href="?tab=assets"><div class="metric-label">当前筛选资产</div><div class="metric-value">{{ asset_count }}</div><div class="metric-note">逐件编号并独立追溯</div></a>
-    <a class="metric metric-link" href="?tab=stock"><div class="metric-label">当前筛选耗材配件</div><div class="metric-value">{{ stock_item_count }}</div><div class="metric-note">按数量管理的耗材与配件</div></a>
-    <a class="metric metric-link warning-metric" href="{% if user_can_manage_inventory %}{% url 'replenishment_suggestions' %}{% else %}{% url 'low_stock_alerts' %}{% endif %}"><div class="metric-label">需要补货</div><div class="metric-value">{{ low_stock_count }}</div><div class="metric-note">打开缺口{% if user_can_manage_inventory %}和补货建议{% endif %}</div></a>
-    <a class="metric metric-link" href="{% url 'inventory_check_list' %}"><div class="metric-label">库存盘点</div><div class="metric-value">盘</div><div class="metric-note">创建或继续盘点任务</div></a>
-  </section>
-
-  <section class="panel management-filter">
-    <form method="get" class="management-filter-form">
-      <input type="hidden" name="tab" value="{{ active_tab }}">
-      <div class="form-field"><label for="management-query">检索</label><input id="management-query" name="q" value="{{ query }}" placeholder="编码、SN、中文名、别名或物料名称"></div>
-      <div class="form-field"><label for="management-status">综合状态</label><select id="management-status" name="status"><option value="">全部状态</option>{% for value, label in status_choices %}<option value="{{ value }}" {% if value in selected_statuses %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-      <div class="form-field"><label for="management-location-state">实物位置</label><select id="management-location-state" name="location_state"><option value="">全部位置</option>{% for value, label in location_state_choices %}<option value="{{ value }}" {% if selected_location_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-      <div class="form-field"><label for="management-availability-state">可用性</label><select id="management-availability-state" name="availability_state"><option value="">全部可用性</option>{% for value, label in availability_state_choices %}<option value="{{ value }}" {% if selected_availability_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-      <div class="form-field"><label for="management-quality-state">质量状态</label><select id="management-quality-state" name="quality_state"><option value="">全部质量</option>{% for value, label in quality_state_choices %}<option value="{{ value }}" {% if selected_quality_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-      <div class="form-field"><label for="management-disposition-state">处置状态</label><select id="management-disposition-state" name="disposition_state"><option value="">全部处置</option>{% for value, label in disposition_state_choices %}<option value="{{ value }}" {% if selected_disposition_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-      <div class="form-field"><label for="management-warehouse">仓库</label><select id="management-warehouse" name="warehouse"><option value="">全部仓库</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}" {% if selected_warehouse == warehouse.id|stringformat:'s' %}selected{% endif %}>{{ warehouse.name }}</option>{% endfor %}</select></div>
-      <div class="form-field"><label for="management-item-type">物品类型</label><select id="management-item-type" name="item_type"><option value="">全部类型</option>{% for item_type in item_types %}<option value="{{ item_type.id }}" {% if selected_item_type == item_type.id|stringformat:'s' %}selected{% endif %}>{{ item_type.name }}</option>{% endfor %}</select></div>
-      <div class="form-field"><label for="management-page-size">每页</label><select id="management-page-size" name="page_size"><option value="50" {% if page_size == 50 %}selected{% endif %}>50 条</option><option value="100" {% if page_size == 100 %}selected{% endif %}>100 条</option><option value="200" {% if page_size == 200 %}selected{% endif %}>200 条</option></select></div>
-      <button class="button button-secondary" type="submit">筛选</button>
-    </form>
-  </section>
+  {# 检索框常驻一行，其余筛选条件收进下拉面板，点开才占版面。 #}
+  <form method="get" class="management-bar">
+    <input type="hidden" name="tab" value="{{ active_tab }}">
+    <input type="hidden" name="page_size" value="{{ page_size }}">
+    <input id="management-query" name="q" class="management-search" value="{{ query }}" placeholder="搜索编码、SN、名称或别名" aria-label="搜索">
+    <button class="button button-primary" type="submit">搜索</button>
+    <details class="management-advanced" {% if advanced_active %}open{% endif %}>
+      <summary>更多筛选{% if advanced_count %}<span class="filter-badge">{{ advanced_count }}</span>{% endif %}</summary>
+      <div class="management-advanced-body">
+        <div class="form-field"><label for="management-status">综合状态</label><select id="management-status" name="status"><option value="">全部状态</option>{% for value, label in status_choices %}<option value="{{ value }}" {% if value in selected_statuses %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+        <div class="form-field"><label for="management-location-state">实物位置</label><select id="management-location-state" name="location_state"><option value="">全部位置</option>{% for value, label in location_state_choices %}<option value="{{ value }}" {% if selected_location_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+        <div class="form-field"><label for="management-availability-state">可用性</label><select id="management-availability-state" name="availability_state"><option value="">全部可用性</option>{% for value, label in availability_state_choices %}<option value="{{ value }}" {% if selected_availability_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+        <div class="form-field"><label for="management-quality-state">质量状态</label><select id="management-quality-state" name="quality_state"><option value="">全部质量</option>{% for value, label in quality_state_choices %}<option value="{{ value }}" {% if selected_quality_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+        <div class="form-field"><label for="management-disposition-state">处置状态</label><select id="management-disposition-state" name="disposition_state"><option value="">全部处置</option>{% for value, label in disposition_state_choices %}<option value="{{ value }}" {% if selected_disposition_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+        <div class="form-field"><label for="management-warehouse">仓库</label><select id="management-warehouse" name="warehouse"><option value="">全部仓库</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}" {% if selected_warehouse == warehouse.id|stringformat:'s' %}selected{% endif %}>{{ warehouse.name }}</option>{% endfor %}</select></div>
+        <div class="form-field"><label for="management-location">库位</label><select id="management-location" name="location"><option value="">全部库位</option>{% for location in locations %}<option value="{{ location.id }}" data-warehouse="{{ location.warehouse_id }}" {% if selected_location == location.id|stringformat:'s' %}selected{% endif %}>{{ location.warehouse.name }} / {{ location.code }} {{ location.name }}</option>{% endfor %}</select></div>
+        <div class="form-field"><label for="management-item-type">物品类型</label><select id="management-item-type" name="item_type"><option value="">全部类型</option>{% for item_type in item_types %}<option value="{{ item_type.id }}" {% if selected_item_type == item_type.id|stringformat:'s' %}selected{% endif %}>{{ item_type.name }}</option>{% endfor %}</select></div>
+        <div class="form-field"><label for="management-page-size-filter">每页</label><select id="management-page-size-filter" name="page_size"><option value="50" {% if page_size == 50 %}selected{% endif %}>50 条</option><option value="100" {% if page_size == 100 %}selected{% endif %}>100 条</option><option value="200" {% if page_size == 200 %}selected{% endif %}>200 条</option></select></div>
+        <div class="management-advanced-actions">
+          <button class="button button-secondary" type="submit">应用筛选</button>
+          <a class="button button-secondary" href="?tab={{ active_tab }}">清空条件</a>
+        </div>
+      </div>
+    </details>
+  </form>
 
   <div class="management-tabs" role="tablist"><a class="management-tab {% if active_tab == 'assets' %}active{% endif %}" href="?{{ asset_filter_query }}">资产台账 <span>{{ asset_count }}</span></a><a class="management-tab {% if active_tab == 'stock' %}active{% endif %}" href="?{{ stock_filter_query }}">耗材配件 <span>{{ stock_item_count }}</span></a></div>
 
   {% if active_tab == 'assets' %}
-    <form method="post" action="{% url 'warehouse_qr_labels' %}" class="panel table-panel">{% csrf_token %}<div class="panel-head"><h2>资产台账</h2><span>共 {{ asset_count }} 条，第 {{ assets.number }} / {{ assets.paginator.num_pages }} 页</span><button class="button button-secondary" type="submit">打印所选二维码</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th><input type="checkbox" aria-label="全选" onclick="document.querySelectorAll('.asset-selector').forEach(item => item.checked = this.checked)"></th><th>仓库系统编号</th><th>公司 ERP 编码</th><th>资产名称</th><th>生产厂家 SN</th><th>物品类型</th><th>状态</th><th>仓库 / 库位</th><th></th></tr></thead><tbody>{% for asset in assets %}<tr><td><input class="asset-selector" type="checkbox" name="asset_ids" value="{{ asset.id }}" aria-label="选择 {{ asset.name }}"></td><td class="code">{{ asset.system_asset_no }}</td><td class="code">{{ asset.asset_code|default:'-' }}</td><td><strong>{{ asset.name }}</strong>{% if asset.model %}<div class="queue-meta">{{ asset.manufacturer }} {{ asset.model }}</div>{% endif %}</td><td class="code">{{ asset.serial_number|default:'-' }}</td><td>{{ asset.item_type.name }}</td><td><span class="tag {{ asset.status }}">{{ asset.get_status_display }}</span><div class="queue-meta">{{ asset.get_location_state_display }} · {{ asset.get_availability_state_display }} · {{ asset.get_quality_state_display }}</div></td><td>{{ asset.warehouse.name|default:'未入库' }}{% if asset.location %}<div class="queue-meta">{{ asset.location.code }}</div>{% endif %}</td><td><a class="table-action" href="{% url 'warehouse_asset_edit' asset.id %}">查看 / 编辑</a></td></tr>{% empty %}<tr><td colspan="9"><div class="empty-state">没有匹配的资产</div></td></tr>{% endfor %}</tbody></table></div>{% if assets.paginator.num_pages > 1 %}<div class="form-actions"><a class="button button-secondary" {% if assets.has_previous %}href="?{{ asset_filter_query }}&amp;asset_page={{ assets.previous_page_number }}"{% else %}aria-disabled="true"{% endif %}>上一页</a><span>第 {{ assets.number }} / {{ assets.paginator.num_pages }} 页</span><a class="button button-secondary" {% if assets.has_next %}href="?{{ asset_filter_query }}&amp;asset_page={{ assets.next_page_number }}"{% else %}aria-disabled="true"{% endif %}>下一页</a></div>{% endif %}</form>
+    <form method="post" action="{% url 'warehouse_qr_labels' %}" class="panel table-panel management-table">{% csrf_token %}<div class="panel-head"><h2>资产台账</h2><span>共 {{ asset_count }} 条，第 {{ assets.number }} / {{ assets.paginator.num_pages }} 页{% if sort %} · 按{{ sort_label }}{{ dir|yesno:"升序,降序" }}<a class="sort-reset" href="?{{ asset_reset_sort_url }}">还原初始顺序</a>{% endif %}</span><div class="print-actions"><span class="print-count" data-print-count>已选 0 项</span><button class="button button-primary print-main" type="submit" name="preview" value="1" data-print-submit disabled><span class="print-main-icon">&#128424;</span> 打印预览</button></div></div><div class="table-scroll"><table class="data-table"><thead><tr><th><input id="asset-select-all" type="checkbox" aria-label="全选" onclick="document.querySelectorAll('.asset-selector').forEach(item => item.checked = this.checked)"></th><th><a class="sort-link{% if sort == 'code' %} active{% endif %}" href="?{{ asset_sort_links.code }}" title="点击切换升序 / 降序 / 还原">资产编码{% if sort == 'code' %}<span class="sort-arrow">{% if dir == 'desc' %}↓{% else %}↑{% endif %}</span>{% endif %}</a></th><th><a class="sort-link{% if sort == 'name' %} active{% endif %}" href="?{{ asset_sort_links.name }}" title="点击切换升序 / 降序 / 还原">资产名称{% if sort == 'name' %}<span class="sort-arrow">{% if dir == 'desc' %}↓{% else %}↑{% endif %}</span>{% endif %}</a></th><th><a class="sort-link{% if sort == 'sn' %} active{% endif %}" href="?{{ asset_sort_links.sn }}" title="点击切换升序 / 降序 / 还原">生产厂家 SN{% if sort == 'sn' %}<span class="sort-arrow">{% if dir == 'desc' %}↓{% else %}↑{% endif %}</span>{% endif %}</a></th><th><a class="sort-link{% if sort == 'item_type' %} active{% endif %}" href="?{{ asset_sort_links.item_type }}" title="点击切换升序 / 降序 / 还原">物品类型{% if sort == 'item_type' %}<span class="sort-arrow">{% if dir == 'desc' %}↓{% else %}↑{% endif %}</span>{% endif %}</a></th><th><a class="sort-link{% if sort == 'status' %} active{% endif %}" href="?{{ asset_sort_links.status }}" title="点击切换升序 / 降序 / 还原">状态{% if sort == 'status' %}<span class="sort-arrow">{% if dir == 'desc' %}↓{% else %}↑{% endif %}</span>{% endif %}</a></th><th><a class="sort-link{% if sort == 'warehouse' %} active{% endif %}" href="?{{ asset_sort_links.warehouse }}" title="点击切换升序 / 降序 / 还原">仓库 / 库位{% if sort == 'warehouse' %}<span class="sort-arrow">{% if dir == 'desc' %}↓{% else %}↑{% endif %}</span>{% endif %}</a></th><th class="code-col-muted"><a class="sort-link{% if sort == 'system' %} active{% endif %}" href="?{{ asset_sort_links.system }}" title="点击切换升序 / 降序 / 还原">系统编号{% if sort == 'system' %}<span class="sort-arrow">{% if dir == 'desc' %}↓{% else %}↑{% endif %}</span>{% endif %}</a></th><th></th></tr></thead><tbody>{% for asset in assets %}<tr class="row-clickable" data-row-href="{% url 'warehouse_asset_edit' asset.id %}?next={{ asset_return_query|urlencode }}" title="点击查看详情">
+      <td class="cell-select"><input class="asset-selector" type="checkbox" name="asset_ids" value="{{ asset.id }}" aria-label="选择 {{ asset.name }}"></td>
+      <td class="code">{% if asset.asset_code %}{{ asset.asset_code }}{% else %}<span class="tag pending">暂未赋码</span>{% endif %}</td><td><strong>{{ asset.name }}</strong>{% if asset.model %}<div class="queue-meta">{{ asset.manufacturer }} {{ asset.model }}</div>{% endif %}</td><td class="code">{{ asset.serial_number|default:'-' }}</td><td>{{ asset.item_type.name }}</td><td><span class="tag {{ asset.status }}">{{ asset.get_status_display }}</span><div class="queue-meta">{{ asset.get_location_state_display }} · {{ asset.get_availability_state_display }} · {{ asset.get_quality_state_display }}</div></td><td>{{ asset.warehouse.name|default:'未入库' }}{% if asset.location %}<div class="queue-meta">{{ asset.location.code }}</div>{% endif %}</td><td class="code code-col-muted">{{ asset.system_asset_no }}</td><td class="cell-action"><a class="table-action" href="{% url 'warehouse_asset_edit' asset.id %}?next={{ asset_return_query|urlencode }}">{% if user_is_system_admin %}查看 / 编辑{% else %}查看{% endif %}</a></td></tr>{% empty %}<tr><td colspan="9"><div class="empty-state">没有匹配的资产</div></td></tr>{% endfor %}</tbody></table></div>{% if assets.paginator.num_pages > 1 %}<div class="form-actions"><a class="button button-secondary" {% if assets.has_previous %}href="?{{ asset_filter_query }}&amp;asset_page={{ assets.previous_page_number }}"{% else %}aria-disabled="true"{% endif %}>上一页</a><span>第 {{ assets.number }} / {{ assets.paginator.num_pages }} 页</span><a class="button button-secondary" {% if assets.has_next %}href="?{{ asset_filter_query }}&amp;asset_page={{ assets.next_page_number }}"{% else %}aria-disabled="true"{% endif %}>下一页</a></div>{% endif %}</form>
   {% else %}
-    <section class="panel table-panel"><div class="panel-head"><h2>耗材配件</h2><span>共 {{ stock_item_count }} 条，第 {{ stock_items.number }} / {{ stock_items.paginator.num_pages }} 页</span></div><div class="table-scroll"><table class="data-table"><thead><tr><th>物料编码</th><th>物料名称</th><th>物品类型</th><th>当前库存</th><th>最低库存提醒值</th><th>仓库 / 库位</th><th></th></tr></thead><tbody>{% for stock_item in stock_items %}<tr><td class="code">{{ stock_item.code }}</td><td><strong>{{ stock_item.name }}</strong>{% if stock_item.supplier %}<div class="queue-meta">{{ stock_item.supplier }}</div>{% endif %}</td><td>{{ stock_item.item_type.name|default:'未分类' }}</td><td><span class="stock-quantity {% if stock_item.safety_stock and stock_item.quantity <= stock_item.safety_stock %}low{% endif %}">{{ stock_item.quantity }} {{ stock_item.unit }}</span></td><td>{{ stock_item.safety_stock }} {{ stock_item.unit }}</td><td>{{ stock_item.warehouse.name|default:'未入库' }}{% if stock_item.location %}<div class="queue-meta">{{ stock_item.location.code }}</div>{% endif %}</td><td><a class="table-action" href="{% url 'warehouse_stock_item_edit' stock_item.id %}">查看 / 编辑</a></td></tr>{% empty %}<tr><td colspan="7"><div class="empty-state">没有匹配的耗材配件</div></td></tr>{% endfor %}</tbody></table></div>{% if stock_items.paginator.num_pages > 1 %}<div class="form-actions"><a class="button button-secondary" {% if stock_items.has_previous %}href="?tab=stock&q={{ query|urlencode }}&warehouse={{ selected_warehouse }}&item_type={{ selected_item_type }}&page_size={{ page_size }}&stock_page={{ stock_items.previous_page_number }}"{% else %}aria-disabled="true"{% endif %}>上一页</a><span>第 {{ stock_items.number }} / {{ stock_items.paginator.num_pages }} 页</span><a class="button button-secondary" {% if stock_items.has_next %}href="?tab=stock&q={{ query|urlencode }}&warehouse={{ selected_warehouse }}&item_type={{ selected_item_type }}&page_size={{ page_size }}&stock_page={{ stock_items.next_page_number }}"{% else %}aria-disabled="true"{% endif %}>下一页</a></div>{% endif %}</section>
+    <section class="panel table-panel management-table"><div class="panel-head"><h2>耗材配件</h2><span>共 {{ stock_item_count }} 条，第 {{ stock_items.number }} / {{ stock_items.paginator.num_pages }} 页</span></div><div class="table-scroll"><table class="data-table"><thead><tr><th>物料编码</th><th>物料名称</th><th>物品类型</th><th>当前库存</th><th>最低库存提醒值</th><th>仓库 / 库位</th><th></th></tr></thead><tbody>{% for stock_item in stock_items %}<tr class="row-clickable" data-row-href="{% url 'warehouse_stock_item_edit' stock_item.id %}" title="点击查看详情"><td class="code">{{ stock_item.code }}</td><td><strong>{{ stock_item.name }}</strong>{% if stock_item.supplier %}<div class="queue-meta">{{ stock_item.supplier }}</div>{% endif %}</td><td>{{ stock_item.item_type.name|default:'未分类' }}</td><td><span class="stock-quantity {% if stock_item.safety_stock and stock_item.quantity <= stock_item.safety_stock %}low{% endif %}">{{ stock_item.quantity }} {{ stock_item.unit }}</span></td><td>{{ stock_item.safety_stock }} {{ stock_item.unit }}</td><td>{{ stock_item.warehouse.name|default:'未入库' }}{% if stock_item.location %}<div class="queue-meta">{{ stock_item.location.code }}</div>{% endif %}</td><td class="cell-action"><a class="table-action" href="{% url 'warehouse_stock_item_edit' stock_item.id %}">查看 / 编辑</a></td></tr>{% empty %}<tr><td colspan="7"><div class="empty-state">没有匹配的耗材配件</div></td></tr>{% endfor %}</tbody></table></div>{% if stock_items.paginator.num_pages > 1 %}<div class="form-actions"><a class="button button-secondary" {% if stock_items.has_previous %}href="?tab=stock&q={{ query|urlencode }}&warehouse={{ selected_warehouse }}&item_type={{ selected_item_type }}&page_size={{ page_size }}&stock_page={{ stock_items.previous_page_number }}"{% else %}aria-disabled="true"{% endif %}>上一页</a><span>第 {{ stock_items.number }} / {{ stock_items.paginator.num_pages }} 页</span><a class="button button-secondary" {% if stock_items.has_next %}href="?tab=stock&q={{ query|urlencode }}&warehouse={{ selected_warehouse }}&item_type={{ selected_item_type }}&page_size={{ page_size }}&stock_page={{ stock_items.next_page_number }}"{% else %}aria-disabled="true"{% endif %}>下一页</a></div>{% endif %}</section>
   {% endif %}
 
   <script>
     (() => {
-      const pageSizeSelect = document.getElementById('management-page-size');
+      const pageSizeSelect = document.getElementById('management-page-size-filter');
       if (!pageSizeSelect) return;
       // 切换每页条数时静默保存到用户偏好，下次进入本页自动沿用。
       pageSizeSelect.addEventListener('change', () => {
@@ -65,5 +81,107 @@
         }).catch(() => {});
       });
     })();
+
+    (() => {
+      const warehouse = document.getElementById('management-warehouse');
+      const location = document.getElementById('management-location');
+      if (!warehouse || !location) return;
+      const filterLocations = () => {
+        const selected = warehouse.value;
+        [...location.options].forEach((option, index) => {
+          if (index === 0) return;
+          option.hidden = Boolean(selected && option.dataset.warehouse !== selected);
+        });
+        if (location.selectedOptions[0]?.hidden) location.value = '';
+      };
+      warehouse.addEventListener('change', filterLocations);
+      filterLocations();
+    })();
+
+    // 表格高度按实际可用空间设定：从页面容器顶部到视口底部，
+    // 这样无论顶栏、标签栏高度如何变化，表格都能吃满剩余空间。
+    (() => {
+      const fitTable = () => {
+        const page = document.querySelector('.management-page');
+        if (!page) return;
+        const top = page.getBoundingClientRect().top + window.scrollY;
+        page.style.height = Math.max(320, window.innerHeight - top - 18) + 'px';
+      };
+      fitTable();
+      window.addEventListener('resize', fitTable);
+    })();
+
+    // ---------------------------------------------------------------
+    // 整行点击进入详情
+    // 点复选框、点表格内的链接/按钮时不跳转，否则勾选资产会误开详情页。
+    // ---------------------------------------------------------------
+    (() => {
+      const isInteractive = (node) => node.closest(
+        'input, a, button, select, textarea, label, .cell-select, .cell-action'
+      );
+
+      document.querySelectorAll('tr.row-clickable').forEach((row) => {
+        const href = row.dataset.rowHref;
+        if (!href) return;
+        row.addEventListener('click', (event) => {
+          // 有文字被选中时不跳转，避免用户拖选内容时误触发
+          if (window.getSelection().toString()) return;
+          if (isInteractive(event.target)) return;
+          window.location.href = href;
+        });
+        // 键盘可达：整行可聚焦，回车进入详情
+        row.tabIndex = 0;
+        row.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' && !isInteractive(event.target)) {
+            window.location.href = href;
+          }
+        });
+      });
+    })();
+
+    // ---------------------------------------------------------------
+    // 打印按钮的即时反馈
+    // 选中数量实时显示；没选任何资产时主按钮禁用，避免点了没反应的困惑。
+    // ---------------------------------------------------------------
+    (() => {
+      const countEl = document.querySelector('[data-print-count]');
+      const submitBtn = document.querySelector('[data-print-submit]');
+      const checkboxes = Array.from(document.querySelectorAll('.asset-selector'));
+      if (!checkboxes.length) return;
+
+      const sync = () => {
+        const n = checkboxes.filter((box) => box.checked).length;
+        if (countEl) {
+          countEl.textContent = n ? `已选 ${n} 项` : '勾选资产后可打印';
+          countEl.classList.toggle('is-empty', n === 0);
+        }
+        if (submitBtn) submitBtn.disabled = n === 0;
+      };
+
+      checkboxes.forEach((box) => box.addEventListener('change', sync));
+      // 表头全选也要同步
+      const selectAll = document.querySelector('#asset-select-all');
+      if (selectAll) selectAll.addEventListener('change', () => setTimeout(sync, 0));
+      sync();
+      window.addEventListener('pageshow', () => {
+        if (!submitBtn) return;
+        submitBtn.classList.remove('is-busy');
+        submitBtn.innerHTML = '<span class="print-main-icon">&#128424;</span> 打印预览';
+        sync();
+      });
+
+      // 提交后按钮进入"发送中"，给明确反馈
+      const form = submitBtn ? submitBtn.closest('form') : null;
+      if (form) {
+        form.addEventListener('submit', (event) => {
+          if (event.submitter && event.submitter.hasAttribute('data-print-submit')) {
+            submitBtn.disabled = true;
+            submitBtn.classList.add('is-busy');
+            submitBtn.innerHTML = '<span class="print-main-icon">&#8987;</span> 正在打开预览…';
+          }
+        });
+      }
+    })();
   </script>
+  </div>
 {% endblock %}

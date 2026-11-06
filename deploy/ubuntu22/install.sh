@@ -379,9 +379,7 @@ fi
 if (( ${#EXCLUDED_IFACES[@]} > 0 )); then
   echo "未登记为 Web 入口的网口：${EXCLUDED_IFACES[*]}（例如只用于 git 的网口）"
 fi
-if systemctl cat after-sales-warehouse-quick-tunnel >/dev/null 2>&1; then
-  echo "临时域名入口：sudo /usr/local/sbin/after-sales-warehouse-quick-tunnel-url"
-fi
+echo "登记域名或其它 IP：sudo bash deploy/ubuntu22/register-host.sh <IP或域名>"
 echo "Verify with: systemctl status after-sales-warehouse nginx"
 echo "Security check: sudo /usr/local/sbin/after-sales-warehouse-security-check"
 echo "Rollback list: sudo /usr/local/sbin/after-sales-warehouse-rollback --list"

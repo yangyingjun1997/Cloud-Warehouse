@@ -66,7 +66,7 @@
     <section class="panel standalone-table">
       <div class="panel-head"><h2>成品设备列表</h2><span>点击行查看组件并操作</span></div>
       <div class="table-scroll"><table class="data-table"><thead><tr><th>成品编码</th><th>名称</th><th>型号</th><th>状态</th><th>在装组件</th><th>客户</th><th>创建时间</th></tr></thead><tbody>
-        {% for unit in units %}<tr class="unit-row {% if selected and selected.id == unit.id %}selected{% endif %}" onclick="location.href='?unit={{ unit.id }}'" style="cursor:pointer">
+        {% for unit in units %}<tr class="unit-row {% if selected and selected.id == unit.id %}selected{% endif %}" onclick="location.href='?unit={{ unit.id }}{{ unit_list_query }}'" style="cursor:pointer">
           <td class="code">{{ unit.unit_code|default:'未赋码' }}</td><td>{{ unit.name }}</td><td>{{ unit.model|default:'—' }}</td>
           <td><span class="tag {% if unit.status == 'assembled' %}success{% elif unit.status == 'disassembled' %}neutral{% else %}warning{% endif %}">{{ unit.get_status_display }}</span></td>
           <td>{{ unit.active_component_count }}</td><td>{{ unit.customer.name|default:'—' }}</td><td>{{ unit.created_at|date:'Y-m-d H:i' }}</td>

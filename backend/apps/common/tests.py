@@ -23,6 +23,7 @@ from apps.workflow.models import (
 )
 from apps.notifications.models import Notification
 from django.test import TestCase, override_settings
+from django.test.client import RequestFactory
 from rest_framework.test import APIClient
 from unittest.mock import patch
 from django.test import Client
@@ -88,6 +89,70 @@ class LoginThrottleTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(LoginThrottleState.objects.filter(key__startswith='ip:').exists())
         self.assertFalse(LoginThrottleState.objects.filter(key__contains='127.0.0.1').exists())
+
+    @override_settings(
+        LOGIN_RATE_LIMIT_FAILURES=50,
+        LOGIN_RATE_LIMIT_IP_FAILURES=3,
+        LOGIN_RATE_LIMIT_WINDOW_SECONDS=300,
+        LOGIN_RATE_LIMIT_LOCKOUT_SECONDS=900,
+        TRUSTED_PROXY_IPS=(),
+    )
+    def test_forged_forwarded_headers_do_not_bypass_ip_limit(self):
+        """直连部署时转发头不可信，伪造它不能分散 IP 维度计数。"""
+
+        User.objects.create_user(username='spray-user', password='correct-password')
+        # 每次换一个伪造 IP；若采信转发头，会生成 3 条互不相干的 IP 计数，
+        # 谁都到不了阈值。正确防住时三条失败都计入同一个真实 IP。
+        for index in range(3):
+            self.client.post(
+                '/login/',
+                {'username': 'spray-user', 'password': 'wrong-password'},
+                HTTP_X_FORWARDED_FOR=f'10.0.0.{index}',
+                HTTP_X_REAL_IP=f'10.0.0.{index}',
+            )
+
+        # 只剩一条 IP 计数，且已累计到阈值。
+        ip_states = LoginThrottleState.objects.filter(key__startswith='ip:')
+        self.assertEqual(ip_states.count(), 1)
+        self.assertEqual(ip_states.first().failure_count, 3)
+        self.assertIsNotNone(ip_states.first().blocked_until)
+
+        # 伪造新 IP 也不会让锁定失效：换头后依旧被拦在同一把锁上。
+        response = self.client.post(
+            '/login/',
+            {'username': 'spray-user', 'password': 'correct-password'},
+            HTTP_X_FORWARDED_FOR='10.0.0.99',
+            HTTP_X_REAL_IP='10.0.0.99',
+        )
+        # 仍在登录页（未跳转），且 IP 计数没有被新伪造头重置。
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            LoginThrottleState.objects.filter(key__startswith='ip:').count(), 1
+        )
+        self.assertEqual(
+            LoginThrottleState.objects.get(key__startswith='ip:').failure_count, 3
+        )
+
+    @override_settings(TRUSTED_PROXY_IPS=('10.1.1.1',))
+    def test_trusted_proxy_forwarded_header_is_used(self):
+        """命中代理白名单时才采信 X-Real-IP。"""
+
+        from apps.common.auth_throttle import get_client_ip
+
+        request = RequestFactory().get(
+            '/',
+            REMOTE_ADDR='10.1.1.1',
+            HTTP_X_REAL_IP='203.0.113.9',
+        )
+        self.assertEqual(get_client_ip(request), '203.0.113.9')
+
+        # 不在白名单里的来源，即使带了转发头也只认 REMOTE_ADDR。
+        untrusted = RequestFactory().get(
+            '/',
+            REMOTE_ADDR='198.51.100.7',
+            HTTP_X_REAL_IP='203.0.113.9',
+        )
+        self.assertEqual(get_client_ip(untrusted), '198.51.100.7')
 
     @override_settings(
         LOGIN_RATE_LIMIT_FAILURES=2,
@@ -295,6 +360,31 @@ class ApiTokenLifecycleTests(TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertContains(response, '认证令牌无效或已过期', status_code=401)
 
+    def test_never_expiring_token_stays_valid(self):
+        """长期令牌（expires_at 为空）应一直可用，且不会被清理任务删除。"""
+        from django.core.management import call_command
+        from django.utils import timezone
+        from datetime import timedelta
+
+        from apps.common.token_services import issue_token
+
+        token, raw_token = issue_token(self.user, ttl_seconds=0)
+        self.assertIsNone(token.expires_at)
+        self.assertTrue(token.is_never_expiring)
+        self.assertTrue(token.is_active)
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {raw_token}')
+        self.assertEqual(self.client.get('/api/accounts/me/').status_code, 200)
+
+        # 清理任务不应把它当成过期令牌删掉。
+        ApiAccessToken.objects.filter(pk=token.pk).update(
+            created_at=timezone.now() - timedelta(days=3650),
+        )
+        call_command('prune_security_states')
+        self.assertTrue(ApiAccessToken.objects.filter(pk=token.pk).exists())
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {raw_token}')
+        self.assertEqual(self.client.get('/api/accounts/me/').status_code, 200)
+
     def test_rotation_invalidates_old_token_and_returns_new_token(self):
         old_token = self._issue()
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {old_token}')
@@ -431,7 +521,7 @@ class DashboardAndAdminTests(TestCase):
         self.assertContains(response, '资产检索')
         self.assertNotContains(response, '在库可用资产')
         self.assertNotContains(response, '系统管理')
-        self.assertNotContains(response, '/health/')
+        self.assertNotContains(response, '/system/audit/')
         self.assertNotContains(response, '/api/inventory/assets/')
 
     def test_operator_dashboard_has_warehouse_information(self):
@@ -444,6 +534,26 @@ class DashboardAndAdminTests(TestCase):
         self.assertContains(response, '审批任务')
         self.assertContains(response, '/warehouse/?tab=assets&amp;status=in_stock')
         self.assertNotContains(response, '系统管理')
+
+    def test_employee_primary_navigation_only_has_workbench_and_business(self):
+        self.client.force_login(self.employee)
+
+        response = self.client.get('/')
+
+        self.assertEqual(response.content.count(b'data-primary-link'), 2)
+        self.assertContains(response, '>工作台<')
+        self.assertContains(response, '>业务办理<')
+        self.assertNotContains(response, '>任务中心<')
+        self.assertNotContains(response, '>库存中心<')
+
+    def test_operator_primary_navigation_is_consolidated_to_five_modules(self):
+        self.client.force_login(self.operator)
+
+        response = self.client.get('/')
+
+        self.assertEqual(response.content.count(b'data-primary-link'), 5)
+        for label in ('工作台', '业务办理', '任务中心', '库存中心', '采购与报表'):
+            self.assertContains(response, f'>{label}<')
 
     def test_operator_asset_lookup_searches_person_requests_and_current_assets(self):
         self.employee.first_name = '测试员工'
@@ -924,6 +1034,11 @@ class DashboardAndAdminTests(TestCase):
         self.assertContains(response, self.asset.asset_code)
 
         response = self.client.get('/warehouse/assets/new/')
+        self.assertEqual(response.status_code, 302)
+
+        admin = User.objects.create_superuser(username='create-admin', password='password123', email='')
+        self.client.force_login(admin)
+        response = self.client.get('/warehouse/assets/new/')
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, '资产状态、持有人和归属部门由审批后的出入库流程维护')
 
@@ -1105,7 +1220,7 @@ class DashboardAndAdminTests(TestCase):
         response = self.client.get(f'/warehouse/assets/{self.asset.id}/')
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, '本系统资产二维码')
+        self.assertContains(response, '资产身份标签')
         self.assertContains(response, self.asset.qr_value)
         self.assertContains(response, 'data:image/png;base64,')
 
@@ -1119,12 +1234,24 @@ class DashboardAndAdminTests(TestCase):
             'status': 'borrowed',
             'current_holder': str(self.employee.id),
         })
+        self.assertEqual(response.status_code, 403)
+
+        admin = User.objects.create_superuser(username='edit-admin', password='password123', email='')
+        self.client.force_login(admin)
+        response = self.client.post(f'/warehouse/assets/{self.asset.id}/', {
+            'name': self.asset.name,
+            'item_type': str(self.asset.item_type_id),
+            'warehouse': str(self.asset.warehouse_id),
+            'location': str(self.asset.location_id),
+            'status': 'borrowed',
+            'current_holder': str(self.employee.id),
+        })
 
         self.assertRedirects(response, '/warehouse/')
         self.asset.refresh_from_db()
         self.assertEqual(self.asset.status, Asset.Status.IN_STOCK)
         self.assertIsNone(self.asset.current_holder_id)
-        audit_log = OperationAuditLog.objects.get(target_id=self.asset.id)
+        audit_log = OperationAuditLog.objects.get(target_id=self.asset.id, action='asset_updated')
         self.assertEqual(audit_log.action, 'asset_updated')
 
     def test_stock_item_edit_does_not_expose_direct_quantity_change(self):
@@ -1179,6 +1306,24 @@ class DashboardAndAdminTests(TestCase):
         response = self.client.get('/warehouse/setup/warehouses/')
         self.assertEqual(response.status_code, 302)
 
+    def test_code_master_permission_can_open_code_pages_but_not_warehouse_pages(self):
+        """持编码权限的仓管能维护型号/厂家，但不能顺带改仓库等资料。"""
+        code_manager = User.objects.create_user(
+            username='code-manager', password='password123', is_staff=True,
+        )
+        code_manager.groups.add(Group.objects.get(name='warehouse_code_master'))
+        self.client.force_login(code_manager)
+
+        for section in ('manufacturers', 'asset-type-codes', 'product-model-codes'):
+            with self.subTest(section=section):
+                response = self.client.get(f'/warehouse/setup/{section}/')
+                self.assertEqual(response.status_code, 200)
+
+        for section in ('warehouses', 'locations', 'customers'):
+            with self.subTest(section=section):
+                response = self.client.get(f'/warehouse/setup/{section}/')
+                self.assertEqual(response.status_code, 302)
+
     def test_warehouse_operator_can_print_selected_asset_qr_labels(self):
         self.client.force_login(self.operator)
         response = self.client.post('/warehouse/qr-labels/', {
@@ -1187,7 +1332,52 @@ class DashboardAndAdminTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, self.asset.asset_code)
-        self.assertContains(response, '打印标签')
+        self.assertContains(response, '发送到贴纸打印机')
+        self.assertContains(response, '本机浏览器打印')
+
+    def test_warehouse_management_send_to_printer_creates_label_job(self):
+        """主界面「发送到贴纸打印机」必须创建作业，而不是只渲染浏览器打印页。"""
+        from apps.inventory.models import AssetLabelPrintJob
+
+        self.client.force_login(self.operator)
+        response = self.client.post('/warehouse/qr-labels/', {
+            'asset_ids': [str(self.asset.id)],
+            'send_to_printer': '1',
+        }, follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        job = AssetLabelPrintJob.objects.filter(requested_by=self.operator).first()
+        self.assertIsNotNone(job, '勾选发送到贴纸打印机后应创建打印作业')
+        self.assertEqual(job.asset_count, 1)
+        self.assertContains(response, '发送 1 张标签到贴纸打印机')
+
+    def test_warehouse_management_send_to_printer_records_audit(self):
+        """创建作业必须留审计痕。"""
+        from apps.common.models import OperationAuditLog
+        from apps.inventory.models import AssetLabelPrintJob
+
+        self.client.force_login(self.operator)
+        self.client.post('/warehouse/qr-labels/', {
+            'asset_ids': [str(self.asset.id)],
+            'send_to_printer': '1',
+        })
+
+        job = AssetLabelPrintJob.objects.filter(requested_by=self.operator).first()
+        self.assertIsNotNone(job)
+        self.assertTrue(
+            OperationAuditLog.objects.filter(action='asset_label_job_created').exists(),
+            '创建打印作业应写入操作审计',
+        )
+
+    def test_qr_label_page_hides_navigation_in_print_css(self):
+        """打印样式必须隐藏手机底部导航，否则会打进标签。"""
+        self.client.force_login(self.operator)
+        response = self.client.post('/warehouse/qr-labels/', {
+            'asset_ids': [str(self.asset.id)],
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '.mobile-bottom-nav')
 
     def test_superuser_can_open_warehouse_management(self):
         administrator = User.objects.create_superuser(
@@ -1409,7 +1599,11 @@ class DashboardAndAdminTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, self.asset.asset_code)
-        self.assertContains(response, '打印二维码标签')
+        self.assertContains(response, '打印资产二维码标签')
+        # 新标签版式必须带二维码图片和两行编码信息
+        self.assertContains(response, 'data:image/png;base64,')
+        self.assertContains(response, '厂家SN：')
+        self.assertContains(response, '资产编码：')
 
     def test_item_type_bulk_category_page_updates_types(self):
         user = User.objects.create_superuser(username='category-admin', password='admin', email='')
@@ -1432,7 +1626,7 @@ class DashboardAndAdminTests(TestCase):
         self.assertEqual(worker.status_code, 200)
         self.assertEqual(worker['Content-Type'].split(';')[0], 'application/javascript')
         self.assertContains(worker, 'skipWaiting')
-        self.assertContains(worker, 'warehouse-static-v4')
+        self.assertContains(worker, 'warehouse-static-v5')
         self.assertContains(worker, 'cache.addAll(STATIC_ASSETS)')
         self.assertNotIn(b'const PAGE_CACHE', worker.content)
         self.assertNotIn(b"request.mode === 'navigate'", worker.content)

@@ -36,24 +36,30 @@ from .assembly_services import (
 )
 from .models import (
     Asset,
+    AssetIdentifier,
+    AssetTypeCode,
     AssetNetworkEndpoint,
     Category,
     ComponentLink,
     CompositeUnit,
     Customer,
+    InventoryDomain,
     InventoryCheckAdjustment,
     InventoryCheckLine,
     InventoryCheckScan,
     InventoryCheckTask,
     ItemType,
     Location,
+    Manufacturer,
     Project,
+    ProductModelCode,
     ServiceProvider,
     StockItem,
     Supplier,
     Warehouse,
     WorkOrder,
 )
+from .code_services import AssetCodeError, normalize_identifier, parse_asset_qr_payload
 from .search import asset_search_query
 from .serializers import (
     AssetLifecycleEventSerializer,
@@ -65,6 +71,10 @@ from .serializers import (
     CompositeUnitHistorySerializer,
     CompositeUnitSerializer,
     CustomerSerializer,
+    InventoryDomainSerializer,
+    ManufacturerSerializer,
+    AssetTypeCodeSerializer,
+    ProductModelCodeSerializer,
     ItemTypeSerializer,
     LocationSerializer,
     ProjectSerializer,
@@ -162,6 +172,30 @@ class SupplierViewSet(AuditedModelViewSet):
     permission_classes = [IsSystemAdministrator]
 
 
+class ManufacturerViewSet(AuditedModelViewSet):
+    queryset = Manufacturer.objects.all()
+    serializer_class = ManufacturerSerializer
+    permission_classes = [IsSystemAdministrator]
+
+
+class InventoryDomainViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = InventoryDomain.objects.filter(is_active=True)
+    serializer_class = InventoryDomainSerializer
+    permission_classes = [IsAuthenticated]
+
+
+class AssetTypeCodeViewSet(AuditedModelViewSet):
+    queryset = AssetTypeCode.objects.all()
+    serializer_class = AssetTypeCodeSerializer
+    permission_classes = [IsSystemAdministrator]
+
+
+class ProductModelCodeViewSet(AuditedModelViewSet):
+    queryset = ProductModelCode.objects.select_related('asset_type_code', 'manufacturer').all()
+    serializer_class = ProductModelCodeSerializer
+    permission_classes = [IsSystemAdministrator]
+
+
 class ServiceProviderViewSet(AuditedModelViewSet):
     queryset = ServiceProvider.objects.all()
     serializer_class = ServiceProviderSerializer
@@ -233,15 +267,29 @@ class AssetViewSet(AuditedModelViewSet):
         value = request.query_params.get('code', '').strip()
         if not value:
             return Response({'detail': '请提供 code 查询参数。'}, status=status.HTTP_400_BAD_REQUEST)
-        asset = self.get_queryset().filter(
-            models.Q(system_asset_no=value)
-            | models.Q(asset_code=value)
-            | models.Q(qr_value=value)
-            | models.Q(serial_number=value)
-            | models.Q(manufacturer_barcode=value)
-        ).first()
-        if not asset:
+        try:
+            parsed = parse_asset_qr_payload(value)
+        except AssetCodeError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        normalized = normalize_identifier(parsed['identifier'])
+        asset_ids = set(AssetIdentifier.objects.filter(
+            normalized_value=normalized,
+        ).values_list('asset_id', flat=True))
+        asset_ids.update(self.get_queryset().filter(
+            models.Q(system_asset_no__iexact=normalized)
+            | models.Q(asset_code__iexact=normalized)
+            | models.Q(qr_value__iexact=value)
+            | models.Q(serial_number__iexact=value)
+            | models.Q(manufacturer_barcode__iexact=value)
+        ).values_list('id', flat=True))
+        if not asset_ids:
             return Response({'detail': '未找到对应资产。'}, status=status.HTTP_404_NOT_FOUND)
+        if len(asset_ids) > 1:
+            return Response({
+                'detail': '该标识匹配到多件资产，请改用系统永久编号或主资产编码。',
+                'match_count': len(asset_ids),
+            }, status=status.HTTP_409_CONFLICT)
+        asset = self.get_queryset().get(pk=asset_ids.pop())
         return Response(self.get_serializer(asset).data)
 
     @action(detail=False, methods=['get'])

@@ -85,7 +85,12 @@ def create_maintenance_record(*, asset, actor, activate_asset=True, **values):
         ],
     ).exists():
         raise AssetLifecycleError('该资产已有未完成的维修单。')
-    previous_status = asset.status
+    source = values.get('source', MaintenanceRecord.Source.MANUAL)
+    previous_status = (
+        Asset.Status.IN_STOCK
+        if source == MaintenanceRecord.Source.LEGACY_IMPORT and asset.status == Asset.Status.REPAIRING
+        else asset.status
+    )
     record = MaintenanceRecord.objects.create(
         asset=asset,
         previous_asset_status=previous_status,
@@ -125,6 +130,7 @@ def ensure_maintenance_from_workflow(*, asset, request_obj, actor, previous_stat
         source_request=request_obj,
         defaults={
             'repair_type': MaintenanceRecord.RepairType.INTERNAL,
+            'source': MaintenanceRecord.Source.WORKFLOW,
             'status': MaintenanceRecord.Status.OPEN,
             'fault_description': request_obj.reason or '由维修申请转入，待补充故障描述。',
             'previous_asset_status': previous_status,
@@ -195,7 +201,10 @@ def update_maintenance_record(record, actor, **changes):
 
 
 @transaction.atomic
-def finish_maintenance_record(record, actor, *, resolution='', actual_cost=None, returned_date=None, cancel=False):
+def finish_maintenance_record(
+    record, actor, *, resolution='', actual_cost=None, returned_date=None,
+    destination='restore', target_warehouse=None, target_location=None, cancel=False,
+):
     record = MaintenanceRecord.objects.select_for_update().select_related('asset').get(pk=record.pk)
     asset = Asset.objects.select_for_update().get(pk=record.asset_id)
     if record.status in {MaintenanceRecord.Status.COMPLETED, MaintenanceRecord.Status.CANCELED}:
@@ -212,7 +221,23 @@ def finish_maintenance_record(record, actor, *, resolution='', actual_cost=None,
     record.completed_at = timezone.now()
     record.save()
     asset_before = asset.status
-    if asset.status == Asset.Status.REPAIRING:
+    if not cancel and record.source == MaintenanceRecord.Source.LEGACY_IMPORT:
+        destination = 'warehouse'
+    if destination == 'warehouse' and not cancel:
+        if not target_warehouse or not target_location:
+            raise AssetLifecycleError('维修完成入库必须选择目标仓库和库位。')
+        if target_location.warehouse_id != target_warehouse.id:
+            raise AssetLifecycleError('目标库位不属于所选仓库。')
+        asset.status = Asset.Status.IN_STOCK
+        asset.warehouse = target_warehouse
+        asset.location = target_location
+        asset.current_holder = None
+        asset.department = None
+        asset.external_holder_name = ''
+        asset.external_holder_company = ''
+        asset.external_holder_phone = ''
+        asset.save()
+    elif asset.status == Asset.Status.REPAIRING:
         asset.status = _restore_asset_after_maintenance(asset, record.previous_asset_status)
         asset.save(update_fields=['status', 'updated_at'])
     action_text = '取消' if cancel else '完成'

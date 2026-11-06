@@ -32,6 +32,7 @@ from apps.common.utils import build_daily_code
 from apps.inventory.lifecycle_services import ensure_maintenance_from_workflow
 from apps.inventory.availability import is_asset_available
 from apps.inventory.models import Asset, CompositeUnit, ItemType, Location, StockItem, StockItemHolding, Warehouse
+from apps.inventory.state_services import RETURNABLE_ASSET_STATUSES
 from apps.notifications.models import Notification
 from apps.notifications.dingtalk import send_users_or_group
 
@@ -211,8 +212,14 @@ def close_request_and_release_reservations(request_obj, actor=None, reason='', *
     if actor is not None and not can_approve_workflow(actor):
         raise WorkflowError('只有审批人员可以关闭并释放预约。')
     request_obj = WorkflowRequest.objects.select_for_update().get(pk=request_obj.pk)
-    if request_obj.status != WorkflowRequest.Status.PENDING:
-        raise WorkflowError('只有待审批申请可以关闭并释放预约。')
+    # 已审批但仓库尚未执行的单子同样需要能被关闭：否则审批一通过就再也
+    # 走不到释放分支，库存被永久占用。
+    if request_obj.status not in (
+        WorkflowRequest.Status.PENDING,
+        WorkflowRequest.Status.APPROVED,
+        WorkflowRequest.Status.WAITING_WAREHOUSE,
+    ):
+        raise WorkflowError('只有待审批或待仓库处理的申请可以关闭并释放预约。')
     reason = reason.strip() or ('预约超过有效期，系统自动关闭。' if automatic else '')
     if not reason:
         raise WorkflowError('请填写关闭并释放预约的原因。')
@@ -252,13 +259,34 @@ def close_request_and_release_reservations(request_obj, actor=None, reason='', *
     return request_obj
 
 
+def approved_reservation_expiry_time(now=None):
+    """审批通过后预约的有效期。
+
+    审批通过不代表货已出库。若把 expires_at 置空，仓库长期不执行时库存
+    会被无限期锁死（恶意申请+审批即可囤积库存），所以给一个较长的固定
+    期限，超期由定时任务自动关闭并释放。
+    """
+
+    hours = max(int(getattr(settings, 'RESERVATION_APPROVED_EXPIRY_HOURS', 168)), 1)
+    return (now or timezone.now()) + timedelta(hours=hours)
+
+
 def expire_pending_reservations(now=None):
+    """关闭过期未执行的预约。
+
+    覆盖两类单据：还没审批的（PENDING）和审批通过但仓库迟迟不处理的
+    （WAITING_WAREHOUSE）。后者以前因为 expires_at 被置空而永远不会过期。
+    """
+
     now = now or timezone.now()
     request_ids = list(InventoryReservation.objects.filter(
         status=InventoryReservation.Status.ACTIVE,
         expires_at__isnull=False,
         expires_at__lte=now,
-        request_line__request__status=WorkflowRequest.Status.PENDING,
+        request_line__request__status__in=(
+            WorkflowRequest.Status.PENDING,
+            WorkflowRequest.Status.WAITING_WAREHOUSE,
+        ),
     ).values_list('request_line__request_id', flat=True).distinct())
     closed = 0
     for request_id in request_ids:
@@ -395,6 +423,11 @@ def submit_request(request_obj: WorkflowRequest, actor, comment=''):
                 raise WorkflowError(f'资产 {line.asset.asset_code or line.asset.name} 当前不可出库。')
         if line.asset and request_obj.request_type == WorkflowRequest.RequestType.RETURN and not is_operator(actor) and line.asset.current_holder_id != request_obj.applicant_id:
             raise WorkflowError(f'资产 {line.asset.asset_code} 当前不在申请人名下。')
+        if line.asset and request_obj.request_type == WorkflowRequest.RequestType.RETURN and line.asset.status not in RETURNABLE_ASSET_STATUSES:
+            raise WorkflowError(
+                f'资产 {line.asset.asset_code or line.asset.name} 当前为'
+                f'{line.asset.get_status_display()}，不能通过普通归还入库。'
+            )
         if line.asset and request_obj.request_type == WorkflowRequest.RequestType.TRANSFER and not is_asset_available(line.asset):
             raise WorkflowError(f'资产 {line.asset.asset_code} 不在库，无法调拨。')
         if line.asset and request_obj.request_type in {WorkflowRequest.RequestType.REPAIR, WorkflowRequest.RequestType.DAMAGE, WorkflowRequest.RequestType.RETURN_TO_VENDOR, WorkflowRequest.RequestType.SCRAP} and line.asset.status in TERMINAL_ASSET_STATUSES:
@@ -439,7 +472,7 @@ def approve_request(request_obj: WorkflowRequest, actor, comment=''):
     InventoryReservation.objects.filter(
         request_line__request=request_obj,
         status=InventoryReservation.Status.ACTIVE,
-    ).update(expires_at=None, updated_at=timezone.now())
+    ).update(expires_at=approved_reservation_expiry_time(), updated_at=timezone.now())
     _log(request_obj, actor, 'approve', comment)
     _notify_users([request_obj.applicant], '仓库申请审核通过', f'申请 {request_obj.request_no} 已通过审核，等待仓库处理。', level='success', request=request_obj)
     return request_obj
@@ -586,7 +619,7 @@ def create_loan_extension_request(source_request, applicant, requested_return_da
 def review_loan_extension(extension, actor, approve, comment=''):
     if not can_approve_workflow(actor):
         raise WorkflowError('只有审批人员可以处理借用延期。')
-    extension = LoanExtensionRequest.objects.select_for_update().select_related(
+    extension = LoanExtensionRequest.objects.select_for_update(of=('self',)).select_related(
         'source_request', 'applicant'
     ).get(pk=extension.pk)
     if extension.status != LoanExtensionRequest.Status.PENDING:
@@ -633,7 +666,7 @@ def review_loan_extension(extension, actor, approve, comment=''):
 
 
 def _process_asset(request_obj, line, actor, comment, *, return_received=True):
-    asset = Asset.objects.select_for_update().select_related('warehouse').get(pk=line.asset_id)
+    asset = Asset.objects.select_for_update(of=('self',)).select_related('warehouse').get(pk=line.asset_id)
     before_status, source_warehouse, target_warehouse = asset.status, asset.warehouse, None
     holder_name, holder_company, holder_phone = _recipient_snapshot(request_obj)
     conflicting_reservation = InventoryReservation.objects.filter(
@@ -673,8 +706,11 @@ def _process_asset(request_obj, line, actor, comment, *, return_received=True):
             asset.external_holder_name = asset.external_holder_company = asset.external_holder_phone = ''
         asset.status = {WorkflowRequest.RequestType.BORROW: Asset.Status.BORROWED, WorkflowRequest.RequestType.ISSUE: Asset.Status.ISSUED, WorkflowRequest.RequestType.SALE: Asset.Status.SOLD}[request_obj.request_type]
     elif request_obj.request_type == WorkflowRequest.RequestType.RETURN:
-        if asset.status in TERMINAL_ASSET_STATUSES:
-            raise WorkflowError(f'资产 {asset.asset_code} 已处于最终状态，无法归还。')
+        if asset.status not in RETURNABLE_ASSET_STATUSES:
+            raise WorkflowError(
+                f'资产 {asset.asset_code or asset.name} 当前为{asset.get_status_display()}，'
+                '不能通过普通归还入库。'
+            )
         if not return_received:
             # 差异验收：该组件未随归还收回，保持原状态（仍为借出/已组装在途），仅记录差异台账。
             InventoryTransaction.objects.create(
@@ -859,7 +895,21 @@ def process_request(request_obj: WorkflowRequest, actor, comment='', transaction
     received_set = set(return_received_line_ids) if return_received_line_ids is not None else None
     is_return = request_obj.request_type == WorkflowRequest.RequestType.RETURN
     missing_lines = []
-    for line in request_obj.lines.select_for_update().select_related('asset', 'stock_item'):
+    # 按主键排序加锁：两张申请若含相同资产但行序不同，固定加锁顺序才能
+    # 避免互相等待成环。这里与 _create_outbound_reservations 的做法保持一致。
+    lines = list(
+        request_obj.lines.select_for_update(of=('self',)).select_related('asset', 'stock_item').order_by('id')
+    )
+    # 再把涉及的资产与耗材按主键顺序一次性锁定，_process_asset /
+    # _process_stock_item 内部的 select_for_update 命中的是同一批已持有
+    # 的行锁，不会出现交叉等待。
+    asset_ids = sorted(str(line.asset_id) for line in lines if line.asset_id)
+    stock_item_ids = sorted(str(line.stock_item_id) for line in lines if line.stock_item_id)
+    if asset_ids:
+        list(Asset.objects.select_for_update().filter(pk__in=asset_ids).order_by('id'))
+    if stock_item_ids:
+        list(StockItem.objects.select_for_update().filter(pk__in=stock_item_ids).order_by('id'))
+    for line in lines:
         _validate_line(line, request_obj)
         if line.asset_id:
             received = not is_return or received_set is None or str(line.id) in received_set
@@ -909,7 +959,18 @@ def quick_process_request(request_obj: WorkflowRequest, actor, comment='', trans
     if not request_obj.inventory_no:
         request_obj.inventory_no = build_daily_code('IO', request_obj.transaction_date)
     request_obj.save(update_fields=['inventory_no', 'transaction_date', 'updated_at'])
-    for line in request_obj.lines.select_for_update().select_related('asset', 'stock_item'):
+    lines = list(
+        request_obj.lines.select_for_update(of=('self',))
+        .select_related('asset', 'stock_item')
+        .order_by('id')
+    )
+    asset_ids = sorted(str(line.asset_id) for line in lines if line.asset_id)
+    stock_item_ids = sorted(str(line.stock_item_id) for line in lines if line.stock_item_id)
+    if asset_ids:
+        list(Asset.objects.select_for_update().filter(pk__in=asset_ids).order_by('id'))
+    if stock_item_ids:
+        list(StockItem.objects.select_for_update().filter(pk__in=stock_item_ids).order_by('id'))
+    for line in lines:
         _validate_line(line, request_obj)
         if line.asset_id:
             _process_asset(request_obj, line, actor, comment)
@@ -1262,7 +1323,10 @@ def create_purchase_order(purchase_request, actor):
         raise WorkflowError('只有已通过审批的采购申请可以生成采购订单。')
     if hasattr(purchase_request, 'purchase_order'):
         raise WorkflowError('该采购申请已经生成采购订单。')
-    lines = list(purchase_request.lines.select_for_update().select_related('item_type', 'stock_item'))
+    lines = list(
+        purchase_request.lines.select_for_update(of=('self',))
+        .select_related('item_type', 'stock_item')
+    )
     if not lines:
         raise WorkflowError('采购申请没有有效明细，不能生成采购订单。')
 
@@ -1393,7 +1457,7 @@ def receive_purchase_order(order, actor, quantities, warehouse, location, receiv
     """
     if not can_execute_inventory(actor):
         raise WorkflowError('只有具备出入库执行权限的账号可以登记采购到货。')
-    order = PurchaseOrder.objects.select_for_update().select_related('purchase_request').get(pk=order.pk)
+    order = PurchaseOrder.objects.select_for_update(of=('self',)).select_related('purchase_request').get(pk=order.pk)
     if order.status not in {PurchaseOrder.Status.ORDERED, PurchaseOrder.Status.PARTIAL_RECEIVED}:
         raise WorkflowError('只有已下达或部分到货的采购订单可以登记到货。')
     warehouse = Warehouse.objects.filter(pk=getattr(warehouse, 'pk', warehouse)).first()
@@ -1402,7 +1466,10 @@ def receive_purchase_order(order, actor, quantities, warehouse, location, receiv
         raise WorkflowError('到货入库必须选择仓库和库位。')
     if location.warehouse_id != warehouse.id:
         raise WorkflowError('所选库位不属于所选仓库。')
-    lines = list(order.lines.select_for_update().select_related('item_type', 'stock_item'))
+    lines = list(
+        order.lines.select_for_update(of=('self',))
+        .select_related('item_type', 'stock_item')
+    )
     normalized = {}
     for line in lines:
         raw = quantities.get(str(line.id), quantities.get(line.id, 0))

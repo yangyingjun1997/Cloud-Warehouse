@@ -1,0 +1,8 @@
+{% extends "web_base.html" %}
+{% block title %}调整资产归属 - 售后仓库管理系统{% endblock %}
+{% block crumb %}仓库管理 / 资产台账 / 调整资产归属{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>调整资产归属</h1><p class="page-copy">该操作会停用原主资产编码并保留历史，按新归属生成或等待新的主资产编码。系统永久编号不会改变。</p></div><a class="button button-secondary" href="{% url 'warehouse_asset_edit' asset.id %}">返回资产</a></div>
+<section class="panel standalone-table"><dl class="detail-list"><div><dt>资产</dt><dd>{{ asset.name }}</dd></div><div><dt>系统永久编号</dt><dd class="code">{{ asset.system_asset_no }}</dd></div><div><dt>当前归属</dt><dd>{{ asset.domain|default:'未设置' }}</dd></div><div><dt>当前资产编码</dt><dd class="code">{{ asset.asset_code|default:'暂未赋码' }}</dd></div></dl></section>
+<form method="post" class="form-card management-form">{% csrf_token %}{% if form.non_field_errors %}<div class="notice error">{{ form.non_field_errors }}</div>{% endif %}<div class="form-grid">{% for field in form %}<div class="form-field full"><label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <span class="required">*</span>{% endif %}</label>{{ field }}{{ field.errors }}</div>{% endfor %}</div><div class="form-actions"><a class="button button-secondary" href="{% url 'warehouse_asset_edit' asset.id %}">取消</a><button class="button button-primary" type="submit">确认调整归属</button></div></form>
+{% endblock %}

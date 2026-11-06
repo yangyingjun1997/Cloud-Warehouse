@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -34,6 +37,12 @@ class Supplier(BusinessReference):
     class Meta(BusinessReference.Meta):
         verbose_name = '供应商资料'
         verbose_name_plural = '供应商资料'
+
+
+class Manufacturer(BusinessReference):
+    class Meta(BusinessReference.Meta):
+        verbose_name = '生产厂家资料'
+        verbose_name_plural = '生产厂家资料'
 
 
 class ServiceProvider(BusinessReference):
@@ -166,7 +175,140 @@ class ItemType(UUIDModel, TimeStampedModel):
         return self.name
 
 
+class InventoryDomain(UUIDModel, TimeStampedModel):
+    class CodeScheme(models.TextChoices):
+        MARKET_GENERATED = 'market_generated', '市场编码（系统生成）'
+        ADMIN_ASSIGNED = 'admin_assigned', '研发行政编码'
+
+    code = models.CharField('归属域代码', max_length=16, unique=True)
+    name = models.CharField('归属域名称', max_length=80)
+    code_scheme = models.CharField('编码方式', max_length=24, choices=CodeScheme.choices)
+    is_active = models.BooleanField('是否启用', default=True)
+
+    class Meta:
+        ordering = ['code']
+        verbose_name = '资产归属域'
+        verbose_name_plural = '资产归属域'
+
+    def save(self, *args, **kwargs):
+        self.code = self.code.strip().upper()
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class AssetTypeCode(UUIDModel, TimeStampedModel):
+    code = models.CharField('设备类型代码', max_length=12, unique=True)
+    name = models.CharField('设备类型名称', max_length=80)
+    description = models.TextField('说明', blank=True, default='')
+    is_active = models.BooleanField('是否启用', default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='created_asset_type_codes', verbose_name='创建人',
+    )
+
+    class Meta:
+        ordering = ['code']
+        verbose_name = '设备类型代码'
+        verbose_name_plural = '设备类型代码'
+
+    def save(self, *args, **kwargs):
+        self.code = self.code.strip().upper()
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f'{self.name}（{self.code}）'
+
+
+class ProductModelCode(UUIDModel, TimeStampedModel):
+    asset_type_code = models.ForeignKey(
+        AssetTypeCode, on_delete=models.PROTECT, related_name='product_models',
+        verbose_name='设备类型代码',
+    )
+    manufacturer = models.ForeignKey(
+        Manufacturer, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='product_models', verbose_name='生产厂家',
+    )
+    code = models.CharField('型号代码', max_length=24)
+    name = models.CharField('型号名称', max_length=120)
+    sc_prefix = models.CharField(
+        'SC 编码前缀', max_length=80, blank=True, default='',
+        help_text='填写源表实际使用的完整前缀，例如 SC-G1-YS；系统只在末尾续流水号。',
+    )
+    sc_serial_width = models.PositiveSmallIntegerField(
+        'SC 流水位数', default=4,
+        help_text='源表通常使用 4 位流水，例如 0001。',
+    )
+    description = models.TextField('说明', blank=True, default='')
+    is_active = models.BooleanField('是否启用', default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='created_product_model_codes', verbose_name='创建人',
+    )
+
+    class Meta:
+        ordering = ['asset_type_code__code', 'code']
+        verbose_name = '产品型号代码'
+        verbose_name_plural = '产品型号代码'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['asset_type_code', 'code'],
+                name='unique_product_model_code_per_asset_type',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.code = self.code.strip().upper()
+        self.sc_prefix = self.sc_prefix.strip().upper()
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f'{self.name}（{self.code}）'
+
+
+class AssetCodeSequence(UUIDModel, TimeStampedModel):
+    class Scheme(models.TextChoices):
+        SYSTEM = 'system', '系统永久编号'
+        MARKET = 'market', '仓库自编 SC 资产编码'
+
+    scheme = models.CharField('编码体系', max_length=16, choices=Scheme.choices)
+    prefix = models.CharField('编码前缀', max_length=80)
+    last_number = models.PositiveBigIntegerField('最后流水号', default=0)
+    width = models.PositiveSmallIntegerField('流水位数', default=4)
+    is_exhausted = models.BooleanField('是否已用尽', default=False)
+
+    class Meta:
+        ordering = ['scheme', 'prefix']
+        verbose_name = '资产编码流水'
+        verbose_name_plural = '资产编码流水'
+        constraints = [
+            models.UniqueConstraint(fields=['scheme', 'prefix'], name='unique_asset_code_sequence'),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.prefix = self.prefix.strip().upper()
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f'{self.prefix} → {self.last_number}'
+
+
 class Asset(UUIDModel, TimeStampedModel):
+    class CodeSource(models.TextChoices):
+        # 取值保持兼容，展示名称按当前业务含义调整。
+        WAREHOUSE_ASSIGNED = 'warehouse_assigned', '源表既有资产编码'
+        MARKET_GENERATED = 'market_generated', '系统生成 SC 编码'
+        ADMIN_ASSIGNED = 'admin_assigned', '行政/ERP DZSB 编码'
+        PENDING_ADMIN = 'pending_admin', '已确认资产，暂未赋码'
+
+    class SnStatus(models.TextChoices):
+        PROVIDED = 'provided', '已提供'
+        NO_SN = 'no_sn', '厂家无 SN'
+        PENDING = 'pending', '暂未取得'
+        UNREADABLE = 'unreadable', '标签无法识别'
+        MANUAL = 'manual', '人工补充'
+
     class Status(models.TextChoices):
         IN_STOCK = 'in_stock', '在库'
         BORROWED = 'borrowed', '已借出'
@@ -337,13 +479,36 @@ class Asset(UUIDModel, TimeStampedModel):
     system_asset_no = models.CharField(
         '仓库系统资产编号', max_length=32, unique=True, editable=False,
     )
-    # 公司行政/ERP 分配的资产编码（如 DZSB-...），允许暂时为空。
+    # 当前主资产编码，可为源表 SC、行政 DZSB 或其它已批准的正式编码。
     asset_code = models.CharField(max_length=80, unique=True, null=True, blank=True, default=None)
+    domain = models.ForeignKey(
+        InventoryDomain, verbose_name='资产归属域', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='assets',
+    )
+    code_source = models.CharField(
+        '主资产编码来源', max_length=24, choices=CodeSource.choices,
+        default=CodeSource.PENDING_ADMIN,
+    )
+    asset_type_code = models.ForeignKey(
+        AssetTypeCode, verbose_name='设备类型代码', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='assets',
+    )
+    product_model_code = models.ForeignKey(
+        ProductModelCode, verbose_name='型号代码', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='assets',
+    )
     name = models.CharField(max_length=120)
     item_type = models.ForeignKey(ItemType, on_delete=models.PROTECT, related_name='assets')
     manufacturer = models.CharField(max_length=120, blank=True, default='')
+    manufacturer_ref = models.ForeignKey(
+        Manufacturer, verbose_name='生产厂家资料', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='assets',
+    )
     model = models.CharField(max_length=120, blank=True, default='')
     serial_number = models.CharField(max_length=120, blank=True, default='')
+    sn_status = models.CharField(
+        'SN 状态', max_length=16, choices=SnStatus.choices, default=SnStatus.PENDING,
+    )
     manufacturer_barcode = models.CharField(max_length=255, blank=True, default='')
     qr_value = models.CharField(max_length=255, blank=True, default='')
     search_aliases = models.CharField(max_length=500, blank=True, default='')
@@ -361,6 +526,19 @@ class Asset(UUIDModel, TimeStampedModel):
     )
     purchase_amount = models.DecimalField('采购金额（元）', max_digits=12, decimal_places=2, null=True, blank=True)
     warranty_until = models.DateField('质保到期日', null=True, blank=True)
+    project = models.ForeignKey(
+        Project, verbose_name='所属项目', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='assets',
+    )
+    work_order = models.ForeignKey(
+        WorkOrder, verbose_name='关联工单', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='assets',
+    )
+
+    customer_ref = models.ForeignKey(
+        Customer, verbose_name='客户', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='assets',
+    )
     source_import_batch = models.ForeignKey(
         'ImportBatch',
         on_delete=models.SET_NULL,
@@ -393,6 +571,7 @@ class Asset(UUIDModel, TimeStampedModel):
         default=DispositionState.INTERNAL,
     )
     photo_url = models.CharField(max_length=255, blank=True, default='')
+    label_version = models.PositiveSmallIntegerField('标签协议版本', default=2)
     remarks = models.TextField(blank=True, default='')
 
     class Meta:
@@ -421,8 +600,11 @@ class Asset(UUIDModel, TimeStampedModel):
             self.system_asset_no = build_asset_no()
         if self.asset_code == '':
             self.asset_code = None
-        if not self.qr_value:
-            self.qr_value = self.system_asset_no
+        self.qr_value = f'WMS2:A:{self.system_asset_no}'
+        if self.manufacturer_ref_id:
+            self.manufacturer = self.manufacturer_ref.name
+        if self.product_model_code_id:
+            self.model = self.product_model_code.name
         if self.supplier_ref_id:
             self.supplier = self.supplier_ref.name
         dimensions = self.LEGACY_STATUS_DIMENSIONS.get(self.status) if should_sync_dimensions else None
@@ -440,6 +622,7 @@ class Asset(UUIDModel, TimeStampedModel):
             self.qr_value,
             self.search_aliases,
             self.remarks,
+            self.customer_ref.name if self.customer_ref_id else '',
             self.item_type.name if self.item_type_id else '',
         ]))
         pinyin_parts = lazy_pinyin(search_source)
@@ -450,7 +633,10 @@ class Asset(UUIDModel, TimeStampedModel):
             ''.join(part[0] for part in pinyin_parts if part),
         ])
         if update_fields is not None:
-            persisted_fields = {'system_asset_no', 'qr_value', 'search_index', 'supplier'}
+            persisted_fields = {
+                'system_asset_no', 'qr_value', 'search_index', 'supplier',
+                'manufacturer', 'model',
+            }
             if should_sync_dimensions:
                 persisted_fields.update(dimension_fields)
             kwargs['update_fields'] = set(update_fields) | persisted_fields
@@ -458,6 +644,98 @@ class Asset(UUIDModel, TimeStampedModel):
 
     def __str__(self) -> str:
         return self.system_asset_no or self.asset_code or f'未编号·{self.name}'
+
+
+class AssetIdentifier(UUIDModel, TimeStampedModel):
+    class IdentifierType(models.TextChoices):
+        SYSTEM = 'system', '系统永久编号'
+        MARKET = 'market', '市场主资产编码'
+        ADMIN = 'admin', '行政资产编码'
+        MANUFACTURER_SN = 'manufacturer_sn', '生产厂家 SN'
+        MANUFACTURER_BARCODE = 'manufacturer_barcode', '生产厂家条码'
+        LEGACY = 'legacy', '历史编码'
+        OTHER = 'other', '其他标识'
+
+    asset = models.ForeignKey(Asset, on_delete=models.CASCADE, related_name='identifiers')
+    identifier_type = models.CharField('标识类型', max_length=32, choices=IdentifierType.choices)
+    value = models.CharField('标识原文', max_length=255)
+    normalized_value = models.CharField('标准化标识', max_length=255, db_index=True)
+    is_primary = models.BooleanField('是否当前主资产编码', default=False)
+    is_active = models.BooleanField('是否有效', default=True)
+    issuer = models.CharField('签发方', max_length=120, blank=True, default='')
+    valid_from = models.DateTimeField('生效时间', default=timezone.now)
+    valid_until = models.DateTimeField('失效时间', null=True, blank=True)
+    change_reason = models.TextField('变更原因', blank=True, default='')
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='created_asset_identifiers', verbose_name='操作人',
+    )
+
+    class Meta:
+        ordering = ['asset__system_asset_no', '-is_primary', 'identifier_type', '-created_at']
+        verbose_name = '资产识别码'
+        verbose_name_plural = '资产识别码'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['asset'], condition=models.Q(identifier_type='system'),
+                name='unique_system_identifier_per_asset',
+            ),
+            models.UniqueConstraint(
+                fields=['asset'], condition=models.Q(is_primary=True, is_active=True),
+                name='unique_active_primary_identifier_per_asset',
+            ),
+            models.UniqueConstraint(
+                fields=['normalized_value'],
+                condition=models.Q(identifier_type__in=['system', 'market', 'admin', 'legacy']),
+                name='unique_controlled_asset_identifier_value',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.value = self.value.strip()
+        self.normalized_value = self.value.upper()
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class AssetDomainChange(ImmutableAuditMixin, UUIDModel, TimeStampedModel):
+    asset = models.ForeignKey(Asset, on_delete=models.PROTECT, related_name='domain_changes')
+    from_domain = models.ForeignKey(
+        InventoryDomain, on_delete=models.PROTECT, related_name='domain_changes_from',
+        verbose_name='原归属域',
+    )
+    to_domain = models.ForeignKey(
+        InventoryDomain, on_delete=models.PROTECT, related_name='domain_changes_to',
+        verbose_name='新归属域',
+    )
+    old_primary_identifier = models.ForeignKey(
+        AssetIdentifier, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='domain_changes_as_old', verbose_name='原主资产编码',
+    )
+    new_primary_identifier = models.ForeignKey(
+        AssetIdentifier, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='domain_changes_as_new', verbose_name='新主资产编码',
+    )
+    reason = models.TextField('调整原因')
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='requested_asset_domain_changes', verbose_name='操作人',
+    )
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='approved_asset_domain_changes', verbose_name='确认人',
+    )
+    changed_at = models.DateTimeField('生效时间', default=timezone.now)
+
+    class Meta:
+        ordering = ['-changed_at']
+        verbose_name = '资产归属调整记录'
+        verbose_name_plural = '资产归属调整记录'
+
+    def __str__(self) -> str:
+        return f'{self.asset.system_asset_no}: {self.from_domain} → {self.to_domain}'
 
 
 class CompositeUnit(UUIDModel, TimeStampedModel):
@@ -535,6 +813,46 @@ class ComponentLink(UUIDModel, TimeStampedModel):
         return f'{self.composite_unit} ← {self.asset}'
 
 
+class AssetAssemblyLink(UUIDModel, TimeStampedModel):
+    parent_asset = models.ForeignKey(
+        Asset, on_delete=models.PROTECT, related_name='installed_components',
+        verbose_name='父资产/整机',
+    )
+    child_asset = models.ForeignKey(
+        Asset, on_delete=models.PROTECT, related_name='assembly_history',
+        verbose_name='子资产/组件',
+    )
+    installed_at = models.DateTimeField('装入时间', default=timezone.now)
+    removed_at = models.DateTimeField('拆出时间', null=True, blank=True)
+    work_order = models.ForeignKey(
+        WorkOrder, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='asset_assembly_links', verbose_name='关联工单',
+    )
+    operator = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='asset_assembly_operations', verbose_name='操作人',
+    )
+    note = models.CharField('备注', max_length=255, blank=True, default='')
+
+    class Meta:
+        ordering = ['-installed_at']
+        verbose_name = '资产装配履历'
+        verbose_name_plural = '资产装配履历'
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(parent_asset=models.F('child_asset')),
+                name='asset_assembly_parent_not_child',
+            ),
+            models.UniqueConstraint(
+                fields=['child_asset'], condition=models.Q(removed_at__isnull=True),
+                name='unique_active_asset_assembly_child',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f'{self.parent_asset} ← {self.child_asset}'
+
+
 class AssetNetworkEndpoint(UUIDModel, TimeStampedModel):
     asset = models.ForeignKey(Asset, on_delete=models.CASCADE, related_name='network_endpoints')
     interface_name = models.CharField(max_length=80, blank=True, default='')
@@ -563,6 +881,7 @@ class AssetLifecycleEvent(ImmutableAuditMixin, UUIDModel, TimeStampedModel):
         ATTACHMENT = 'attachment', '附件归档'
         SCRAP_REQUEST = 'scrap_request', '报废申请'
         NOTE = 'note', '其他记录'
+        CORRECTION = 'correction', '台账校正'
 
     asset = models.ForeignKey(Asset, on_delete=models.PROTECT, related_name='lifecycle_events')
     event_type = models.CharField(max_length=24, choices=EventType.choices)
@@ -590,6 +909,11 @@ class AssetLifecycleEvent(ImmutableAuditMixin, UUIDModel, TimeStampedModel):
 
 
 class MaintenanceRecord(UUIDModel, TimeStampedModel):
+    class Source(models.TextChoices):
+        WORKFLOW = 'workflow', '申请流程'
+        MANUAL = 'manual', '人工新建'
+        LEGACY_IMPORT = 'legacy_import', '历史台账补录'
+
     class RepairType(models.TextChoices):
         INTERNAL = 'internal', '内部维修'
         EXTERNAL = 'external', '外部维修'
@@ -613,6 +937,8 @@ class MaintenanceRecord(UUIDModel, TimeStampedModel):
         blank=True,
         related_name='maintenance_records',
     )
+    source = models.CharField('来源', max_length=20, choices=Source.choices, default=Source.MANUAL)
+    reported_date = models.DateField('故障/维修发生日期', null=True, blank=True)
     repair_type = models.CharField(max_length=20, choices=RepairType.choices, default=RepairType.INTERNAL)
     status = models.CharField(max_length=24, choices=Status.choices, default=Status.OPEN)
     fault_description = models.TextField()
@@ -742,7 +1068,20 @@ class AssetHandover(UUIDModel, TimeStampedModel):
 
 
 def asset_attachment_upload_to(instance, filename):
-    return f'assets/{instance.asset.system_asset_no}/archive/{instance.id}/{filename}'
+    """附件落盘路径。
+
+    存储后端（尤其是对象存储）不会替我们拦截路径穿越，所以在这里去掉
+    目录部分并白名单化文件名，只保留字母数字、点、下划线和短横线。
+    """
+
+    safe_name = _safe_upload_filename(filename)
+    return f'assets/{instance.asset.system_asset_no}/archive/{instance.id}/{safe_name}'
+
+
+def _safe_upload_filename(filename: str) -> str:
+    name = Path(filename or '').name
+    name = re.sub(r'[^A-Za-z0-9._-]', '_', name).lstrip('.')
+    return name[:120] or 'file'
 
 
 class AssetAttachment(UUIDModel, TimeStampedModel):
@@ -798,6 +1137,7 @@ class ImportBatch(UUIDModel, TimeStampedModel):
         PREVIEWED = 'previewed', '待复核'
         IMPORTED = 'imported', '已导入'
         FAILED = 'failed', '导入失败'
+        ROLLED_BACK = 'rolled_back', '已撤销'
 
     source_filename = models.CharField(max_length=255)
     mode = models.CharField(max_length=20, choices=Mode.choices, default=Mode.INCREMENTAL)
@@ -847,6 +1187,46 @@ class ImportIssue(UUIDModel, TimeStampedModel):
 
     def __str__(self) -> str:
         return f'{self.sheet_name} 第 {self.row_number} 行: {self.message}'
+
+
+class ImportMutation(UUIDModel, TimeStampedModel):
+    class ObjectType(models.TextChoices):
+        ASSET = 'asset', '单件资产'
+        STOCK_ITEM = 'stock_item', '耗材配件'
+
+    class Operation(models.TextChoices):
+        CREATE = 'create', '新增'
+        UPDATE = 'update', '更新'
+        BASELINE = 'baseline', '全量基准调整'
+
+    batch = models.ForeignKey(ImportBatch, on_delete=models.CASCADE, related_name='mutations')
+    object_type = models.CharField(max_length=24, choices=ObjectType.choices)
+    object_id = models.UUIDField()
+    operation = models.CharField(max_length=16, choices=Operation.choices)
+    before_snapshot = models.JSONField(default=dict, blank=True)
+    after_snapshot = models.JSONField(default=dict, blank=True)
+    rolled_back_at = models.DateTimeField(null=True, blank=True)
+    rolled_back_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='rolled_back_inventory_import_mutations',
+    )
+
+    class Meta:
+        ordering = ['batch', 'created_at']
+        verbose_name = '导入对象变更账本'
+        verbose_name_plural = '导入对象变更账本'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['batch', 'object_type', 'object_id'],
+                name='unique_import_mutation_object_per_batch',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f'{self.batch_id} {self.get_operation_display()} {self.object_type}:{self.object_id}'
 
 
 class StockItem(UUIDModel, TimeStampedModel):
@@ -1155,3 +1535,117 @@ class InventoryCheckAdjustment(UUIDModel, TimeStampedModel):
         ordering = ['-created_at']
         verbose_name = '盘点差异调整台账'
         verbose_name_plural = '盘点差异调整台账'
+
+
+class AssetLabelPrintJob(UUIDModel, TimeStampedModel):
+    """资产标签打印作业。
+
+    服务端只负责“生成作业”，实际出纸由机房那台 Windows 打印客户端轮询取走。
+    这样仓库服务器不需要接触打印机驱动，也不需要把打印机共享暴露到网络上。
+    """
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', '待打印'
+        CLAIMED = 'claimed', '已领取'
+        PRINTED = 'printed', '已打印'
+        FAILED = 'failed', '打印失败'
+        CANCELLED = 'cancelled', '已取消'
+
+    status = models.CharField(
+        '状态', max_length=16, choices=Status.choices, default=Status.PENDING,
+    )
+    template = models.CharField('标签模板', max_length=64, default='asset-label-60x40')
+    printer_name = models.CharField(
+        '指定打印机', max_length=128, blank=True, default='',
+        help_text='留空则由客户端使用默认打印机。',
+    )
+    payload = models.JSONField('标签内容', default=dict)
+    asset_count = models.PositiveIntegerField('标签张数', default=0)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='asset_label_print_jobs', verbose_name='发起人',
+    )
+    claimed_by = models.CharField('领取客户端', max_length=128, blank=True, default='')
+    claimed_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='claimed_asset_label_print_jobs', verbose_name='领取账号',
+    )
+    claim_token_hash = models.CharField('领取令牌摘要', max_length=64, blank=True, default='')
+    claim_expires_at = models.DateTimeField('领取租约到期时间', null=True, blank=True)
+    last_heartbeat_at = models.DateTimeField('最后心跳时间', null=True, blank=True)
+    attempt_count = models.PositiveIntegerField('尝试次数', default=0)
+    claimed_at = models.DateTimeField('领取时间', null=True, blank=True)
+    finished_at = models.DateTimeField('完成时间', null=True, blank=True)
+    error_message = models.TextField('失败原因', blank=True, default='')
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = '标签打印作业'
+        verbose_name_plural = '标签打印作业'
+        indexes = [
+            models.Index(fields=['status', 'created_at'], name='labeljob_status_created_idx'),
+        ]
+
+    def __str__(self) -> str:
+        return f'{self.get_status_display()} · {self.asset_count} 张'
+
+    def mark_claimed(self, client_name: str, user, token_hash: str, expires_at) -> None:
+        self.status = self.Status.CLAIMED
+        self.claimed_by = client_name or ''
+        self.claimed_by_user = user
+        self.claim_token_hash = token_hash
+        self.claim_expires_at = expires_at
+        self.last_heartbeat_at = timezone.now()
+        self.attempt_count += 1
+        self.claimed_at = timezone.now()
+        self.save(update_fields=[
+            'status', 'claimed_by', 'claimed_by_user', 'claim_token_hash',
+            'claim_expires_at', 'last_heartbeat_at', 'attempt_count', 'claimed_at', 'updated_at',
+        ])
+
+    def mark_printed(self) -> None:
+        self.status = self.Status.PRINTED
+        self.finished_at = timezone.now()
+        self.save(update_fields=['status', 'finished_at', 'updated_at'])
+
+    def mark_failed(self, message: str) -> None:
+        self.status = self.Status.FAILED
+        self.error_message = (message or '')[:2000]
+        self.finished_at = timezone.now()
+        self.save(update_fields=['status', 'error_message', 'finished_at', 'updated_at'])
+
+
+class AssetStateCorrection(ImmutableAuditMixin, UUIDModel, TimeStampedModel):
+    class Source(models.TextChoices):
+        MANUAL = 'manual', '普通校正'
+        LEGACY_REVIEW = 'legacy_review', '历史数据核对'
+
+    asset = models.ForeignKey(Asset, on_delete=models.PROTECT, related_name='state_corrections')
+    from_status = models.CharField('校正前状态', max_length=32, choices=Asset.Status.choices)
+    to_status = models.CharField('校正后状态', max_length=32, choices=Asset.Status.choices)
+    before_snapshot = models.JSONField('校正前快照', default=dict)
+    after_snapshot = models.JSONField('校正后快照', default=dict)
+    reason = models.TextField('校正原因')
+    source = models.CharField('来源', max_length=20, choices=Source.choices, default=Source.MANUAL)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='asset_state_corrections', verbose_name='操作人',
+    )
+    verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='verified_asset_state_corrections', verbose_name='复核人',
+    )
+    target_warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, verbose_name='目标仓库')
+    target_location = models.ForeignKey(Location, on_delete=models.PROTECT, verbose_name='目标库位')
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = '资产台账校正'
+        verbose_name_plural = '资产台账校正'
+        indexes = [models.Index(
+            fields=['asset', 'created_at'],
+            name='inv_corr_asset_created_idx',
+        )]
+
+    def __str__(self):
+        return f'{self.asset}：{self.get_from_status_display()} -> {self.get_to_status_display()}'

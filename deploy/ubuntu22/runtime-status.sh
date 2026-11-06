@@ -5,7 +5,6 @@ services=(
   postgresql
   nginx
   after-sales-warehouse
-  after-sales-warehouse-quick-tunnel
   after-sales-warehouse-low-stock-summary.timer
   after-sales-warehouse-return-reminder.timer
   after-sales-warehouse-reservation-expiry.timer
@@ -43,7 +42,6 @@ printf 'Django: '; /opt/after-sales-warehouse/venv/bin/python -m django --versio
 printf 'Gunicorn: '; /opt/after-sales-warehouse/venv/bin/gunicorn --version 2>/dev/null || echo '未安装'
 printf 'Nginx: '; nginx -v 2>&1 || true
 printf 'PostgreSQL client: '; psql --version 2>/dev/null || echo '未安装'
-printf 'cloudflared: '; cloudflared --version 2>/dev/null || echo '未安装'
 echo
 
 echo '--- 健康检查 ---'
@@ -58,10 +56,6 @@ if [[ -r "$ENV_FILE" ]]; then
 else
   echo '未找到应用配置，无法读取已登记入口。'
 fi
-echo
-
-echo '--- 临时域名入口（current-url） ---'
-/usr/local/sbin/after-sales-warehouse-quick-tunnel-url 2>/dev/null || echo '尚未生成或未启用 Quick Tunnel。'
 echo
 
 echo '--- 下次低库存汇总 ---'

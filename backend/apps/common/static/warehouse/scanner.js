@@ -204,5 +204,107 @@
     return controller('zxing');
   }
 
-  window.WarehouseScanner = {start, readableError, feedback, createSessionResults};
+  // ------------------------------------------------------------------
+  // 全局扫码捕获
+  //
+  // 扫码枪是键盘模拟设备，会被当成"极快的人手打字"。
+  // 靠输入节奏区分：扫码枪相邻字符间隔通常 5~30ms，
+  // 人手最快也要 60ms 以上，中文输入法更慢。
+  //
+  // 设计要点：
+  // 1. 不抢已有输入框：业务页由输入框自己的逻辑处理扫码结果。
+  // 2. 页面空闲时按输入节奏捕获，并在 Enter/Tab 后缀到达时查询。
+  // 3. 不限制固定编码前缀，兼容生产厂家自定义 SN 和条码。
+  // ------------------------------------------------------------------
+
+  const SCAN_MAX_INTERVAL_MS = 45;    // 相邻字符最大间隔，超过即视为人工
+  const SCAN_MIN_LENGTH = 4;          // 兼容厂家较短的 SN / 条码
+  const SCAN_RESET_MS = 120;          // 停顿超过此值清空缓冲
+
+  function looksLikeScan(value) {
+    const normalized = String(value || '').trim();
+    return normalized.length >= SCAN_MIN_LENGTH
+      && normalized.length <= 128
+      && !/[\r\n\t]/.test(normalized);
+  }
+
+  /**
+   * 启动全局扫码监听。
+   * @param {object} options
+   * @param {(value: string) => any} options.onScan 收到扫码结果时的回调
+   * @param {(value: string, detail: object) => any} [options.onDetected] 验证到高速扫码输入时的回调
+   * @param {() => boolean} [options.shouldCapture] 返回 false 可临时关闭捕获
+   * @returns {() => void} 停止函数
+   */
+  function watchGlobalScan(options) {
+    const onScan = options.onScan;
+    const onDetected = options.onDetected || function () {};
+    const shouldCapture = options.shouldCapture || (() => true);
+    const captureEditable = options.captureEditable || (() => false);
+    let buffer = '';
+    let lastTime = 0;
+    let maxGap = 0;
+
+    function isEditable(el) {
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+    }
+
+    function handleKeyDown(event) {
+      if (!shouldCapture()) return;
+      // 组合键是人工操作，不参与判定
+      if (event.ctrlKey || event.altKey || event.metaKey) {
+        buffer = '';
+        lastTime = 0;
+        maxGap = 0;
+        return;
+      }
+
+      const now = Date.now();
+      const gap = lastTime ? now - lastTime : 0;
+      if (gap > SCAN_RESET_MS) buffer = '';
+
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        const value = buffer.trim();
+        buffer = '';
+        lastTime = 0;
+        const detectedGap = maxGap;
+        maxGap = 0;
+        if (value.length >= SCAN_MIN_LENGTH && looksLikeScan(value)) {
+          onDetected(value, {maxIntervalMs: detectedGap});
+          // 普通输入框保留原有行为；物品扫码输入框则强制走统一扫码事件。
+          // 否则第一次扫码后焦点落入搜索框，后续条码会退化为普通搜索并刷新页面。
+          if (isEditable(event.target) && !captureEditable(event.target)) return;
+          // 扫码枪提交：在捕获阶段拦截，避免输入框和表单再次处理同一个 Enter/Tab。
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          onScan(value);
+          return;
+        }
+        return;
+      }
+
+      // 只收集可见单字符（忽略 Shift/箭头/F1 等）
+      if (event.key.length !== 1) return;
+
+      // 节奏判定：间隔过大说明是人在打字，重新开始
+      if (buffer && gap > SCAN_MAX_INTERVAL_MS) {
+        buffer = '';
+        maxGap = 0;
+      }
+      if (buffer && gap) maxGap = Math.max(maxGap, gap);
+      buffer += event.key;
+      lastTime = now;
+      if (buffer.length > 128) buffer = buffer.slice(-128);
+    }
+
+    // 用 capture 阶段，保证比页面自己的 handler 更早看到按键
+    document.addEventListener('keydown', handleKeyDown, true);
+    return function stop() {
+      document.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }
+
+  window.WarehouseScanner = {start, readableError, feedback, createSessionResults, watchGlobalScan, looksLikeScan};
 })();

@@ -2,34 +2,55 @@
 
 ## Architecture
 
-- Backend: Django + Django REST Framework.
-- Storage: PostgreSQL in production, SQLite allowed for local development.
-- File uploads: store outside the code tree.
-- Deployment: Ubuntu 22.04 NUC directly runs PostgreSQL, Gunicorn, Nginx, and systemd. Docker is not a delivery dependency.
+- Django 单体按 `accounts`、`common`、`inventory`、`workflow`、`notifications` 分域。
+- Web/PWA 是当前唯一前端交付；小程序暂停，不与后端放在同一发布包。
+- PostgreSQL 是 NUC 唯一正式运行数据库；SQLite 仅限本机开发和隔离测试。
+- Nginx 负责 80/443 入口，Gunicorn 仅监听 `127.0.0.1:8000`。
+- systemd 管理 Web 服务、备份、健康检查、预警和清理任务。
 
-## Code style
+## Product structure
 
-- Use explicit model names and verbose status enums.
-- Favor small apps over a single large app.
-- Keep serializers narrow.
-- Keep views thin.
-- Use service helpers for code generation and audit trail creation.
+- 桌面端只保留五个一级模块：工作台、业务办理、任务中心、库存中心、采购与报表。
+- 全局搜索固定在顶部；通知只通过右上角铃铛进入；系统设置放入账号菜单。
+- 低频工具进入模块内工具区，不新增侧栏一级入口。
+- 普通申请人只能看到与本人有关的业务；权限不足的入口在服务端和界面同时隐藏。
 
 ## Data rules
 
-  - Assets and workflow records must be auditable.
-  - Inventory checks must use a frozen book snapshot, immutable scan records, and administrator-reviewed adjustment records; counters must not edit balances directly.
-- QR codes should point to stable asset identifiers.
-- Photos and attachments must be linked to concrete records.
+- `Asset.system_asset_no`（AST）是系统永久身份，创建后不可修改或复用。
+- SC、DZSB 是业务主资产编码，源表已有值必须原样保留。
+- 新 SC 只能按已维护的 `ProductModelCode.sc_prefix` 续号，系统不得自创前缀。
+- 无 SC/DZSB 的行不能仅凭 SN、IP、状态、数量或备注推断为资产。
+- SN 允许缺失或重复；重复只告警，不作为静默覆盖依据。
+- 单件资产每件一行；耗材配件按物品类型、仓库和库位管理数量。
+- 项目代码和工单编号选填；同时填写时工单必须属于项目。
+- 所有导入先预检，再由用户确认；必须显示新增、更新、跳过、警告和阻断统计。
 
-## API rules
+## Import and deletion
 
-- Use `/api/` prefix.
-- Keep response shapes predictable.
-- Add pagination before list endpoints grow.
+- 日常只暴露 V3 工作簿：`单件资产` 与 `耗材配件` 两张业务表。
+- 旧混合模板和 V2 模板只保留解析兼容，不作为页面主入口。
+- 每次导入保存来源哈希、模式、摘要、问题明细、操作者和来源批次。
+- 整批误导入优先撤销导入批次；撤销只允许删除该批新建且无后续业务历史的记录。
+- 已存在记录的更新必须保存字段级前后快照；无法安全逆转时阻止整批撤销并列出原因。
+- 测试资产硬删除仅超级管理员可用，要求输入 AST 或主资产编码确认；有申请、流水、预占、维修、交接、附件、生命周期、盘点、装配、转换或校正记录时一律禁止。
+- 删除前记录完整快照，删除动作写入不可变审计日志。
 
-## Security rules
+## Code and security
 
-- Do not expose database ports publicly.
-- Use internal-only access for admin surfaces.
-- Store secrets in `.env`.
+- Python 遵守 PEP 8；复杂业务进入 service，视图只负责鉴权、输入和响应。
+- 使用结构化解析和 ORM，不手工拼 SQL、Excel 或 JSON。
+- 文件上传校验大小、类型和真实内容；用户文案不得泄露密钥和内部异常栈。
+- 默认拒绝权限；每个页面、API 和状态动作都要独立鉴权。
+- API 只允许自定义时效令牌和 Django Session 认证；内网 HTTP 环境不得启用 Basic Authentication。
+- 生产配置只来自 `.env` 或受控系统文件，不提交 secret。
+
+## Testing and release
+
+- 状态动作：正向、权限反向、业务约束反向、审计断言。
+- 导入：模板结构、逐行解析、数据库冲突、事务回滚、重复提交、批次撤销。
+- 前端：桌面与移动视口、权限可见性、无重叠、键盘和扫码枪流程。
+- 发布前：迁移检查、Django 全量测试、静态资源、PostgreSQL 冒烟、部署快照、健康检查。
+- 正式构建默认要求 Git 工作区干净；紧急脏工作区构建必须显式使用 `-AllowDirty`，版本号包含 `dirty` 和源文件内容哈希，禁止伪装成提交版本。
+- 服务器更新必须保留数据库和 `.env`，通过 `rsync --delete` 仅同步应用代码。
+- 正式发布目录和部署包禁止携带清库、重建数据库或强制重导历史基线的脚本。

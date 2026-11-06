@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Read-only deployment readiness check for a clean Ubuntu 22.04 NUC.
+# Read-only deployment readiness check. Default is a clean install; use
+# --update when checking a server that already runs this application.
+MODE='fresh-install'
+if [[ "${1:-}" == '--update' ]]; then
+  MODE='update'
+elif [[ -n "${1:-}" && "${1:-}" != '--fresh-install' ]]; then
+  printf '用法：%s [--fresh-install|--update]\n' "$0"
+  exit 2
+fi
 REQUIRED_PORTS=(80 443 5432 8000)
 MIN_MEMORY_MB=4096
 MIN_DISK_GB=10
@@ -56,13 +64,18 @@ if command -v timedatectl >/dev/null 2>&1; then
 fi
 
 section '端口占用'
+printf '检测模式：%s\n' "$MODE"
 if ! command -v ss >/dev/null 2>&1; then
   fail '缺少 ss 命令，无法检查端口。请安装 iproute2 后重试。'
 else
   for port in "${REQUIRED_PORTS[@]}"; do
     listeners=$(ss -ltnpH "sport = :$port" 2>/dev/null || true)
     if [[ -n "$listeners" ]]; then
-      fail "端口 $port 已被占用：$listeners"
+      if [[ "$MODE" == 'update' ]]; then
+        warn "更新模式下端口 $port 已被现有服务占用：$listeners"
+      else
+        fail "端口 $port 已被占用：$listeners"
+      fi
     else
       ok "端口 $port 未被占用。"
     fi
@@ -72,7 +85,11 @@ fi
 section '已有服务与防火墙'
 for service in nginx postgresql after-sales-warehouse; do
   if systemctl is-active --quiet "$service" 2>/dev/null; then
-    fail "服务 $service 已在运行；请先确认是否为旧部署。"
+    if [[ "$MODE" == 'update' ]]; then
+      ok "更新模式：服务 $service 正在运行。"
+    else
+      fail "服务 $service 已在运行；请先确认是否为旧部署。"
+    fi
   else
     ok "服务 $service 未运行。"
   fi

@@ -11,6 +11,7 @@ from apps.notifications.models import Notification
 
 from .models import (
     Asset,
+    AssetIdentifier,
     InventoryCheckAdjustment,
     InventoryCheckLine,
     InventoryCheckScan,
@@ -180,13 +181,22 @@ def start_check_task(task, actor):
 
 
 def _resolve_asset(value):
-    return Asset.objects.select_related('item_type', 'warehouse', 'location').filter(
+    normalized = value.strip().upper()
+    asset_ids = set(AssetIdentifier.objects.filter(
+        normalized_value=normalized,
+    ).values_list('asset_id', flat=True))
+    asset_ids.update(Asset.objects.filter(
         Q(system_asset_no__iexact=value)
         | Q(asset_code__iexact=value)
         | Q(qr_value__iexact=value)
         | Q(serial_number__iexact=value)
         | Q(manufacturer_barcode__iexact=value)
-    ).first()
+    ).values_list('id', flat=True))
+    if len(asset_ids) > 1:
+        raise InventoryCheckError('该标识匹配到多件资产，请改用系统永久编号或主资产编码。')
+    if not asset_ids:
+        return None
+    return Asset.objects.select_related('item_type', 'warehouse', 'location').get(pk=asset_ids.pop())
 
 
 def _resolve_stock(value):
@@ -313,7 +323,7 @@ def correct_check_line(task, actor, line_id, quantity, note=''):
     task = InventoryCheckTask.objects.select_for_update().get(pk=task.pk)
     if task.status != InventoryCheckTask.Status.IN_PROGRESS:
         raise InventoryCheckError('只有盘点中的任务可以修正盘点结果。')
-    line = task.lines.select_for_update().select_related(
+    line = task.lines.select_for_update(of=('self',)).select_related(
         'asset', 'stock_item', 'expected_warehouse', 'expected_location',
     ).filter(pk=line_id).first()
     if not line:
@@ -492,7 +502,7 @@ def review_check_task(task, actor, review_note=''):
     if task.status != InventoryCheckTask.Status.PENDING_REVIEW:
         raise InventoryCheckError('只有待复核状态的盘点任务可以确认。')
     adjustments = []
-    for line in task.lines.select_for_update().select_related('task', 'asset', 'stock_item'):
+    for line in task.lines.select_for_update(of=('self',)).select_related('task', 'asset', 'stock_item'):
         if line.result == InventoryCheckLine.Result.MATCHED:
             continue
         if line.result == InventoryCheckLine.Result.SHORTAGE:

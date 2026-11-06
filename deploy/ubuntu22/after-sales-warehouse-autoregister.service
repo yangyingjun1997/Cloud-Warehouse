@@ -1,0 +1,13 @@
+[Unit]
+Description=Auto register local IPv4 addresses into warehouse ALLOWED_HOSTS and nginx
+After=network-online.target after-sales-warehouse.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/auto-register-host.sh
+# 这里不能加 RemainAfterExit=yes：那会让 unit 结束后一直停在 active(exited)，
+# timer 到点触发 start 时 systemd 看到已 active 就直接跳过，永远跑不起来。
+
+[Install]
+WantedBy=multi-user.target

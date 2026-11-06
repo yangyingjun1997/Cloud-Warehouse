@@ -61,6 +61,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'apps.common.middleware.NoStoreHtmlMiddleware',
 ]
 
 ROOT_URLCONF = 'warehouse_backend.urls'
@@ -84,11 +85,22 @@ TEMPLATES = [
 WSGI_APPLICATION = 'warehouse_backend.wsgi.application'
 
 database_engine = os.getenv('DB_ENGINE', 'django.db.backends.sqlite3')
-database_name = os.getenv('DB_NAME', str(BASE_DIR / 'db.sqlite3'))
+# SQLite must live in a directory where it can create and delete journal files.
+# The repository root can carry source-protection ACLs on Windows, so local data
+# belongs under LOCALAPPDATA. Linux production supplies PostgreSQL settings.
+if os.name == 'nt':
+    default_sqlite_name = (
+        Path(os.getenv('LOCALAPPDATA', BASE_DIR.parent))
+        / 'AfterSalesWarehouse' / 'data' / 'db.sqlite3'
+    )
+else:
+    default_sqlite_name = BASE_DIR.parent / 'runtime-data' / 'db.sqlite3'
+database_name = os.getenv('DB_NAME', '').strip() or str(default_sqlite_name)
 if database_engine == 'django.db.backends.sqlite3':
     database_path = Path(database_name).expanduser()
     if not database_path.is_absolute():
         database_path = BASE_DIR / database_path
+    database_path.parent.mkdir(parents=True, exist_ok=True)
     database_name = str(database_path)
 
 DATABASES = {
@@ -126,6 +138,8 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 STATIC_ROOT = os.getenv('STATIC_ROOT', str(BASE_DIR / 'staticfiles'))
+# 打印标签用的 logo 等少量静态资源放在 backend/static 下。
+STATICFILES_DIRS = [str(BASE_DIR / 'static')]
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.getenv('MEDIA_ROOT', str(BASE_DIR / 'media'))
 
@@ -146,7 +160,6 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'apps.common.token_authentication.ExpiringTokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
-        'rest_framework.authentication.BasicAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
@@ -162,6 +175,8 @@ DINGTALK_APP_KEY = os.getenv('DINGTALK_APP_KEY', '')
 DINGTALK_APP_SECRET = os.getenv('DINGTALK_APP_SECRET', '')
 DINGTALK_AGENT_ID = os.getenv('DINGTALK_AGENT_ID', '')
 RESERVATION_EXPIRY_HOURS = int(os.getenv('RESERVATION_EXPIRY_HOURS', '72'))
+# 审批通过后预约的保留时长，默认 7 天。留空会让库存被无限期锁定。
+RESERVATION_APPROVED_EXPIRY_HOURS = int(os.getenv('RESERVATION_APPROVED_EXPIRY_HOURS', '168'))
 CONSISTENCY_STATE_FILE = os.getenv(
     'CONSISTENCY_STATE_FILE',
     str(BASE_DIR / 'data' / 'consistency-check.state.json'),
@@ -176,8 +191,15 @@ LOGIN_RATE_LIMIT_FAILURES = int(os.getenv('LOGIN_RATE_LIMIT_FAILURES', '5'))
 LOGIN_RATE_LIMIT_IP_FAILURES = int(os.getenv('LOGIN_RATE_LIMIT_IP_FAILURES', '20'))
 LOGIN_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv('LOGIN_RATE_LIMIT_WINDOW_SECONDS', '300'))
 LOGIN_RATE_LIMIT_LOCKOUT_SECONDS = int(os.getenv('LOGIN_RATE_LIMIT_LOCKOUT_SECONDS', '900'))
+
+# 反向代理白名单：只有 REMOTE_ADDR 命中这里，才采信 X-Real-IP / X-Forwarded-For。
+# 生产环境由同机 nginx 反代，因此默认只信任回环地址；直连部署时留空更安全。
+TRUSTED_PROXY_IPS = env_list('TRUSTED_PROXY_IPS', '127.0.0.1,::1')
 API_RATE_LIMIT_IP_REQUESTS = int(os.getenv('API_RATE_LIMIT_IP_REQUESTS', '30'))
 API_RATE_LIMIT_ACCOUNT_REQUESTS = int(os.getenv('API_RATE_LIMIT_ACCOUNT_REQUESTS', '10'))
 API_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv('API_RATE_LIMIT_WINDOW_SECONDS', '60'))
 API_TOKEN_TTL_SECONDS = int(os.getenv('API_TOKEN_TTL_SECONDS', '2592000'))
+# 申请页扫码查询限流：既保证正常扫码不被打断，又限制批量枚举台账。
+SCAN_RATE_LIMIT_REQUESTS = int(os.getenv('SCAN_RATE_LIMIT_REQUESTS', '120'))
+SCAN_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv('SCAN_RATE_LIMIT_WINDOW_SECONDS', '300'))
 SECURITY_STATE_RETENTION_SECONDS = int(os.getenv('SECURITY_STATE_RETENTION_SECONDS', '7776000'))

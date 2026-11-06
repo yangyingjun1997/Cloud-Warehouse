@@ -1,0 +1,13 @@
+[Unit]
+Description=Periodically auto register local IPv4 (handles DHCP address changes)
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=2min
+OnCalendar=*:0/2
+AccuracySec=15s
+Persistent=true
+Unit=after-sales-warehouse-autoregister.service
+
+[Install]
+WantedBy=timers.target

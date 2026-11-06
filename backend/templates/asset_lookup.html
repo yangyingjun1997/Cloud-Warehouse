@@ -61,11 +61,11 @@
           {% with asset=result.asset %}
             <div class="lookup-result">
               <div>
-                <div class="code">仓库系统编号：{{ asset.system_asset_no }}</div>
+                <div class="code">{% if asset.asset_code %}{{ asset.asset_code }}{% else %}<span class="tag pending">暂未赋码</span>{% endif %}</div>
                 <div class="result-name">{{ asset.name }}</div>
                 <div class="result-meta">
                   <span>物品类型：{{ asset.item_type.name }}</span>
-                  <span>公司 ERP 编码：{{ asset.asset_code|default:'未录入' }}</span><span>生产厂家 SN：{{ asset.serial_number|default:'未录入' }}</span>
+                  <span>生产厂家 SN：{{ asset.serial_number|default:'未录入' }}</span>
                   {% if user_is_operator %}
                     <span>状态：{{ asset.get_status_display }}</span>
                     <span>仓库 / 库位：{{ asset.warehouse.name|default:'未分配仓库' }} / {{ asset.location.code|default:'未分配库位' }}</span>
@@ -86,7 +86,7 @@
     <div class="scan-panel-actions"><span id="asset-camera-status">正在启动摄像头</span><div class="scan-panel-controls"><button id="asset-scan-torch" type="button" hidden>开启手电筒</button><button id="asset-scan-switch" type="button">切换镜头</button><button id="mobile-scan-close" type="button">关闭</button></div></div>
   </section>
   <script src="{% static 'warehouse/vendor/zxing-browser-0.1.5.min.js' %}"></script>
-  <script src="{% static 'warehouse/scanner.js' %}"></script>
+  <script src="{% static 'warehouse/scanner.js' %}?v=20261105-3"></script>
   <script>
     (() => {
       const scanButton = document.getElementById('mobile-scan-button');

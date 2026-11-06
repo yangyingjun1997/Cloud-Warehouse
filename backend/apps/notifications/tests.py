@@ -47,6 +47,27 @@ class NotificationApiTests(TestCase):
         response = self.client.get(f'/api/notifications/notifications/{self.notification.id}/')
         self.assertEqual(response.status_code, 404)
 
+    def test_notification_api_is_read_only_except_mark_read(self):
+        self.client.force_authenticate(self.user)
+        collection_url = '/api/notifications/notifications/'
+        detail_url = f'{collection_url}{self.notification.id}/'
+
+        response = self.client.post(collection_url, {
+            'title': '伪造通知',
+            'content': '普通用户不应创建通知。',
+        }, format='json')
+        self.assertEqual(response.status_code, 405, response.data)
+
+        response = self.client.patch(detail_url, {'title': '篡改通知'}, format='json')
+        self.assertEqual(response.status_code, 405, response.data)
+        response = self.client.delete(detail_url)
+        self.assertEqual(response.status_code, 405, response.data)
+
+        response = self.client.post(f'{detail_url}mark-read/', {}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.notification.refresh_from_db()
+        self.assertTrue(self.notification.is_read)
+
     @override_settings(DINGTALK_APP_KEY='', DINGTALK_APP_SECRET='', DINGTALK_AGENT_ID='')
     def test_personal_dingtalk_reports_unconfigured_state(self):
         result = send_user_message(self.user, '测试通知', '测试内容')

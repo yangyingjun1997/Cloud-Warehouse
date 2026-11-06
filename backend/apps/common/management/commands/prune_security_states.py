@@ -27,7 +27,9 @@ class Command(BaseCommand):
 
         login_states = LoginThrottleState.objects.filter(updated_at__lt=cutoff)
         api_states = ApiThrottleState.objects.filter(updated_at__lt=cutoff)
+        # 长期令牌的 expires_at 为空，必须排除，否则这里会把它当成"过期"删掉。
         expired_tokens = ApiAccessToken.objects.filter(
+            expires_at__isnull=False,
             expires_at__lt=cutoff,
         )
         revoked_tokens = ApiAccessToken.objects.filter(

@@ -4,7 +4,7 @@
 
 - **后端**：Django 5.2 + Django REST Framework + PostgreSQL
 - **Web 工作台**：服务端渲染 + PWA（支持离线操作与移动扫码）
-- **移动端**：微信小程序（`miniprogram/`，独立目录，可选）
+- **移动端**：移动 Web/PWA 为当前交付端；`miniprogram/` 源码保留但暂停开发
 - **部署**：Ubuntu 22.04 实体机，Gunicorn + Nginx + systemd，无需 Docker
 
 ---
@@ -14,7 +14,7 @@
 | 模块 | 能力 |
 | --- | --- |
 | 采购闭环 | 补货建议 → 采购申请 → 审批 → 采购订单 → 到货入库 → 供应商对账 |
-| 资产台账 | 单件资产 / 耗材配件双模式，二维码、生命周期、维修记录、附件归档 |
+| 资产台账 | 单件资产 / 耗材配件双模式，V2 永久编号与主编码、二维码、生命周期、维修记录、附件归档 |
 | 审批流 | 可配置审批节点，超时自动关闭，结果站内通知 + 钉钉推送 |
 | 出入库 | 借用 / 领用 / 归还 / 调拨 / 维修 / 报废等全业务类型，支持批量与扫码 |
 | 盘点 | 冻结快照 → 扫码核对 → 差异调整 → 审计留痕 |
@@ -28,13 +28,13 @@
 ## 系统架构
 
 ```
-浏览器 / PWA / 小程序
+      浏览器 / PWA
         │
         ▼
       Nginx  (80/443, 反向代理 + 静态文件)
         │
         ▼
-    Gunicorn  (Unix Socket, Django WSGI)
+    Gunicorn  (127.0.0.1:8000, Django WSGI)
         │
         ▼
   Django 应用  ──────────────┐
@@ -51,6 +51,31 @@
 - 数据库备份、恢复演练、回滚脚本开箱即用
 - 离线操作记录联网后进入服务器复核队列，不直接写库
 
+### 资产编码 V2
+
+- 每件资产自动获得永久编号 `AST-00000001`，不随仓库、归属或状态变化。
+- 市场资产沿用源表已有 SC；新增资产只能根据管理员维护的型号 SC 前缀续号，系统不得自创前缀。
+- 研发资产优先录入行政/ERP 编码；暂未取得时标记“待行政赋码”，只用 AST 追踪。
+- 二维码正文固定为 `WMS2:A:{AST编号}`；纯 AST、当前主编码、历史编码、SN 和厂家条码仍可查询。
+- 生产厂家和供应商是两套独立基础资料；项目、工单在资产录入与导入时选填。
+- 日常 Excel 导入导出统一使用库存中心实时生成的 V3 工作簿，包含 `单件资产` 与 `耗材配件` 两张业务表；旧 V1/V2 格式仅保留解析兼容，不再在根目录存放重复模板。
+- 系统已从 11.2 基线台账预置设备类型、生产厂家和型号初始资料，管理员可继续维护；已被资产使用的代码不能直接删除。
+
+### 库存 V3 导入导出
+
+- 单件资产每件一行，沿用 AST、SC/DZSB、SN 与资产状态规则。
+- 耗材配件按物品类型、仓库和库位管理数量。
+- 每行必须明确填写“新增”或“更新”，系统不会根据 SN、数量、状态或备注猜测管理方式。
+- 导入先预检再写入；V3 批次保存对象级前后快照，满足安全条件时可由超级管理员整批撤销。
+- 调试阶段误录的无业务历史资产可由超级管理员输入 AST/主资产编码和原因后受控删除；存在任何业务历史时禁止删除。
+- 旧台账 V4 转换入口已移除；历史台账只作为人工核对依据，日常批量导入统一使用 V3 工作簿。
+- 重复正式编码、资产/耗材冲突、未分类和无效编码均逐行阻断，系统不会静默选择其中一行。
+
+### 标签打印校准
+
+- Windows 打印客户端先打印固定 60×40 mm 校准页，再打印四个独立 30×20 mm 测试标签。
+- DPI 和 X/Y 偏移只影响固定物理画布内的渲染，不改变纸张尺寸；四联标签按四格直接排版，不是把整张标签缩放四倍。
+
 ---
 
 ## 快速开始（本地开发）
@@ -59,7 +84,7 @@
 
 - Python 3.10+
 - Node.js 18+（仅小程序开发需要）
-- PostgreSQL 14+（生产）/ SQLite（本地开发默认）
+- PostgreSQL 14+（生产）/ SQLite（本地开发默认；Windows 数据保存在 `%LOCALAPPDATA%\AfterSalesWarehouse\data`）
 
 ### 1. 克隆并准备环境
 
@@ -155,11 +180,14 @@ sudo bash deploy/ubuntu22/preflight.sh
 
 # 2. 构建纯净部署包（在开发机执行）
 powershell -ExecutionPolicy Bypass -File .\deploy\ubuntu22\build-package.ps1   # Windows
-# 或在 Linux/macOS 上手动打包 backend/ + deploy/ + miniprogram/
+# 或在 Linux/macOS 上手动打包 backend/ + deploy/；小程序不进入当前发布包
 
 # 3. 上传部署包到服务器并解压，然后执行：
 sudo bash deploy/ubuntu22/install.sh --host <SERVER_IP>
 ```
+
+构建脚本默认要求 Git 工作区干净，确保包名和 manifest 能准确对应提交。仅紧急调试可显式增加
+`-AllowDirty`；此时包名会自动包含 `dirty` 和内容哈希，不得作为正式发布版本。
 
 安装脚本会自动完成：
 
@@ -168,7 +196,7 @@ sudo bash deploy/ubuntu22/install.sh --host <SERVER_IP>
 - 创建数据库与用户（幂等，不重建已有数据）
 - 配置 Gunicorn systemd 服务、Nginx 站点
 - 注册每日备份、健康检查、一致性巡检等 systemd timers
-- 生成自签名 HTTPS 证书（可选 Cloudflare Tunnel）
+- 生成自签名 HTTPS 证书（可选，需网络管理员配合）
 
 ### 首次部署后导入历史数据（可选）
 
@@ -217,8 +245,8 @@ sudo /usr/local/sbin/after-sales-warehouse-rollback --list
 | 健康检查 | 每 5 分钟 | 服务状态、数据库连通、磁盘空间 |
 | 数据一致性巡检 | 每日 03:00 | 只读检查，异常时钉钉告警 |
 | 安全状态清理 | 每日 03:45 | 清理超期登录限流记录与失效 API 令牌 |
-| 低库存汇总 | 每日 08:00 | 汇总低库存物品并发送钉钉通知 |
-| 归还提醒 | 每日 09:00 | 检查到期 / 逾期借用并通知 |
+| 低库存汇总 | 每周一 09:00 | 汇总低库存物品并发送钉钉通知 |
+| 归还提醒 | 每日 09:10 | 检查到期 / 逾期借用并通知 |
 
 ### 日志
 
@@ -261,6 +289,12 @@ journalctl -u after-sales-warehouse-backup.service
 | `warehouse_staff` | 仓库日常操作 |
 | `warehouse_approval` | 审批 |
 | `warehouse_reports` | 报表查看 |
+| `warehouse_code_master` | 市场设备类型与型号编码基础资料 |
+| `warehouse_admin_code` | 行政资产编码维护 |
+| `warehouse_domain_change` | 市场/研发资产归属调整 |
+| `warehouse_import` | Excel 批量导入 |
+| `warehouse_label_print` | 资产标签打印 |
+| `warehouse_finance` | 采购金额等财务信息查看 |
 
 ---
 
@@ -278,7 +312,7 @@ journalctl -u after-sales-warehouse-backup.service
 │   ├── warehouse_backend/      # Django 项目配置
 │   ├── manage.py
 │   └── requirements.txt
-├── miniprogram/                # 微信小程序（可选）
+├── miniprogram/                # 微信小程序历史代码（当前暂停，不进入发布包）
 ├── deploy/
 │   └── ubuntu22/               # Ubuntu 部署脚本与配置模板
 │       ├── install.sh          # 一键安装/更新
@@ -290,6 +324,12 @@ journalctl -u after-sales-warehouse-backup.service
 │       ├── *.service / *.timer # systemd 单元
 │       └── nginx-*.conf        # Nginx 配置模板
 ├── docs/                       # 公开文档
+├── AGENTS.md                   # Agent 强制工作流程
+├── PROJECT_STATUS.md           # 唯一有效的当前状态与待办
+├── DEVELOPMENT_PLAN.md         # 当前阶段计划与验收标准
+├── PROGRAM_STANDARDS.md        # 代码、数据、安全和发布标准
+├── CHANGELOG.md                # 已实施变更记录
+├── 打印机客户端部署与测试流程.md          # 打印电脑部署、测试打印、闭环验证步骤
 └── tools/                      # 开发辅助脚本
 ```
 
@@ -299,6 +339,8 @@ journalctl -u after-sales-warehouse-backup.service
 
 - 代码标准见 `PROGRAM_STANDARDS.md`
 - AI 协作规范见 `AGENTS.md`
+- 当前进度见 `PROJECT_STATUS.md`
+- 当前开发计划见 `DEVELOPMENT_PLAN.md`
 - 提交前运行：`python manage.py test`（后端测试）
 
 ### 测试
@@ -321,7 +363,8 @@ python manage.py test apps.common -v 2   # 详细输出
 ## 详细文档
 
 - 部署原理与手动部署步骤：`Ubuntu22.04完整手动部署手册.md`
-- 产品与权限设计：`售后仓库管理系统产品方案.md`
-- 功能蓝图与拓展路线：`系统功能蓝图与拓展路线图.md`
-- 技术评估与升级规划：`当前系统产品技术评估与升级规划-20261001.md`
-- 开发流程与回归验收：`产品开发计划与回归验收手册.md`
+- 当前状态与剩余任务：`PROJECT_STATUS.md`
+- 开发顺序与回归验收：`DEVELOPMENT_PLAN.md`
+- 资产编码规则：`资产编码系统V2设计规范.md`
+- 扫码枪接入：`扫码枪接入说明.md`
+- 打印客户端：`打印机客户端部署与测试流程.md`

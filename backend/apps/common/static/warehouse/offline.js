@@ -128,7 +128,7 @@
       const items = await readAll();
       const count = items.filter(item => item.status === 'pending').length;
       document.querySelectorAll('[data-offline-queue-count]').forEach(node => {
-        node.textContent = count ? `待同步 ${count}` : '已同步';
+        node.textContent = count ? `待同步 ${count}` : (navigator.onLine ? '已同步' : '连接中断');
         node.hidden = !count && navigator.onLine;
       });
       return count;
@@ -260,12 +260,7 @@
   }
 
   function init() {
-    const status = document.getElementById('network-status');
     const updateNetwork = () => {
-      if (status) {
-        status.textContent = navigator.onLine ? '网络正常' : '离线模式';
-        status.classList.toggle('offline', !navigator.onLine);
-      }
       updateIndicator();
       if (navigator.onLine) syncQueue();
     };
