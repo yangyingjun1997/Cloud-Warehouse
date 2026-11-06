@@ -54,6 +54,7 @@ fi
 echo "将在隔离测试库 $test_db 执行竞态测试；不会连接业务库写入测试数据。"
 cd "$BACKEND_DIR"
 runuser -u "$APP_USER" -- "$PYTHON" manage.py test \
+  apps.accounts.test_postgresql_concurrency \
   apps.workflow.test_postgresql_concurrency \
   apps.common.test_postgresql_concurrency \
   --noinput -v 2

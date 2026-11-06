@@ -59,6 +59,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'apps.accounts.middleware.AccountSessionMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'apps.common.middleware.NoStoreHtmlMiddleware',
@@ -203,3 +204,5 @@ API_TOKEN_TTL_SECONDS = int(os.getenv('API_TOKEN_TTL_SECONDS', '2592000'))
 SCAN_RATE_LIMIT_REQUESTS = int(os.getenv('SCAN_RATE_LIMIT_REQUESTS', '120'))
 SCAN_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv('SCAN_RATE_LIMIT_WINDOW_SECONDS', '300'))
 SECURITY_STATE_RETENTION_SECONDS = int(os.getenv('SECURITY_STATE_RETENTION_SECONDS', '7776000'))
+PRIVILEGED_MAX_ACTIVE_SESSIONS = int(os.getenv('PRIVILEGED_MAX_ACTIVE_SESSIONS', '2'))
+ACCOUNT_SESSION_SYNC_SECONDS = int(os.getenv('ACCOUNT_SESSION_SYNC_SECONDS', '300'))

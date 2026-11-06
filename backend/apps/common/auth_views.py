@@ -5,6 +5,8 @@ from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth import views as auth_views
 from django.db import transaction
 
+from apps.accounts.session_services import register_account_session
+
 from .auth_throttle import (
     clear_account_failures,
     get_client_ip,
@@ -62,6 +64,7 @@ class RateLimitedLoginView(auth_views.LoginView):
 
         with transaction.atomic():
             response = super().form_valid(form)
+            register_account_session(self.request, form.get_user())
             record_login_event(
                 event_type='login_succeeded',
                 username=form.get_user().get_username(),

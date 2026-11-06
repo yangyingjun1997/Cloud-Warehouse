@@ -15,6 +15,7 @@
 必须同步更新 URL 配置，否则会 404。
 """
 from django.contrib import messages
+from django.conf import settings
 from django.core.exceptions import PermissionDenied
 from django.contrib.auth import logout as auth_logout
 from django.contrib.auth import get_user_model
@@ -57,7 +58,15 @@ from apps.common.permissions import (
     is_system_administrator, is_warehouse_operator,
 )
 from apps.common.security_audit import record_login_event
-from apps.accounts.models import Department, UserProfile
+from apps.accounts.models import AccountSession, Department, UserProfile
+from apps.accounts.session_services import (
+    active_account_sessions,
+    is_privileged_session_user,
+    mark_current_session_revoked,
+    register_account_session,
+    revoke_account_session,
+    revoke_other_account_sessions,
+)
 from apps.inventory.forms import (
     AssetAttachmentForm,
     AssetHandoverForm,
@@ -455,6 +464,7 @@ def logout_view(request):
 
     def logout_and_record():
         with transaction.atomic():
+            mark_current_session_revoked(request)
             record_login_event(
                 event_type='logout_succeeded',
                 username=username,
@@ -468,6 +478,49 @@ def logout_view(request):
         messages.error(request, '退出登录时数据库繁忙，请稍后重试。')
         return redirect('home')
     return redirect('login')
+
+
+@login_required
+def account_session_list(request):
+    current_session = register_account_session(request, request.user)
+    if request.method == 'POST':
+        action = request.POST.get('action', '')
+        if action == 'revoke_others':
+            count = revoke_other_account_sessions(request=request, actor=request.user)
+            if count:
+                messages.success(request, f'已退出其他 {count} 个设备。')
+            else:
+                messages.info(request, '没有其他有效登录设备。')
+            return redirect('account_session_list')
+        if action == 'revoke':
+            target = get_object_or_404(
+                AccountSession,
+                pk=request.POST.get('session_id'),
+                user=request.user,
+                revoked_at__isnull=True,
+            )
+            if target.session_key == request.session.session_key:
+                messages.error(request, '当前设备请使用“退出登录”，不能在这里撤销。')
+                return redirect('account_session_list')
+            revoke_account_session(
+                actor=request.user,
+                account_session=target,
+                client_ip=client_ip_from_request(request),
+            )
+            messages.success(request, '指定设备已退出登录。')
+            return redirect('account_session_list')
+        messages.error(request, '无法识别的会话操作。')
+        return redirect('account_session_list')
+
+    sessions = list(active_account_sessions(request.user))
+    for item in sessions:
+        item.is_current = item.session_key == request.session.session_key
+    return render(request, 'account_sessions.html', {
+        'account_sessions': sessions,
+        'current_account_session': current_session,
+        'session_limit_enabled': is_privileged_session_user(request.user),
+        'session_limit': settings.PRIVILEGED_MAX_ACTIVE_SESSIONS,
+    })
 
 
 def _user_role_label(user, is_operator: bool, is_system_admin: bool) -> str:

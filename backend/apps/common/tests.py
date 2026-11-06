@@ -3,7 +3,8 @@ from django.contrib.auth.models import Group
 from django.contrib.staticfiles import finders
 import uuid
 from apps.inventory.models import Asset, Category, ItemType, Location, StockItem, StockItemHolding, Warehouse
-from apps.accounts.models import UserProfile
+from apps.accounts.models import AccountSession, UserProfile
+from django.contrib.sessions.backends.db import SessionStore
 from apps.common.models import (
     ApiAccessToken,
     ApiThrottleState,
@@ -465,11 +466,42 @@ class SecurityStateCleanupTests(TestCase):
             token_prefix='cleanup-live',
             expires_at=now + timedelta(days=10),
         )
+        stale_session = AccountSession.objects.create(
+            user=fresh_user,
+            session_key='missing-old-session',
+            ip_hash='e' * 64,
+            device_label='old browser',
+            last_seen_at=old,
+        )
+        AccountSession.objects.filter(pk=stale_session.pk).update(updated_at=old)
+        revoked_session = AccountSession.objects.create(
+            user=fresh_user,
+            session_key='revoked-old-session',
+            ip_hash='f' * 64,
+            revoked_at=old,
+        )
+        live_session_store = SessionStore()
+        live_session_store['_auth_user_id'] = str(fresh_user.pk)
+        live_session_store.save()
+        live_session = AccountSession.objects.create(
+            user=fresh_user,
+            session_key=live_session_store.session_key,
+            ip_hash='1' * 64,
+            last_seen_at=old,
+        )
+        AccountSession.objects.filter(pk=live_session.pk).update(updated_at=old)
+        fresh_missing_session = AccountSession.objects.create(
+            user=fresh_user,
+            session_key='missing-fresh-session',
+            ip_hash='2' * 64,
+        )
 
         preview = StringIO()
         call_command('prune_security_states', '--dry-run', stdout=preview)
         self.assertIn('登录限流 1 条', preview.getvalue())
+        self.assertIn('过期设备会话 2 条', preview.getvalue())
         self.assertTrue(LoginThrottleState.objects.filter(key='old-login').exists())
+        self.assertTrue(AccountSession.objects.filter(pk=stale_session.pk).exists())
 
         output = StringIO()
         call_command('prune_security_states', stdout=output)
@@ -479,6 +511,10 @@ class SecurityStateCleanupTests(TestCase):
         self.assertFalse(SecurityAuditEvent.objects.filter(subject_hash='c' * 64).exists())
         self.assertFalse(ApiAccessToken.objects.filter(token_prefix='cleanup-old').exists())
         self.assertTrue(ApiAccessToken.objects.filter(pk=active.pk).exists())
+        self.assertFalse(AccountSession.objects.filter(pk=stale_session.pk).exists())
+        self.assertFalse(AccountSession.objects.filter(pk=revoked_session.pk).exists())
+        self.assertTrue(AccountSession.objects.filter(pk=live_session.pk).exists())
+        self.assertTrue(AccountSession.objects.filter(pk=fresh_missing_session.pk).exists())
         self.assertIn('安全状态清理完成', output.getvalue())
 
 

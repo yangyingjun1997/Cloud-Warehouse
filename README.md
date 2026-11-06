@@ -20,7 +20,7 @@
 | 盘点 | 冻结快照 → 扫码核对 → 差异调整 → 审计留痕 |
 | 报表 | 库存分布、呆滞分析、供应商价格、采购汇总，支持 CSV 导出 |
 | 通知 | 站内通知 + 钉钉群机器人 + 钉钉个人工作通知 |
-| 安全 | 登录限流、API 令牌轮换、操作审计、PWA 离线队列账号隔离 |
+| 安全 | 登录限流、特权账号会话上限/设备撤销、API 令牌轮换、操作审计、PWA 离线队列账号隔离 |
 | 运维 | systemd 定时备份、健康检查、恢复演练、数据一致性每日巡检 |
 
 ---
@@ -269,7 +269,7 @@ python tools/read_only_load_test.py \
 | 数据备份 | 每日 02:15 | PostgreSQL dump + 媒体文件压缩 + SHA256 校验 |
 | 健康检查 | 每 5 分钟 | 服务状态、数据库连通、磁盘空间 |
 | 数据一致性巡检 | 每日 03:00 | 只读检查，异常时钉钉告警 |
-| 安全状态清理 | 每日 03:45 | 清理超期登录限流记录与失效 API 令牌 |
+| 安全状态清理 | 每日 03:45 | 清理超期登录限流、失效设备会话与 API 令牌 |
 | 低库存汇总 | 每周一 09:00 | 汇总低库存物品并发送钉钉通知 |
 | 归还提醒 | 每日 09:10 | 检查到期 / 逾期借用并通知 |
 
@@ -300,7 +300,7 @@ journalctl -u after-sales-warehouse-backup.service
 | 数据库 | `DB_NAME`、`DB_USER`、`DB_PASSWORD`、`DB_HOST`、`DB_PORT` | 不配置则用 SQLite |
 | 钉钉群机器人 | `DINGTALK_WEBHOOK`、`DINGTALK_SECRET` | 群通知 |
 | 钉钉企业应用 | `DINGTALK_APP_KEY`、`DINGTALK_APP_SECRET`、`DINGTALK_AGENT_ID` | 个人工作通知 |
-| 安全 | `API_TOKEN_EXPIRE_DAYS`、`LOGIN_RATE_LIMIT_*` | 令牌过期、限流阈值 |
+| 安全 | `API_TOKEN_TTL_SECONDS`、`LOGIN_RATE_LIMIT_*`、`PRIVILEGED_MAX_ACTIVE_SESSIONS`、`ACCOUNT_SESSION_SYNC_SECONDS` | 令牌过期、限流阈值、特权账号会话上限与活跃时间同步频率 |
 | 备份 | `BACKUP_RETENTION_DAYS` | 备份保留天数 |
 
 ### 权限组

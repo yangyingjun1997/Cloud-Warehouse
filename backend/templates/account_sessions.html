@@ -1,0 +1,18 @@
+{% extends "web_base.html" %}
+{% block title %}登录设备{% endblock %}
+{% block crumb %}账号 / 登录设备{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow">账号安全</p><h1>登录设备</h1><p class="page-copy">查看当前账号仍然有效的浏览器会话，并退出不再使用的设备。</p></div>
+  {% if account_sessions|length > 1 %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="revoke_others"><button class="button button-danger" type="submit" onclick="return confirm('确认退出当前设备之外的所有登录？')">退出其他设备</button></form>{% endif %}
+</div>
+
+<section class="panel">
+  <div class="panel-head"><div><h2>有效会话</h2><span>{{ account_sessions|length }} 个设备</span></div>{% if session_limit_enabled %}<span>特权账号最多 {{ session_limit }} 个</span>{% else %}<span>普通账号允许多设备</span>{% endif %}</div>
+  {% if account_sessions %}
+    <div class="table-scroll"><table class="data-table"><thead><tr><th>设备</th><th>地址网段</th><th>最近活动</th><th>操作</th></tr></thead><tbody>
+      {% for item in account_sessions %}<tr><td><strong>{{ item.device_label }}</strong>{% if item.is_current %} <span class="tag waiting">当前设备</span>{% endif %}</td><td>{{ item.ip_hint }}</td><td>{{ item.last_seen_at|date:"Y-m-d H:i:s" }}</td><td>{% if item.is_current %}<span class="tag neutral">正在使用</span>{% else %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="revoke"><input type="hidden" name="session_id" value="{{ item.id }}"><button class="button button-secondary" type="submit">退出此设备</button></form>{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div>
+  {% else %}<div class="empty-state">暂无有效登录设备。</div>{% endif %}
+</section>
+{% endblock %}
