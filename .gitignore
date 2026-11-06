@@ -28,7 +28,11 @@ dist/
 
 # ---- 部署产物 ----
 after-sales-warehouse-*.zip
+release-*.tar.gz
 *.sha256
+
+# ---- 本地测试临时目录 ----
+backend/.test-tmp/
 
 # ---- 工具运行产物 ----
 artifacts/
