@@ -149,6 +149,47 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CORS_ALLOW_ALL_ORIGINS = env_bool('CORS_ALLOW_ALL_ORIGINS', '0')
 CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS', '')
 CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS', '')
+
+# === 结构化日志配置 ===
+# 生产环境由 systemd/journald 收集 stdout/stderr，无需写文件
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '[{levelname}] {asctime} {name} {module}.{funcName}:{lineno} - {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': os.getenv('LOG_LEVEL', 'DEBUG' if DEBUG else 'INFO'),
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        'apps': {
+            'handlers': ['console'],
+            'level': os.getenv('APP_LOG_LEVEL', 'DEBUG' if DEBUG else 'INFO'),
+            'propagate': False,
+        },
+    },
+}
+
 SECURE_SSL_REDIRECT = USE_HTTPS
 SESSION_COOKIE_SECURE = USE_HTTPS
 CSRF_COOKIE_SECURE = USE_HTTPS

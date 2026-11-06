@@ -578,6 +578,46 @@ def apply_asset_v2_import(
     assembly_intents = []
     external_row_asset_map = {}
     created_count = updated_count = disabled_count = 0
+
+    # === 预加载外键字典，避免 N+1 查询 ===
+    # 收集所有需要用到的 code
+    domain_codes = {r['domain_code'] for r in records if r.get('domain_code')}
+    warehouse_codes = {r['warehouse_code'] for r in records if r.get('warehouse_code')}
+    item_type_codes = {r['item_type_code'] for r in records if r.get('item_type_code')}
+    asset_type_codes = {r['asset_type_code'] for r in records if r.get('asset_type_code')}
+    project_codes = {r['project_code'] for r in records if r.get('project_code')}
+    work_order_codes = {r['work_order_code'] for r in records if r.get('work_order_code')}
+
+    # 批量查询
+    domains = {d.code: d for d in InventoryDomain.objects.filter(code__in=domain_codes)}
+    warehouses = {w.code: w for w in Warehouse.objects.filter(code__in=warehouse_codes)}
+    item_types = {t.code: t for t in ItemType.objects.filter(code__in=item_type_codes)}
+    asset_type_codes_map = {t.code: t for t in AssetTypeCode.objects.filter(code__in=asset_type_codes)}
+    projects = {p.code: p for p in Project.objects.filter(code__in=project_codes)}
+    work_orders = {w.code: w for w in WorkOrder.objects.filter(code__in=work_order_codes)}
+
+    # 预加载 Location（依赖 warehouse）
+    location_keys = {(r['warehouse_code'], r['location_code']) for r in records if r.get('location_code')}
+    location_whs = {wh_code for wh_code, _ in location_keys}
+    locations = {}
+    if location_keys:
+        wh_ids = {warehouses[code].id for code in location_whs if code in warehouses}
+        for loc in Location.objects.filter(warehouse_id__in=wh_ids).select_related('warehouse'):
+            key = (loc.warehouse.code, loc.code)
+            if key in location_keys:
+                locations[key] = loc
+
+    # 预加载 ProductModelCode（依赖 asset_type_code）
+    product_model_keys = {(r['asset_type_code'], r['product_model_code']) for r in records if r.get('product_model_code')}
+    product_models = {}
+    if product_model_keys := product_model_keys:
+        type_ids = {asset_type_codes_map[code].id for code, _ in product_model_keys if code in asset_type_codes_map}
+        for pm in ProductModelCode.objects.filter(asset_type_code_id__in=type_ids).select_related('asset_type_code'):
+            key = (pm.asset_type_code.code, pm.code)
+            if key in product_model_keys:
+                product_models[key] = pm
+
+    # === 主循环 ===
     for record in records:
         asset = None
         if record['operation'] == '更新':
@@ -585,16 +625,25 @@ def apply_asset_v2_import(
         is_create = asset is None
         if is_create:
             asset = Asset()
-        domain = InventoryDomain.objects.get(code=record['domain_code'])
-        warehouse = Warehouse.objects.get(code=record['warehouse_code'])
-        location = Location.objects.filter(warehouse=warehouse, code=record['location_code']).first() if record['location_code'] else None
+
+        # 从预加载字典获取外键
+        domain = domains.get(record['domain_code'])
+        if not domain:
+            raise AssetV2ImportError(f'第 {record["row_number"]} 行：归属域 {record["domain_code"]} 不存在。')
+        warehouse = warehouses.get(record['warehouse_code'])
+        if not warehouse:
+            raise AssetV2ImportError(f'第 {record["row_number"]} 行：仓库 {record["warehouse_code"]} 不存在。')
+        location = locations.get((record['warehouse_code'], record['location_code'])) if record.get('location_code') else None
+
         asset.domain = domain
         asset.code_source = record['code_source']
         asset.asset_code = record['asset_code'] or None
-        asset.asset_type_code = AssetTypeCode.objects.filter(code=record['asset_type_code']).first()
-        asset.product_model_code = ProductModelCode.objects.filter(asset_type_code=asset.asset_type_code, code=record['product_model_code']).first() if asset.asset_type_code_id else None
+        asset.asset_type_code = asset_type_codes_map.get(record['asset_type_code'])
+        asset.product_model_code = product_models.get((record['asset_type_code'], record['product_model_code'])) if asset.asset_type_code else None
         asset.name = record['name']
-        asset.item_type = ItemType.objects.get(code=record['item_type_code'])
+        asset.item_type = item_types.get(record['item_type_code'])
+        if not asset.item_type:
+            raise AssetV2ImportError(f'第 {record["row_number"]} 行：物品类型 {record["item_type_code"]} 不存在。')
         asset.manufacturer_ref = _resolve_pair(Manufacturer, record['manufacturer_code'], record['manufacturer_name'], '生产厂家', record, [])
         asset.manufacturer = record['manufacturer_name']
         asset.model = record['model']
@@ -605,8 +654,8 @@ def apply_asset_v2_import(
         asset.supplier = record['supplier_name']
         asset.warehouse = warehouse
         asset.location = location
-        asset.project = Project.objects.filter(code=record['project_code']).first() if record['project_code'] else None
-        asset.work_order = WorkOrder.objects.filter(code=record['work_order_code']).first() if record['work_order_code'] else None
+        asset.project = projects.get(record['project_code']) if record.get('project_code') else None
+        asset.work_order = work_orders.get(record['work_order_code']) if record.get('work_order_code') else None
         asset.received_date = record['received_date']
         asset.purchase_order_no = record['purchase_order_no']
         asset.purchase_amount = record['purchase_amount']

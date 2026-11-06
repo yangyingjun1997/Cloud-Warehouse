@@ -736,6 +736,125 @@ class WorkflowApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['results'], [])
 
+    def test_concurrent_approve_same_request(self):
+        """两个审批员同时审批同一申请单，应只有一个成功（串行模拟并发）。"""
+        # 创建申请并提交
+        request_id = self._create_request()
+        self.client.force_authenticate(self.employee)
+        self.client.post(f'/api/workflow/requests/{request_id}/submit/', {}, format='json')
+
+        # 创建第二个审批员
+        approver2 = User.objects.create_user(username='approver2', password='password123', is_staff=True)
+        approver2.groups.add(Group.objects.get(name='warehouse_staff'))
+
+        # 第一个审批员审批（应成功）
+        self.client.force_authenticate(self.operator)
+        response1 = self.client.post(f'/api/workflow/requests/{request_id}/approve/', {'comment': '同意'}, format='json')
+        self.assertEqual(response1.status_code, 200, response1.data)
+
+        # 第二个审批员审批（应失败：已被审批）
+        self.client.force_authenticate(approver2)
+        response2 = self.client.post(f'/api/workflow/requests/{request_id}/approve/', {'comment': '同意'}, format='json')
+        self.assertEqual(response2.status_code, 400, '第二次审批应被拒绝（400 Bad Request）')
+        # 验证申请单状态已变为 APPROVED 或 WAITING_WAREHOUSE（不再是 PENDING）
+        request_obj = WorkflowRequest.objects.get(id=request_id)
+        self.assertIn(request_obj.status, [WorkflowRequest.Status.APPROVED, WorkflowRequest.Status.WAITING_WAREHOUSE],
+                     f'申请单应已被第一个审批员审批，当前状态: {request_obj.status}')
+
+    def test_concurrent_submit_reservation_conflict(self):
+        """两人同时申请同一资产，第二个应被拒绝（串行模拟并发）。"""
+        # 创建第二个员工
+        employee2 = User.objects.create_user(username='employee2', password='password123')
+        employee2.groups.add(Group.objects.get(name='warehouse_staff'))
+
+        # 第一个人申请（应成功）
+        self.client.force_authenticate(self.employee)
+        response1 = self.client.post('/api/workflow/requests/', {
+            'request_type': WorkflowRequest.RequestType.BORROW,
+            'reason': '并发测试1',
+            'usage_location': '测试区',
+            'lines': [{'asset': str(self.asset.id), 'quantity': 1}],
+        }, format='json')
+        self.assertEqual(response1.status_code, 201, response1.data)
+        request1_id = response1.data['id']
+
+        # 第一个人提交（创建预占）
+        response_submit = self.client.post(f'/api/workflow/requests/{request1_id}/submit/', {}, format='json')
+        self.assertEqual(response_submit.status_code, 200, response_submit.data)
+
+        # 验证预占已创建
+        reservation = InventoryReservation.objects.filter(asset=self.asset, status=InventoryReservation.Status.ACTIVE).first()
+        self.assertIsNotNone(reservation, '应有活跃预占')
+
+        # 第二个人申请同一资产（应失败：已被预约）
+        self.client.force_authenticate(employee2)
+        response2 = self.client.post('/api/workflow/requests/', {
+            'request_type': WorkflowRequest.RequestType.BORROW,
+            'reason': '并发测试2',
+            'usage_location': '测试区',
+            'lines': [{'asset': str(self.asset.id), 'quantity': 1}],
+        }, format='json')
+
+        # 第二个申请可以创建（DRAFT 状态），但提交时应失败
+        if response2.status_code == 201:
+            request2_id = response2.data['id']
+            response_submit2 = self.client.post(f'/api/workflow/requests/{request2_id}/submit/', {}, format='json')
+            self.assertEqual(response_submit2.status_code, 400, '第二次提交应被拒绝')
+            self.assertIn('已被', response_submit2.data.get('detail', ''), '错误消息应提示已被预约')
+
+        # 验证仍只有一个预占
+        reservations = InventoryReservation.objects.filter(asset=self.asset, status=InventoryReservation.Status.ACTIVE)
+        self.assertEqual(reservations.count(), 1, '应只有一个活跃预占')
+
+    def test_issue_then_return_clears_holder(self):
+        """领用→归还闭环：领用后资产挂在申请人名下，归还后清空持有人并回到在库。"""
+        # 创建领用申请
+        self.client.force_authenticate(self.employee)
+        response = self.client.post('/api/workflow/requests/', {
+            'request_type': WorkflowRequest.RequestType.ISSUE,
+            'reason': '领用测试',
+            'usage_location': '办公区',
+            'lines': [{'asset': str(self.asset.id), 'quantity': 1}],
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        issue_request_id = response.data['id']
+
+        # 提交并审批
+        self.client.post(f'/api/workflow/requests/{issue_request_id}/submit/', {}, format='json')
+        self.client.force_authenticate(self.operator)
+        self.client.post(f'/api/workflow/requests/{issue_request_id}/approve/', {'comment': '同意'}, format='json')
+
+        # 仓库执行领用
+        self.client.post(f'/api/workflow/requests/{issue_request_id}/process/', {'comment': '执行领用'}, format='json')
+
+        # 验证资产状态：已领用，持有人=申请人
+        self.asset.refresh_from_db()
+        self.assertEqual(self.asset.status, Asset.Status.ISSUED)
+        self.assertEqual(self.asset.current_holder, self.employee)
+
+        # 创建归还申请
+        self.client.force_authenticate(self.employee)
+        response = self.client.post('/api/workflow/requests/', {
+            'request_type': WorkflowRequest.RequestType.RETURN,
+            'reason': '归还测试',
+            'lines': [{'asset': str(self.asset.id), 'quantity': 1}],
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        return_request_id = response.data['id']
+
+        # 提交并审批
+        self.client.post(f'/api/workflow/requests/{return_request_id}/submit/', {}, format='json')
+        self.client.force_authenticate(self.operator)
+        self.client.post(f'/api/workflow/requests/{return_request_id}/approve/', {'comment': '同意归还'}, format='json')
+
+        # 仓库执行归还
+        self.client.post(f'/api/workflow/requests/{return_request_id}/process/', {'comment': '执行归还'}, format='json')
+
+        # 验证资产状态：在库，持有人清空
+        self.asset.refresh_from_db()
+        self.assertEqual(self.asset.status, Asset.Status.IN_STOCK)
+        self.assertIsNone(self.asset.current_holder)
+
 
 class PurchaseOrderWorkflowTests(TestCase):
     def setUp(self):

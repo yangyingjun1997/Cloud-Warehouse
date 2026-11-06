@@ -1833,6 +1833,66 @@ class DashboardAndAdminTests(TestCase):
 
         self.assertContains(response, f'data-user-id="{self.employee.pk}"')
 
+    # === 视图层 smoke 测试（补 P0 覆盖率缺口）===
+
+    def test_approval_list_view(self):
+        """审批列表页：操作员可访问，普通员工被重定向。"""
+        self.client.force_login(self.operator)
+        response = self.client.get('/approvals/')
+        self.assertEqual(response.status_code, 200)
+
+        self.client.force_login(self.employee)
+        response = self.client.get('/approvals/')
+        self.assertEqual(response.status_code, 302)  # 无权限跳首页
+
+    def test_quick_inventory_process_view(self):
+        """快速出入库页：操作员可访问，普通员工被重定向。"""
+        self.client.force_login(self.operator)
+        response = self.client.get('/warehouse/quick-process/')
+        self.assertEqual(response.status_code, 200)
+
+        self.client.force_login(self.employee)
+        response = self.client.get('/warehouse/quick-process/')
+        self.assertEqual(response.status_code, 302)
+
+    def test_asset_lifecycle_view(self):
+        """资产生命周期页：操作员可访问。"""
+        self.client.force_login(self.operator)
+        response = self.client.get(f'/warehouse/assets/{self.asset.id}/lifecycle/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_inventory_check_list_view(self):
+        """盘点列表页：操作员可访问。"""
+        self.client.force_login(self.operator)
+        response = self.client.get('/inventory-checks/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_transaction_list_view(self):
+        """出入库记录页：报表权限可访问。"""
+        # 操作员（warehouse_staff）有报表权限
+        self.client.force_login(self.operator)
+        response = self.client.get('/transactions/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_asset_lookup_view(self):
+        """扫码查询页：登录用户可访问。"""
+        self.client.force_login(self.employee)
+        response = self.client.get('/assets/lookup/', {'q': 'test'})
+        self.assertEqual(response.status_code, 200)
+
+    def test_system_settings_view(self):
+        """系统设置页：仅系统管理员可访问。"""
+        # 操作员无权限
+        self.client.force_login(self.operator)
+        response = self.client.get('/system/settings/')
+        self.assertEqual(response.status_code, 302)
+
+        # 需要创建系统管理员
+        admin_user = User.objects.create_user(username='sysadmin', password='password123', is_superuser=True)
+        self.client.force_login(admin_user)
+        response = self.client.get('/system/settings/')
+        self.assertEqual(response.status_code, 200)
+
 
 class ImmutableAuditTests(TestCase):
     """审计留痕只增不改约束：L-02 / L-03 验收场景。"""

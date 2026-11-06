@@ -1431,7 +1431,7 @@ def _warehouse_filtered_assets(request):
     return assets
 
 
-@role_required(is_warehouse_operator, message='当前账号没有仓库管理权限。')
+@role_required(can_view_reports, message='当前账号没有报表导出权限。')
 def warehouse_asset_export(request):
     """资产台账 CSV 导出：套用与台账页完全一致的筛选条件。
 
