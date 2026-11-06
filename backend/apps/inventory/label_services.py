@@ -11,6 +11,9 @@
 
 其中“资产编码”优先显示正式资产编码（`SC-...` 仓库自编码或 `DZSB-...` 行政码），
 尚未赋码时显示“暂未赋码”，保证标签总能打出可用信息。
+
+LOGO 文案默认读取「站点设置」里的系统名称（SiteSettings.site_name），
+不再硬编码公司名；调用方也可显式传 `logo_text` 覆盖。
 """
 
 from __future__ import annotations
@@ -90,8 +93,24 @@ def resolve_label_codes(asset: Asset) -> tuple[str, bool, tuple[str, ...]]:
     return '无可用编码', True, tuple(warnings)
 
 
-def build_asset_label(asset: Asset, *, logo_text: str = '八维通') -> AssetLabel:
+def resolve_default_logo_text() -> str:
+    """标签 LOGO 文案默认取站点设置的系统名称，保证换部署方后品牌正确。
+
+    站点设置不可用（迁移未执行、库只读等）时回退到中性的「售后仓库」。
+    """
+    try:
+        from apps.common.models import SiteSettings
+        site = SiteSettings.load()
+    except Exception:
+        site = None
+    name = (getattr(site, 'site_name', '') or '').strip()
+    return name or '售后仓库'
+
+
+def build_asset_label(asset: Asset, *, logo_text: str | None = None) -> AssetLabel:
     """把一件资产渲染成标签数据。"""
+    if logo_text is None:
+        logo_text = resolve_default_logo_text()
     payload = asset.qr_value or asset.system_asset_no or str(asset.id)
     primary_code, pending, warnings = resolve_label_codes(asset)
     return AssetLabel(
@@ -108,7 +127,9 @@ def build_asset_label(asset: Asset, *, logo_text: str = '八维通') -> AssetLab
     )
 
 
-def build_asset_labels(assets: Iterable[Asset], *, logo_text: str = '八维通') -> list[AssetLabel]:
+def build_asset_labels(assets: Iterable[Asset], *, logo_text: str | None = None) -> list[AssetLabel]:
+    if logo_text is None:
+        logo_text = resolve_default_logo_text()
     return [build_asset_label(asset, logo_text=logo_text) for asset in assets]
 
 

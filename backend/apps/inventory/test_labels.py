@@ -60,6 +60,34 @@ class LabelRenderTest(TestCase):
         label = build_asset_label(asset)
         self.assertTrue(label.qr_payload.startswith('WMS2:A:'))
 
+    def test_default_logo_text_comes_from_site_settings(self):
+        from apps.common.models import SiteSettings
+
+        settings_obj = SiteSettings.load() or SiteSettings(pk=1)
+        settings_obj.site_name = '测试装备库'
+        settings_obj.save()
+
+        label = build_asset_label(self._asset())
+        self.assertEqual(label.logo_text, '测试装备库')
+
+    def test_default_logo_text_falls_back_without_site_settings(self):
+        from apps.common.models import SiteSettings
+
+        SiteSettings.objects.all().delete()
+
+        label = build_asset_label(self._asset())
+        self.assertEqual(label.logo_text, '售后仓库')
+
+    def test_explicit_logo_text_overrides_site_settings(self):
+        from apps.common.models import SiteSettings
+
+        settings_obj = SiteSettings.load() or SiteSettings(pk=1)
+        settings_obj.site_name = '站点名称'
+        settings_obj.save()
+
+        label = build_asset_label(self._asset(), logo_text='自定义LOGO')
+        self.assertEqual(label.logo_text, '自定义LOGO')
+
 
 class LabelPrintJobApiTest(TestCase):
     """打印作业的创建、领取、上报闭环。"""
