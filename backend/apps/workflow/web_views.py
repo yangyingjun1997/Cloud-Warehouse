@@ -3,6 +3,7 @@ from uuid import UUID
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_POST
 from django.db import OperationalError
 from django.db.models import Q, Sum
 from django.utils import timezone
@@ -291,6 +292,86 @@ def approval_queue(request):
         'status_choices': WorkflowRequest.Status.choices,
         'warehouses': Warehouse.objects.filter(is_active=True).order_by('name'),
     })
+
+
+@login_required
+@require_POST
+def approval_batch_action(request):
+    """批量审批/拒绝申请任务。"""
+    if not can_approve_workflow(request.user):
+        messages.error(request, '当前账号没有审批权限。')
+        return redirect('approval_queue')
+
+    action = request.POST.get('batch_action', '').strip()
+    comment = request.POST.get('batch_comment', '').strip()
+    task_ids_raw = request.POST.get('task_ids', '').strip()
+
+    if action not in {'approve', 'reject'}:
+        messages.error(request, '无效的批量操作类型。')
+        return redirect('approval_queue')
+
+    if action == 'reject' and not comment:
+        messages.error(request, '批量拒绝必须填写拒绝原因。')
+        return redirect('approval_queue')
+
+    if not task_ids_raw:
+        messages.error(request, '请先勾选要处理的审批任务。')
+        return redirect('approval_queue')
+
+    # ApprovalTask 使用 UUID 主键。保留用户选择顺序并去重，逐项处理，
+    # 这样一批中某个坏 ID、已处理任务或权限不匹配不会静默丢失。
+    task_ids = []
+    invalid_ids = []
+    for raw_id in task_ids_raw.split(','):
+        raw_id = raw_id.strip()
+        if not raw_id or raw_id in {str(value) for value in task_ids}:
+            continue
+        try:
+            task_ids.append(UUID(raw_id))
+        except (ValueError, AttributeError):
+            invalid_ids.append(raw_id[:80])
+
+    if not task_ids and not invalid_ids:
+        messages.error(request, '请先勾选要处理的审批任务。')
+        return redirect('approval_queue')
+
+    task_map = {
+        task.id: task
+        for task in ApprovalTask.objects.filter(id__in=task_ids).select_related('request')
+    }
+    success_count = 0
+    failed = []
+    for raw_id in invalid_ids:
+        failed.append(f'{raw_id}: 任务编号格式错误')
+    for task_id in task_ids:
+        task = task_map.get(task_id)
+        if task is None:
+            failed.append(f'{task_id}: 任务不存在或已不可见')
+            continue
+        if task.status != ApprovalTask.Status.PENDING:
+            failed.append(f'{task.request.request_no}: 当前已是“{task.get_status_display()}”')
+            continue
+        if task.assigned_to_id and task.assigned_to_id != request.user.id:
+            failed.append(f'{task.request.request_no}: 当前账号无权处理')
+            continue
+        try:
+            if action == 'approve':
+                approve_request(task.request, request.user, comment=comment)
+            else:
+                reject_request(task.request, request.user, comment=comment)
+            success_count += 1
+        except WorkflowError as e:
+            failed.append(f'{task.request.request_no}: {e}')
+        except Exception as e:
+            failed.append(f'{task.request.request_no}: 系统错误')
+
+    if success_count:
+        action_label = '批准' if action == 'approve' else '拒绝'
+        messages.success(request, f'已批量{action_label} {success_count} 条申请。')
+    if failed:
+        messages.warning(request, f'{len(failed)} 条处理失败：' + '；'.join(failed[:3]))
+
+    return redirect('approval_queue')
 
 
 @login_required

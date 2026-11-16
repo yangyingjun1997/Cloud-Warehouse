@@ -28,8 +28,8 @@
 | 有线 1 | `enp87s0` → `192.168.25.119/23` |
 | 有线 2 | `enp88s0` → `192.168.123.101/24` |
 | 默认路由 | `192.168.20.1`（走 WiFi） |
-| 程序目录 | `/opt/after-sales-warehouse/{backend,venv,releases}` |
-| 数据目录 | `/srv/after-sales-warehouse/{backups,media,static}` |
+| 程序目录 | `/opt/after-sales-warehouse/releases/<版本>`；`current` 指向当前版本 |
+| 数据目录 | `/srv/after-sales-warehouse/{backups,media}` 与持久化 `app.env` |
 | 运行账号 | `warehouse` |
 | 访问入口 | 纯内网，三个 IP 均可；**无公网入口、无隧道** |
 | 地址自动登记 | `/usr/local/bin/auto-register-host.sh` + cron 每 2 分钟 |
@@ -59,7 +59,7 @@ dpkg --print-architecture
 uname -a
 ```
 
-Ubuntu 22.04 的 x86 服务器应显示 `amd64`。Ubuntu 自带 Python 3.10，因此项目固定使用 Django 5.2 LTS，而不是要求 Python 3.12 的 Django 6.x。
+Ubuntu 22.04 的 x86 服务器应显示 `amd64`。项目已通过 deadsnakes PPA 安装 Python 3.12，使用 Django 5.2 LTS 与 Pillow 13。安装脚本会自动检测并添加 PPA 源。
 
 ### 3. 处理失效 APT 源
 
@@ -116,15 +116,19 @@ SHA256 用来确认复制过程中压缩包没有损坏。纯净部署包不应�
 
 ```bash
 sudo apt update
+sudo apt install -y software-properties-common
+sudo add-apt-repository -y ppa:deadsnakes/ppa
+sudo apt update
 sudo apt install -y \
-  python3-venv python3-dev build-essential libpq-dev \
+  python3.12 python3.12-venv python3.12-dev build-essential libpq-dev \
   postgresql postgresql-contrib nginx rsync curl openssl unzip
 ```
 
 各依赖作用：
 
-- `python3-venv`：创建项目独立 Python 环境。
-- `python3-dev`、`build-essential`：编译个别 Python 扩展。
+- `python3.12`：Python 3.12 运行时（Pillow 13 要求）。
+- `python3.12-venv`：创建项目独立 Python 环境。
+- `python3.12-dev`、`build-essential`：编译个别 Python 扩展。
 - `libpq-dev`：PostgreSQL 客户端开发库。
 - `postgresql`：正式数据库。
 - `nginx`：内网入口和静态文件服务。
@@ -139,8 +143,8 @@ sudo useradd --system --create-home --shell /usr/sbin/nologin warehouse \
 sudo install -d -o warehouse -g warehouse /opt/after-sales-warehouse
 sudo install -d -o warehouse -g warehouse \
   /srv/after-sales-warehouse/media \
-  /srv/after-sales-warehouse/static \
   /srv/after-sales-warehouse/backups
+sudo install -d -m 755 /opt/after-sales-warehouse/releases
 ```
 
 `warehouse` 是无交互登录权限的系统账号。Web 进程不使用 `root`，可以降低应用漏洞影响系统的风险。
@@ -148,36 +152,41 @@ sudo install -d -o warehouse -g warehouse \
 目录职责：
 
 ```text
-/opt/after-sales-warehouse/backend  程序和 .env
-/opt/after-sales-warehouse/venv     Python 虚拟环境
+/opt/after-sales-warehouse/releases/<版本>/backend  该版本程序
+/opt/after-sales-warehouse/releases/<版本>/venv     该版本 Python 环境
+/opt/after-sales-warehouse/releases/<版本>/static   该版本静态文件
+/opt/after-sales-warehouse/current                    当前版本符号链接
 /srv/after-sales-warehouse/media    用户上传文件
-/srv/after-sales-warehouse/static   collectstatic 结果
 /srv/after-sales-warehouse/backups  本机备份
+/srv/after-sales-warehouse/app.env  跨版本持久化配置
 ```
 
-## 六、同步程序代码
+## 六、创建候选 release 并同步程序代码
 
 在解压后的项目根目录执行：
 
 ```bash
+RELEASE_ID="$(date +%Y%m%d_%H%M%S)-manual"
+RELEASE_DIR="/opt/after-sales-warehouse/releases/$RELEASE_ID"
+sudo install -d -o warehouse -g warehouse "$RELEASE_DIR/backend"
 sudo rsync -a --delete \
   --exclude '.env' \
   --exclude 'db.sqlite3*' \
   --exclude '__pycache__' \
   --exclude '*.pyc' \
-  backend/ /opt/after-sales-warehouse/backend/
-sudo chown -R warehouse:warehouse /opt/after-sales-warehouse
+  backend/ "$RELEASE_DIR/backend/"
+sudo chown -R warehouse:warehouse "$RELEASE_DIR"
 ```
 
-`--delete` 让目标代码与本次发布一致；`.env` 和数据库被排除，避免更新程序时覆盖生产密钥或误带开发数据。
+`--delete` 只清理本次尚未启用的候选 release，不会覆盖当前运行目录；`.env` 和数据库被排除，避免更新程序时覆盖生产密钥或误带开发数据。
 
 ## 七、创建 Python 虚拟环境
 
 ```bash
-sudo -u warehouse python3 -m venv /opt/after-sales-warehouse/venv
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/pip install --upgrade pip
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/pip install \
-  -r /opt/after-sales-warehouse/backend/requirements.txt
+sudo -u warehouse python3.12 -m venv "$RELEASE_DIR/venv"
+sudo -u warehouse "$RELEASE_DIR/venv/bin/python" -m pip install --upgrade pip
+sudo -u warehouse "$RELEASE_DIR/venv/bin/python" -m pip install \
+  -r "$RELEASE_DIR/backend/requirements-linux.txt"
 ```
 
 已经完整部署过的服务器如临时无法访问软件源，可在项目根目录执行 `sudo bash deploy/ubuntu22/install.sh --host <SERVER_IP> --offline-update`。该模式不下载系统包或 Python 包，只验证现有依赖并完成代码、迁移、静态文件和服务更新；不能用于首次安装或依赖清单发生变化的版本。
@@ -185,8 +194,8 @@ sudo -u warehouse /opt/after-sales-warehouse/venv/bin/pip install \
 虚拟环境将本项目依赖与 Ubuntu 系统 Python 隔离。检查：
 
 ```bash
-/opt/after-sales-warehouse/venv/bin/python --version
-/opt/after-sales-warehouse/venv/bin/python -m django --version
+"$RELEASE_DIR/venv/bin/python" --version
+"$RELEASE_DIR/venv/bin/python" -m django --version
 ```
 
 Django 应为 `5.2.x`。如果出现 `No matching distribution found for Django>=6`，说明使用了旧的错误 requirements 文件。
@@ -227,7 +236,7 @@ sudo -u postgres psql -tAc "SELECT datname FROM pg_database WHERE datname='wareh
 
 ```bash
 SECRET_KEY="$(openssl rand -hex 48)"
-sudo -u warehouse nano /opt/after-sales-warehouse/backend/.env
+sudo -u warehouse nano /srv/after-sales-warehouse/app.env
 ```
 
 填写：
@@ -246,7 +255,7 @@ DB_HOST=127.0.0.1
 DB_PORT=5432
 
 MEDIA_ROOT=/srv/after-sales-warehouse/media
-STATIC_ROOT=/srv/after-sales-warehouse/static
+STATIC_ROOT=/opt/after-sales-warehouse/current/static
 CORS_ALLOW_ALL_ORIGINS=0
 USE_HTTPS=0
 SECURE_HSTS_SECONDS=0
@@ -272,8 +281,10 @@ SECURITY_STATE_RETENTION_SECONDS=7776000
 保存后限制权限：
 
 ```bash
-sudo chown warehouse:warehouse /opt/after-sales-warehouse/backend/.env
-sudo chmod 640 /opt/after-sales-warehouse/backend/.env
+sudo chown warehouse:warehouse /srv/after-sales-warehouse/app.env
+sudo chmod 640 /srv/after-sales-warehouse/app.env
+sudo -u warehouse ln -sfn /srv/after-sales-warehouse/app.env \
+  "$RELEASE_DIR/backend/.env"
 ```
 
 `.env` 保存密钥，不应复制到聊天、Git 或普通共享目录。
@@ -281,12 +292,14 @@ sudo chmod 640 /opt/after-sales-warehouse/backend/.env
 ## 十、初始化数据库结构
 
 ```bash
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
-  /opt/after-sales-warehouse/backend/manage.py check --deploy
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
-  /opt/after-sales-warehouse/backend/manage.py migrate --noinput
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
-  /opt/after-sales-warehouse/backend/manage.py bootstrap_roles
+sudo -u warehouse "$RELEASE_DIR/venv/bin/python" \
+  "$RELEASE_DIR/backend/manage.py" check --deploy
+sudo -u warehouse "$RELEASE_DIR/venv/bin/python" \
+  "$RELEASE_DIR/backend/manage.py" migrate --plan
+sudo -u warehouse "$RELEASE_DIR/venv/bin/python" \
+  "$RELEASE_DIR/backend/manage.py" migrate --noinput
+sudo -u warehouse "$RELEASE_DIR/venv/bin/python" \
+  "$RELEASE_DIR/backend/manage.py" bootstrap_roles
 ```
 
 - `check --deploy` 检查生产配置风险。
@@ -302,14 +315,14 @@ sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
 ```bash
 DB_ENGINE=django.db.backends.sqlite3 \
 DB_NAME=/安全路径/db.sqlite3 \
-/opt/after-sales-warehouse/venv/bin/python \
-/opt/after-sales-warehouse/backend/manage.py dumpdata \
+"$RELEASE_DIR/venv/bin/python" \
+"$RELEASE_DIR/backend/manage.py" dumpdata \
   --natural-foreign --natural-primary \
   --exclude contenttypes --exclude auth.Permission --exclude sessions \
   > /tmp/warehouse-initial.json
 
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
-  /opt/after-sales-warehouse/backend/manage.py loaddata \
+sudo -u warehouse "$RELEASE_DIR/venv/bin/python" \
+  "$RELEASE_DIR/backend/manage.py" loaddata \
   /tmp/warehouse-initial.json
 sudo rm -f /tmp/warehouse-initial.json
 ```
@@ -319,11 +332,20 @@ sudo rm -f /tmp/warehouse-initial.json
 ## 十一、收集静态文件
 
 ```bash
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
-  /opt/after-sales-warehouse/backend/manage.py collectstatic --noinput
+sudo install -d -o warehouse -g warehouse "$RELEASE_DIR/static"
+sudo -u warehouse env STATIC_ROOT="$RELEASE_DIR/static" \
+  "$RELEASE_DIR/venv/bin/python" \
+  "$RELEASE_DIR/backend/manage.py" collectstatic --noinput
+sudo -u warehouse sh -c "cat > '$RELEASE_DIR/release-info'" <<EOF
+release_version=$RELEASE_ID
+created_at=$(date --iso-8601=seconds)
+previous_release=$(readlink -f /opt/after-sales-warehouse/current 2>/dev/null || true)
+EOF
+sudo ln -sfn "$RELEASE_DIR" /opt/after-sales-warehouse/current.next
+sudo mv -Tf /opt/after-sales-warehouse/current.next /opt/after-sales-warehouse/current
 ```
 
-这一步把 CSS、PWA 图标、扫码组件和 Django 管理后台资源集中到 `/srv/after-sales-warehouse/static`，供 Nginx 直接读取。每次更新前端静态资源后都要重新执行。
+这一步把 CSS、PWA 图标、扫码组件和 Django 管理后台资源写入候选 release，并在所有检查完成后原子切换 `current`。Nginx 始终读取 `current/static`，不会看到收集到一半的目录。
 
 ## 十二、配置 Gunicorn 和 systemd
 
@@ -416,10 +438,10 @@ sudo chmod 644 /etc/cron.d/after-sales-warehouse-backup
 一致性检查与告警状态：
 
 ```bash
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
-  /opt/after-sales-warehouse/backend/manage.py check_data_consistency
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
-  /opt/after-sales-warehouse/backend/manage.py check_data_consistency --notify
+sudo -u warehouse /opt/after-sales-warehouse/current/venv/bin/python \
+  /opt/after-sales-warehouse/current/backend/manage.py check_data_consistency
+sudo -u warehouse /opt/after-sales-warehouse/current/venv/bin/python \
+  /opt/after-sales-warehouse/current/backend/manage.py check_data_consistency --notify
 sudo systemctl list-timers after-sales-warehouse-consistency.timer --no-pager
 sudo systemctl status after-sales-warehouse-consistency.service --no-pager -l
 ```
@@ -443,8 +465,8 @@ DINGTALK_SECRET=SEC...
 
 ```bash
 sudo systemctl restart after-sales-warehouse
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
-  /opt/after-sales-warehouse/backend/manage.py send_low_stock_summary
+sudo -u warehouse /opt/after-sales-warehouse/current/venv/bin/python \
+  /opt/after-sales-warehouse/current/backend/manage.py send_low_stock_summary
 ```
 
 ### 2. 个人工作通知
@@ -552,8 +574,8 @@ sudo systemctl list-timers --all | grep after-sales-warehouse
 sudo nginx -t
 curl -i http://127.0.0.1/health/
 curl -i http://<SERVER_IP>/health/
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
-  /opt/after-sales-warehouse/backend/manage.py check --deploy
+sudo -u warehouse /opt/after-sales-warehouse/current/venv/bin/python \
+  /opt/after-sales-warehouse/current/backend/manage.py check --deploy
 ```
 
 Web 人工验收：
@@ -570,25 +592,13 @@ Web 人工验收：
 
 ## 十九、日常更新程序
 
-将新包解压到项目目录后，在项目根目录执行：
+将新包解压到独立目录并校验 SHA-256 后，在项目根目录执行：
 
 ```bash
-sudo rsync -a --delete \
-  --exclude '.env' --exclude 'db.sqlite3*' \
-  --exclude '__pycache__' --exclude '*.pyc' \
-  backend/ /opt/after-sales-warehouse/backend/
-sudo chown -R warehouse:warehouse /opt/after-sales-warehouse
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/pip install \
-  -r /opt/after-sales-warehouse/backend/requirements.txt
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
-  /opt/after-sales-warehouse/backend/manage.py migrate --noinput
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
-  /opt/after-sales-warehouse/backend/manage.py collectstatic --noinput
-sudo systemctl restart after-sales-warehouse
-sudo nginx -t && sudo systemctl reload nginx
+sudo bash deploy/ubuntu22/install.sh --host <SERVER_IP>
 ```
 
-已有服务器更新时绝对不要再次执行 SQLite 初始导入。
+脚本先创建 PostgreSQL 快照，再在独立 release 中安装锁定依赖、执行 Django 检查、收集静态文件和迁移，最后原子切换 `current` 并检查 `/health/`。健康失败会恢复上一 release 指针。已有服务器更新时绝对不要增加 `--import-sqlite`，也不要手工覆盖当前数据库。
 
 ## 二十、备份、异机副本和恢复
 
@@ -633,7 +643,7 @@ sudo /usr/local/sbin/after-sales-warehouse-health
 sudo journalctl -u after-sales-warehouse-health.service -n 100 --no-pager
 ```
 
-健康脚本每五分钟检查服务、监听端口、PostgreSQL、本机 HTTP、磁盘和内存。状态从正常变为故障时通知一次，恢复时再通知一次。备份失败也使用同一个运维钉钉发送器；钉钉配置直接读取 `/opt/after-sales-warehouse/backend/.env` 里的 `DINGTALK_WEBHOOK` / `DINGTALK_SECRET`，密钥不进入发布包。
+健康脚本每五分钟检查服务、监听端口、PostgreSQL、本机 HTTP、磁盘和内存。状态从正常变为故障时通知一次，恢复时再通知一次。备份失败也使用同一个运维钉钉发送器；钉钉配置直接读取 `/srv/after-sales-warehouse/app.env` 里的 `DINGTALK_WEBHOOK` / `DINGTALK_SECRET`，密钥不进入发布包。业务通知先写入数据库 outbox，再由每分钟 timer 异步发送，Web 请求不会等待钉钉网络。
 
 Nginx 使用独立的 `after-sales-warehouse.access.log` 和 `after-sales-warehouse.error.log`，由 Ubuntu 自带的 Nginx logrotate 规则轮转。Gunicorn 输出到 journald，安装脚本将系统日志总量限制为 1 GB、最长保留 14 天。临时文件通过 systemd-tmpfiles 清理。
 
@@ -660,8 +670,9 @@ sudo systemctl enable --now after-sales-warehouse
 ### 页面更新后样式或扫码组件仍是旧版
 
 ```bash
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
-  /opt/after-sales-warehouse/backend/manage.py collectstatic --noinput
+sudo -u warehouse env STATIC_ROOT=/opt/after-sales-warehouse/current/static \
+  /opt/after-sales-warehouse/current/venv/bin/python \
+  /opt/after-sales-warehouse/current/backend/manage.py collectstatic --noinput
 sudo systemctl restart after-sales-warehouse
 sudo systemctl reload nginx
 ```
@@ -679,8 +690,8 @@ sudo journalctl -u after-sales-warehouse -n 100 --no-pager
 ### 域名可访问但登录后异常
 
 ```bash
-grep '^CSRF_TRUSTED_ORIGINS=' /opt/after-sales-warehouse/backend/.env
-grep '^ALLOWED_HOSTS=' /opt/after-sales-warehouse/backend/.env
+grep '^CSRF_TRUSTED_ORIGINS=' /srv/after-sales-warehouse/app.env
+grep '^ALLOWED_HOSTS=' /srv/after-sales-warehouse/app.env
 ```
 
 两个配置都必须包含该域名。用 `register-host.sh` 登记可以避免漏改其中一项：

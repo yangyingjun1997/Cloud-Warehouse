@@ -3,6 +3,10 @@ import unicodedata
 from django.db.models import Q
 
 
+MAX_SEARCH_QUERY_LENGTH = 256
+MAX_BOOLEAN_SEARCH_TOKENS = 32
+
+
 def normalize_scan_value(value: str) -> str:
     """归一化扫码枪/手工输入，避免"看着一样却查不到"。
 
@@ -141,7 +145,7 @@ def asset_search_query(value: str) -> Q:
     优先级：`!` > `&` > `|`，相邻条件视为 `&`。
     """
 
-    value = normalize_scan_value(value)
+    value = normalize_scan_value(value)[:MAX_SEARCH_QUERY_LENGTH]
     if not value:
         # 空查询不应命中任何记录，否则扫码枪误触发会返回全表
         return Q(pk__in=[])
@@ -150,7 +154,10 @@ def asset_search_query(value: str) -> Q:
         return _literal_q(value)
 
     try:
-        query = _parse_boolean(_tokenize(value))
+        tokens = _tokenize(value)
+        if len(tokens) > MAX_BOOLEAN_SEARCH_TOKENS:
+            return _literal_q(value)
+        query = _parse_boolean(tokens)
     except ValueError:
         # 表达式不完整时退回普通包含搜索，避免用户看到服务器错误。
         return _literal_q(value)

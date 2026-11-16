@@ -286,7 +286,7 @@ class Command(BaseCommand):
     # ------------------------------------------------------------------ 工具
 
     def _item_type(self, category, name):
-        code = f'LEGACY-{hashlib.sha1(name.encode("utf-8")).hexdigest()[:12].upper()}'
+        code = f'LEGACY-{hashlib.sha1(name.encode("utf-8"), usedforsecurity=False).hexdigest()[:12].upper()}'
         return ItemType.objects.get_or_create(
             category=category,
             name=name[:120],

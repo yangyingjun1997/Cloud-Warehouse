@@ -9,8 +9,8 @@ from apps.inventory.models import Asset
 from apps.common.permissions import PERMISSION_GROUPS
 from apps.workflow.models import ReturnReminderLog, StockItemLoan, WorkflowRequest, WorkflowRequestLine
 
-from .dingtalk import send_group_message, send_user_message
 from .models import Notification
+from .outbox import enqueue_group, enqueue_personal, outbox_key
 
 User = get_user_model()
 
@@ -133,14 +133,23 @@ def send_return_due_reminders(today=None):
             ))
     Notification.objects.bulk_create(notifications)
 
-    def send_dingtalk_notifications():
+    def enqueue_dingtalk_notifications():
         for recipient, rows in by_recipient.items():
             detail = '；'.join(
                 f'{row["item_label"]} {row["quantity_label"]}，{row["stage_label"]}'
                 for row in rows
             )
-            send_user_message(recipient, '售后仓库：借用归还提醒', detail)
-        send_group_message('售后仓库：借用归还提醒', operator_detail)
+            enqueue_personal(
+                [recipient],
+                '售后仓库：借用归还提醒',
+                detail,
+                idempotency_key=outbox_key('return-reminder-personal', today, recipient.pk, detail),
+            )
+        enqueue_group(
+            '售后仓库：借用归还提醒',
+            operator_detail,
+            idempotency_key=outbox_key('return-reminder-group', today, operator_detail),
+        )
 
-    transaction.on_commit(send_dingtalk_notifications)
+    transaction.on_commit(enqueue_dingtalk_notifications)
     return len(new_rows)

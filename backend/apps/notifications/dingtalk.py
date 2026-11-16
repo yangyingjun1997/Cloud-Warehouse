@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 _access_token = ''
 _access_token_expires_at = 0.0
+_DINGTALK_API_HOST = 'oapi.dingtalk.com'
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,18 @@ class DeliveryResult:
     delivered: bool
     channel: str
     reason: str = ''
+
+
+def _validated_dingtalk_url(url: str) -> str:
+    parts = urlsplit(url)
+    if (
+        parts.scheme.lower() != 'https'
+        or (parts.hostname or '').lower() != _DINGTALK_API_HOST
+        or parts.username
+        or parts.password
+    ):
+        return ''
+    return url
 
 
 def dingtalk_configuration_status() -> dict:
@@ -48,12 +61,12 @@ def _get_access_token() -> tuple[str, str]:
     app_secret = getattr(settings, 'DINGTALK_APP_SECRET', '').strip()
     if not app_key or not app_secret:
         return '', '企业内部应用 AppKey 或 AppSecret 未配置'
-    url = 'https://oapi.dingtalk.com/gettoken?' + urlencode({
+    url = _validated_dingtalk_url('https://oapi.dingtalk.com/gettoken?' + urlencode({
         'appkey': app_key,
         'appsecret': app_secret,
-    })
+    }))
     try:
-        with urlopen(url, timeout=getattr(settings, 'DINGTALK_TIMEOUT_SECONDS', 5)) as response:
+        with urlopen(url, timeout=getattr(settings, 'DINGTALK_TIMEOUT_SECONDS', 5)) as response:  # nosec B310 -- fixed validated HTTPS DingTalk host
             result = json.loads(response.read().decode('utf-8'))
     except Exception:
         logger.exception('Unable to obtain DingTalk access token')
@@ -79,9 +92,9 @@ def send_user_message(user, title: str, content: str) -> DeliveryResult:
     token, error = _get_access_token()
     if not token:
         return DeliveryResult(False, 'dingtalk_personal', error)
-    url = 'https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2?' + urlencode({
+    url = _validated_dingtalk_url('https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2?' + urlencode({
         'access_token': token,
-    })
+    }))
     payload = json.dumps({
         'agent_id': str(getattr(settings, 'DINGTALK_AGENT_ID', '')).strip(),
         'userid_list': profile.dingtalk_user_id.strip(),
@@ -92,7 +105,7 @@ def send_user_message(user, title: str, content: str) -> DeliveryResult:
     }, ensure_ascii=False).encode('utf-8')
     request = Request(url, data=payload, headers={'Content-Type': 'application/json; charset=utf-8'}, method='POST')
     try:
-        with urlopen(request, timeout=getattr(settings, 'DINGTALK_TIMEOUT_SECONDS', 5)) as response:
+        with urlopen(request, timeout=getattr(settings, 'DINGTALK_TIMEOUT_SECONDS', 5)) as response:  # nosec B310 -- fixed validated HTTPS DingTalk host
             result = json.loads(response.read().decode('utf-8'))
     except Exception:
         logger.exception('Unable to send DingTalk personal notification to user %s', user.pk)
@@ -117,6 +130,10 @@ def send_group_message(title: str, content: str) -> bool:
     webhook = getattr(settings, 'DINGTALK_WEBHOOK', '').strip()
     if not webhook:
         return False
+    webhook = _validated_dingtalk_url(webhook)
+    if not webhook:
+        logger.error('DingTalk webhook must use the official HTTPS API host')
+        return False
 
     parts = urlsplit(webhook)
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
@@ -135,7 +152,7 @@ def send_group_message(title: str, content: str) -> bool:
     }, ensure_ascii=False).encode('utf-8')
     request = Request(url, data=payload, headers={'Content-Type': 'application/json; charset=utf-8'}, method='POST')
     try:
-        with urlopen(request, timeout=getattr(settings, 'DINGTALK_TIMEOUT_SECONDS', 5)) as response:
+        with urlopen(request, timeout=getattr(settings, 'DINGTALK_TIMEOUT_SECONDS', 5)) as response:  # nosec B310 -- validated HTTPS DingTalk host
             result = json.loads(response.read().decode('utf-8'))
         if result.get('errcode', 0) != 0:
             logger.warning('DingTalk robot rejected warehouse notification: %s', result)

@@ -9,7 +9,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from apps.common.consistency import build_consistency_issues
-from apps.notifications.dingtalk import send_group_message
+from apps.notifications.outbox import enqueue_group, outbox_key
 
 
 class Command(BaseCommand):
@@ -93,18 +93,18 @@ class Command(BaseCommand):
         recovered = not current_has_issues and previous_has_issues
 
         if problem_changed:
-            delivered = send_group_message('数据一致性检查告警', self._message(issues))
-            if not delivered:
-                self.stderr.write(self.style.WARNING('钉钉通知发送失败，本次不更新通知状态，后续可重试。'))
-                return
-        elif recovered:
-            delivered = send_group_message(
-                '数据一致性检查已恢复',
-                '上次发现的数据一致性问题已全部恢复，当前错误 0 项，警告 0 项。',
+            content = self._message(issues)
+            enqueue_group(
+                '数据一致性检查告警', content,
+                idempotency_key=outbox_key('consistency', 'problem', fingerprint),
             )
-            if not delivered:
-                self.stderr.write(self.style.WARNING('恢复通知发送失败，本次不更新通知状态，后续可重试。'))
-                return
+        elif recovered:
+            content = '上次发现的数据一致性问题已全部恢复，当前错误 0 项，警告 0 项。'
+            enqueue_group(
+                '数据一致性检查已恢复',
+                content,
+                idempotency_key=outbox_key('consistency', 'recovered', previous.get('fingerprint', '')),
+            )
 
         self._save_state(state_path, {
             'has_issues': current_has_issues,
@@ -112,8 +112,8 @@ class Command(BaseCommand):
             'issue_count': len(issues),
         })
         if problem_changed:
-            self.stdout.write(self.style.WARNING('已发送一致性问题通知。'))
+            self.stdout.write(self.style.WARNING('已将一致性问题通知加入发送队列。'))
         elif recovered:
-            self.stdout.write(self.style.SUCCESS('已发送一致性恢复通知。'))
+            self.stdout.write(self.style.SUCCESS('已将一致性恢复通知加入发送队列。'))
         else:
             self.stdout.write('问题状态未变化，不重复发送通知。')

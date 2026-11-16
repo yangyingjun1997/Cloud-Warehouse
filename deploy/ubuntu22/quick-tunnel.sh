@@ -10,7 +10,7 @@
 #   sudo bash deploy/ubuntu22/quick-tunnel.sh stop     # 停止并撤下白名单
 set -Eeuo pipefail
 
-ENV_FILE=/opt/after-sales-warehouse/backend/.env
+ENV_FILE=/srv/after-sales-warehouse/app.env
 LOG_FILE=/var/log/cloudflared-quick-tunnel.log
 PID_FILE=/run/cloudflared-quick-tunnel.pid
 SERVICE_NAME=after-sales-warehouse

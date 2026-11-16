@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from unittest.mock import patch
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
@@ -89,14 +88,12 @@ class Command(BaseCommand):
             raise CommandError('至少需要 3 件已登记仓库的可用在库资产。')
 
         with transaction.atomic():
-            # 防止服务器已配置的钉钉在冒烟期间收到测试消息。
-            with patch('apps.workflow.services.send_users_or_group', return_value=True):
-                quick_asset, approval_asset, rejection_asset = assets
-                self._quick_borrow_and_return(quick_asset, actor)
-                self._approve_process_and_return(approval_asset, actor)
-                self._reject_request(rejection_asset, actor)
-                self._maintenance_round_trip(rejection_asset, actor)
-                self._extended_rollback_smoke(actor)
+            quick_asset, approval_asset, rejection_asset = assets
+            self._quick_borrow_and_return(quick_asset, actor)
+            self._approve_process_and_return(approval_asset, actor)
+            self._reject_request(rejection_asset, actor)
+            self._maintenance_round_trip(rejection_asset, actor)
+            self._extended_rollback_smoke(actor)
 
             self.stdout.write(self.style.SUCCESS(
                 '业务冒烟通过：快速借出/归还、申请审批出库、审批驳回、维修回库、'

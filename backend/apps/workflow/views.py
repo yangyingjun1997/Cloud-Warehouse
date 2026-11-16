@@ -79,6 +79,7 @@ def _filter_requests(queryset, params):
 
 
 class WorkflowRequestViewSet(viewsets.ModelViewSet):
+    http_method_names = ['get', 'post', 'put', 'patch', 'head', 'options']
     queryset = WorkflowRequest.objects.select_related('applicant', 'department', 'designated_approver', 'target_warehouse', 'target_location').prefetch_related(
         'lines__asset__warehouse',
         'lines__asset__location',

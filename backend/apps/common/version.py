@@ -17,7 +17,9 @@ def release_info() -> dict:
         'source': '环境变量',
     }
     candidates = [
+        Path(settings.BASE_DIR).parent / 'release-info',
         Path(settings.BASE_DIR).parent / 'current-release',
+        Path(settings.BASE_DIR) / 'release-info',
         Path(settings.BASE_DIR) / 'current-release',
     ]
     for path in candidates:

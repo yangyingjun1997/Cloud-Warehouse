@@ -355,7 +355,7 @@ class Command(BaseCommand):
                 sequence.save(update_fields=changed + ['updated_at'])
 
     def _item_type(self, category, name, *, is_serialized=True):
-        code = f'LEGACY-{hashlib.sha1(name.encode("utf-8")).hexdigest()[:12].upper()}'
+        code = f'LEGACY-{hashlib.sha1(name.encode("utf-8"), usedforsecurity=False).hexdigest()[:12].upper()}'
         return ItemType.objects.get_or_create(
             category=category,
             name=name[:120],
@@ -365,7 +365,7 @@ class Command(BaseCommand):
     @staticmethod
     def _stock_item_code(sheet_name, name):
         value = f'{sheet_name}:{name}'.encode('utf-8')
-        return f'STOCK-{hashlib.sha1(value).hexdigest()[:12].upper()}'
+        return f'STOCK-{hashlib.sha1(value, usedforsecurity=False).hexdigest()[:12].upper()}'
 
     def _asset_codes(self, source):
         result = []

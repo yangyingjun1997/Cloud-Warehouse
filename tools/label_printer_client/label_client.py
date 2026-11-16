@@ -86,6 +86,8 @@ DEFAULT_CONFIG = {
     # 正值表示内容往右/往下移。单位 mm，可用 0.1 的精度微调。
     'offset_x_mm': 0.0,
     'offset_y_mm': 0.0,
+    # ZT610 优先使用 RAW ZPL，GDI 仅作为兼容通道。
+    'print_channel': 'zpl',
     'client_name': '',
     'interval': 5.0,
 }
@@ -476,9 +478,8 @@ def render_sheet(labels: list[dict], config: dict, dpi: int | None = None) -> Im
     gap = mm_to_px(float(config.get('gap_mm') or 0), dpi)
     margin = mm_to_px(float(config.get('margin_mm') or 0), dpi)
 
-    # 整体偏移补偿：在固定 60×40 mm 画布内平移内容。画布尺寸不能随偏移
-    # 变化，否则打印驱动可能把更大的位图缩放回纸张，校准值就失去意义。
-    # 超出纸张边缘的部分按真实打印行为裁切，校准页能直接看出裁切方向。
+    # 偏移只改变固定纸张画布内的内容原点，绝不压缩单元格或改变版式比例。
+    # 超出画布的部分按打印机实际裁切；纸张尺寸始终由 canvas 决定。
     off_x = mm_to_px(float(config.get('offset_x_mm') or 0), dpi)
     off_y = mm_to_px(float(config.get('offset_y_mm') or 0), dpi)
 
@@ -592,6 +593,10 @@ def send_to_printer(image: Image.Image, printer_name: str = '', dpi: int = 600) 
 
     正确做法是保持图片像素 → 设备像素 1:1，用 MM_TEXT 映射模式，
     让 Windows 按打印机自身分辨率还原真实物理尺寸。
+
+    偏移已在 render_sheet 里画进位图内部（内容平移、画布固定为纸张尺寸），
+    因此这里固定从 (0,0) 贴图。这样无论偏移多少，位图尺寸永远等于纸张，
+    走纸长度固定，不会因位图底边超出纸张而多走纸（多吐纸）。
     """
     if win32print is None or win32ui is None:
         raise RuntimeError('未安装 pywin32，无法调用 Windows 打印机。请执行：pip install pywin32')
@@ -602,16 +607,98 @@ def send_to_printer(image: Image.Image, printer_name: str = '', dpi: int = 600) 
     hdc = win32ui.CreateDC()
     hdc.CreatePrinterDC(printer_name)
     try:
-        # 位图尺寸本身就是按目标 DPI 算好的像素数，
-        # 直接按像素贴图即可得到 1:1 物理尺寸。
         hdc.StartDoc('资产标签')
         hdc.StartPage()
+        # 位图尺寸本身就是按目标 DPI 算好的像素数，从原点 (0,0) 贴图。
         dib = ImageWin.Dib(image)
         dib.draw(hdc.GetHandleOutput(), (0, 0, image.width, image.height))
         hdc.EndPage()
         hdc.EndDoc()
     finally:
         hdc.DeleteDC()
+
+
+def _zpl_hex(value: object) -> str:
+    """把 UTF-8 文本编码为 ZPL ^FH 可接受的十六进制字段。"""
+    return ''.join(f'_{byte:02X}' for byte in str(value or '').encode('utf-8'))
+
+
+def render_zpl_sheet(labels: list[dict], config: dict, dpi: int | None = None) -> str:
+    """生成一张固定 60×40 mm 的 ZPL 版面。
+
+    ZPL 直接告诉 ZT610 纸张宽度和长度，避免 Windows GDI 根据驱动可打印区
+    拉伸位图或把底部溢出内容当成额外走纸。每张物理标签按列/行切成固定格。
+    """
+    dpi = int(dpi or config.get('dpi') or 300)
+    sheet_w = mm_to_px(float(config.get('sheet_width_mm') or 60), dpi)
+    sheet_h = mm_to_px(float(config.get('sheet_height_mm') or 40), dpi)
+    columns = max(1, int(config.get('columns') or 2))
+    rows = max(1, int(config.get('rows') or 2))
+    gap = mm_to_px(float(config.get('gap_mm') or 0), dpi)
+    margin = mm_to_px(float(config.get('margin_mm') or 0), dpi)
+    offset_x = mm_to_px(float(config.get('offset_x_mm') or 0), dpi)
+    offset_y = mm_to_px(float(config.get('offset_y_mm') or 0), dpi)
+    cell_w = (sheet_w - margin * 2 - gap * (columns - 1)) // columns
+    cell_h = (sheet_h - margin * 2 - gap * (rows - 1)) // rows
+    qr_mag = max(2, min(8, round(mm_to_px(6, dpi) / 30)))
+    per_sheet = columns * rows
+
+    commands = [
+        '^XA', '^CI28', f'^PW{sheet_w}', f'^LL{sheet_h}',
+        '^LH0,0', '^LT0', '^LS0', '^MNY',
+    ]
+    for index, label in enumerate(labels[:per_sheet]):
+        slot = index % per_sheet
+        row, column = divmod(slot, columns)
+        x = offset_x + margin + column * (cell_w + gap)
+        y = offset_y + margin + row * (cell_h + gap)
+        pad = max(4, mm_to_px(0.7, dpi))
+        text_w = max(mm_to_px(11, dpi), cell_w - pad * 2 - mm_to_px(8, dpi))
+        line = max(mm_to_px(1.1, dpi), int(dpi * 0.95 / 25.4))
+        value_line = max(mm_to_px(1.5, dpi), int(dpi * 1.25 / 25.4))
+        qr_x = x + cell_w - pad - mm_to_px(6.5, dpi)
+        qr_y = y + pad
+
+        def text_field(px, py, value, height=line, width=text_w):
+            commands.extend([
+                f'^FO{px},{py}', f'^A0N,{height},{height}',
+                f'^FB{max(width, 1)},1,0,L,0', '^FH', f'^FD{_zpl_hex(value)}^FS',
+            ])
+
+        text_field(x + pad, y + pad, label.get('logo_text') or '仓')
+        text_field(x + pad, y + pad + line + 3, label.get('title') or '', value_line, text_w)
+        text_field(x + pad, y + pad + (line + 3) * 2, f'资产编码：{label.get("primary_code") or ""}', value_line, text_w)
+        serial = str(label.get('manufacture_sn') or '')
+        if serial:
+            text_field(x + pad, y + pad + (line + 3) * 3, f'序列号：{serial}', value_line, text_w)
+
+        qr_payload = label.get('qr_payload') or label.get('primary_code') or ''
+        commands.extend([
+            f'^FO{qr_x},{qr_y}', f'^BQN,2,{qr_mag}', '^FH',
+            f'^FDLA,{_zpl_hex(qr_payload)}^FS',
+        ])
+    commands.append('^XZ')
+    return ''.join(commands)
+
+
+def send_zpl_to_printer(zpl: str, printer_name: str = '') -> None:
+    """通过 Windows RAW 队列发送 ZPL，不经过 GDI 页面布局。"""
+    if win32print is None:
+        raise RuntimeError('未安装 pywin32，无法发送 ZPL。请执行：pip install pywin32')
+    printer_name = printer_name or win32print.GetDefaultPrinter()
+    handle = win32print.OpenPrinter(printer_name)
+    try:
+        win32print.StartDocPrinter(handle, 1, ('仓库资产标签 ZPL', None, 'RAW'))
+        try:
+            win32print.StartPagePrinter(handle)
+            try:
+                win32print.WritePrinter(handle, zpl.encode('utf-8'))
+            finally:
+                win32print.EndPagePrinter(handle)
+        finally:
+            win32print.EndDocPrinter(handle)
+    finally:
+        win32print.ClosePrinter(handle)
 
 
 class LabelClient:
@@ -654,10 +741,23 @@ class LabelClient:
         LOG.info('领取作业 %s，共 %d 张', job_id, len(labels))
 
         try:
+            # 每次打印前热加载配置文件中的偏移：界面上改了 XY 但没重启
+            # 客户端时，下一张标签仍会用最新值，避免"调了没反应"。
+            try:
+                fresh = load_config()
+                self.config['offset_x_mm'] = fresh.get('offset_x_mm', self.config.get('offset_x_mm'))
+                self.config['offset_y_mm'] = fresh.get('offset_y_mm', self.config.get('offset_y_mm'))
+            except Exception:  # noqa: BLE001 - 读配置失败沿用当前值
+                pass
             # 用驱动报告的真实 DPI 渲染，避免配置值与设备分辨率不一致导致物理尺寸偏移
             actual_dpi = detect_printer_dpi(printer) or int(self.config.get('dpi') or 600)
-            for sheet in render_sheet(labels, self.config, actual_dpi):
-                send_to_printer(sheet, printer, actual_dpi)
+            if self.config.get('print_channel', 'zpl') == 'zpl':
+                per_sheet = max(1, int(self.config.get('columns') or 2) * int(self.config.get('rows') or 2))
+                for start in range(0, len(labels), per_sheet):
+                    send_zpl_to_printer(render_zpl_sheet(labels[start:start + per_sheet], self.config, actual_dpi), printer)
+            else:
+                for sheet in render_sheet(labels, self.config, actual_dpi):
+                    send_to_printer(sheet, printer, actual_dpi)
             self._request(
                 f'/api/inventory/label-jobs/{job_id}/finish/',
                 {'success': True, 'claim_token': job['claim_token']},
@@ -700,8 +800,7 @@ def run_gui() -> int:
     from tkinter import messagebox, ttk
 
     config = load_config()
-    stop_event = threading.Event()
-    worker: dict[str, threading.Thread | None] = {'thread': None}
+    worker: dict[str, object] = {'thread': None, 'stop_event': None, 'handler': None}
 
     root = tk.Tk()
     root.title('八维通仓库 · 标签打印客户端')
@@ -816,14 +915,28 @@ def run_gui() -> int:
             messagebox.showerror('连接失败', message)
 
     def start() -> None:
-        if worker['thread'] and worker['thread'].is_alive():
-            return
+        # 运行中再次点击 = 应用新配置并重启。旧逻辑是直接 return，
+        # 改了 XY 后配置既不保存也不生效——这就是"调了没反应"的根源之一。
+        old_thread = worker.get('thread')
+        old_event = worker.get('stop_event')
+        if old_thread and old_thread.is_alive():
+            append_log('检测到正在运行，应用新配置并重启…')
+            old_event.set()
+            # HTTP 请求最长 30 秒；必须确认旧线程退出后才能启动新线程。
+            old_thread.join(timeout=35)
+            if old_thread.is_alive():
+                append_log('旧打印线程未能在 35 秒内退出，已取消重启，避免重复领取作业。')
+                messagebox.showwarning('无法重启', '旧打印线程仍在等待服务器响应，请稍后再试。')
+                return
+        old_handler = worker.get('handler')
+        if old_handler:
+            LOG.removeHandler(old_handler)
         cfg = collect()
         if not cfg['server'] or not cfg['token']:
             messagebox.showwarning('缺少配置', '请填写服务器地址和 API Token。')
             return
         save_config(cfg)
-        stop_event.clear()
+        stop_event = threading.Event()
         client = LabelClient(cfg)
 
         def target() -> None:
@@ -848,11 +961,15 @@ def run_gui() -> int:
 
         thread = threading.Thread(target=target, daemon=True)
         worker['thread'] = thread
+        worker['stop_event'] = stop_event
+        worker['handler'] = handler
         thread.start()
         status.configure(text='运行中 ●', foreground='#0a7d28')
 
     def stop() -> None:
-        stop_event.set()
+        active_event = worker.get('stop_event')
+        if active_event:
+            active_event.set()
         status.configure(text='已停止', foreground='#999')
         append_log('已请求停止。')
 
@@ -861,8 +978,12 @@ def run_gui() -> int:
         try:
             actual_dpi = detect_printer_dpi(cfg['printer']) or int(cfg.get('dpi') or 600)
             label_count = max(1, int(cfg['columns']) * int(cfg['rows']))
-            for sheet in render_sheet(build_test_labels(label_count), cfg, actual_dpi):
-                send_to_printer(sheet, cfg['printer'], actual_dpi)
+            labels = build_test_labels(label_count)
+            if cfg.get('print_channel', 'zpl') == 'zpl':
+                send_zpl_to_printer(render_zpl_sheet(labels, cfg, actual_dpi), cfg['printer'])
+            else:
+                for sheet in render_sheet(labels, cfg, actual_dpi):
+                    send_to_printer(sheet, cfg['printer'], actual_dpi)
             append_log(f'四格测试页已发送到打印机（DPI={actual_dpi}，版式 {cfg["columns"]}x{cfg["rows"]}）。')
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror('测试打印失败', str(exc))
@@ -871,6 +992,7 @@ def run_gui() -> int:
         cfg = collect()
         try:
             actual_dpi = detect_printer_dpi(cfg['printer']) or int(cfg.get('dpi') or 600)
+            # 校准页已把偏移画进图形用于尺量，贴图原点固定 0 避免二次平移。
             image = render_calibration_sheet(cfg, actual_dpi)
             send_to_printer(image, cfg['printer'], actual_dpi)
             append_log(
@@ -880,16 +1002,66 @@ def run_gui() -> int:
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror('校准页打印失败', str(exc))
 
+    def preview_labels() -> None:
+        """弹出预览窗口，按当前配置渲染一页标签（含偏移）供肉眼核对。
+
+        render_sheet 已把偏移画进位图，预览与打印效果一致；可用于在
+        不消耗纸张的情况下确认 XY 微调方向。
+        """
+        cfg = collect()
+        try:
+            from PIL import ImageTk
+
+            actual_dpi = detect_printer_dpi(cfg['printer']) or int(cfg.get('dpi') or 600)
+            label_count = max(1, int(cfg['columns']) * int(cfg['rows']))
+            # render_sheet 已把偏移画进位图，直接显示即可，与打印效果一致。
+            shifted = next(iter(render_sheet(build_test_labels(label_count), cfg, actual_dpi)))
+            sheet = shifted
+
+            preview = tk.Toplevel(root)
+            preview.title('标签预览（含当前偏移）')
+            preview.configure(bg='#dddddd')
+            info = ttk.Label(
+                preview,
+                text=(
+                    f'DPI={actual_dpi}  版式 {cfg["columns"]}x{cfg["rows"]}  '
+                    f'X={float(cfg.get("offset_x_mm") or 0):+.1f} mm  '
+                    f'Y={float(cfg.get("offset_y_mm") or 0):+.1f} mm'
+                ),
+            )
+            info.pack(padx=10, pady=(10, 4))
+
+            # 屏幕显示缩放到合适大小，保持宽高比。
+            max_w, max_h = 640, 460
+            scale = min(max_w / sheet.width, max_h / sheet.height, 1.0)
+            disp = shifted if scale >= 1.0 else shifted.resize(
+                (max(1, int(sheet.width * scale)), max(1, int(sheet.height * scale))),
+                Image.LANCZOS,
+            )
+            photo = ImageTk.PhotoImage(disp)
+            canvas_lbl = tk.Label(preview, image=photo, bd=1, relief='solid')
+            canvas_lbl.image = photo  # 防 GC
+            canvas_lbl.pack(padx=10, pady=10)
+            ttk.Button(preview, text='关闭', command=preview.destroy).pack(pady=(0, 10))
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror('预览失败', str(exc))
+
     buttons = ttk.Frame(frame)
     buttons.grid(row=8, column=0, columnspan=2, sticky='ew', pady=(10, 0))
     ttk.Button(buttons, text='测试连接', command=test_connection).pack(side='left')
     ttk.Button(buttons, text='保存并启动', command=start).pack(side='left', padx=6)
     ttk.Button(buttons, text='停止', command=stop).pack(side='left')
-    ttk.Button(buttons, text='打印校准页', command=print_calibration).pack(side='left', padx=(6, 0))
+    ttk.Button(buttons, text='预览标签', command=preview_labels).pack(side='left', padx=(6, 0))
+    ttk.Button(buttons, text='打印校准页', command=print_calibration).pack(side='left', padx=6)
     ttk.Button(buttons, text='四格测试打印', command=test_print).pack(side='left', padx=6)
 
     def on_close() -> None:
-        stop_event.set()
+        active_event = worker.get('stop_event')
+        active_thread = worker.get('thread')
+        if active_event:
+            active_event.set()
+        if active_thread and active_thread.is_alive():
+            active_thread.join(timeout=35)
         root.destroy()
 
     root.protocol('WM_DELETE_WINDOW', on_close)

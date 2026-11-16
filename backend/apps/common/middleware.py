@@ -1,5 +1,29 @@
 CACHE_RESET_COOKIE = 'warehouse-cache-reset'
-CACHE_RESET_VERSION = '3'
+CACHE_RESET_VERSION = '4'
+
+
+class SecurityHeadersMiddleware:
+    """Apply a conservative CSP and browser capability policy to every response."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        response.setdefault(
+            'Content-Security-Policy',
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+            "font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; "
+            "manifest-src 'self'; object-src 'none'; base-uri 'self'; "
+            "frame-ancestors 'none'; form-action 'self'",
+        )
+        response.setdefault('Referrer-Policy', 'same-origin')
+        response.setdefault(
+            'Permissions-Policy',
+            'camera=(self), geolocation=(), microphone=(), payment=(), usb=()',
+        )
+        return response
 
 
 class NoStoreHtmlMiddleware:

@@ -321,7 +321,7 @@ class AssetViewSet(AuditedModelViewSet):
         methods=['post'],
         url_path='upload-photo',
         parser_classes=[MultiPartParser, FormParser],
-        permission_classes=[IsWarehouseOperator],
+        permission_classes=[IsInventoryEditor],
     )
     def upload_photo(self, request, pk=None):
         asset = self.get_object()

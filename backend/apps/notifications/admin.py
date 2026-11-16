@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 from apps.common.admin import ChineseModelAdmin
-from .models import LowStockAlert, Notification
+from .models import DingTalkOutbox, LowStockAlert, Notification
 
 
 @admin.register(Notification)
@@ -23,6 +23,23 @@ class LowStockAlertAdmin(ChineseModelAdmin):
     list_filter = ('source_type', 'is_active')
     search_fields = ('source_name',)
     readonly_fields = tuple(field.name for field in LowStockAlert._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(DingTalkOutbox)
+class DingTalkOutboxAdmin(ChineseModelAdmin):
+    list_display = ('title', 'delivery_mode', 'status', 'attempt_count', 'next_attempt_at', 'created_at')
+    list_filter = ('delivery_mode', 'status')
+    search_fields = ('title', 'content', 'idempotency_key', 'last_error')
+    readonly_fields = tuple(field.name for field in DingTalkOutbox._meta.fields)
 
     def has_add_permission(self, request):
         return False

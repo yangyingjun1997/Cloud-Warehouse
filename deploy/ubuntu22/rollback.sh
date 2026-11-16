@@ -5,20 +5,20 @@ APP_USER=warehouse
 APP_GROUP=warehouse
 APP_DIR=/opt/after-sales-warehouse
 DATA_DIR=/srv/after-sales-warehouse
-BACKEND_DIR="$APP_DIR/backend"
 RELEASE_ROOT="$APP_DIR/releases"
+CURRENT_LINK="$APP_DIR/current"
 BACKUP_COMMAND=/usr/local/sbin/after-sales-warehouse-backup
 
 usage() {
   cat <<'EOF'
 Usage:
   sudo after-sales-warehouse-rollback --list
-  sudo after-sales-warehouse-rollback latest
-  sudo after-sales-warehouse-rollback 20260920_153000
+  sudo after-sales-warehouse-rollback previous
+  sudo after-sales-warehouse-rollback <release-directory-name>
 
 说明：
-  该命令只回滚程序代码和静态文件，不回滚 PostgreSQL 数据。
-  如果数据库结构也需要回退，请先用备份目录执行正式数据恢复流程。
+  该命令只原子切换已构建完成的程序 release，不回滚 PostgreSQL 数据或 schema。
+  目标 release 必须与当前数据库结构兼容；否则应走正式数据恢复流程。
 EOF
 }
 
@@ -32,121 +32,92 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
+release_is_complete() {
+  local release_dir="$1"
+  [[ -f "$release_dir/backend/manage.py" \
+    && -x "$release_dir/venv/bin/python" \
+    && -d "$release_dir/static" \
+    && -f "$release_dir/release-info" ]]
+}
+
+list_releases() {
+  local release_dir
+  while IFS= read -r release_dir; do
+    release_is_complete "$release_dir" && basename "$release_dir"
+  done < <(find "$RELEASE_ROOT" -mindepth 1 -maxdepth 1 -type d -print | sort -r)
+}
+
 if [[ ! -d "$RELEASE_ROOT" ]]; then
-  echo "尚未发现代码快照目录：$RELEASE_ROOT"
+  echo "尚未发现 release 目录：$RELEASE_ROOT"
   exit 1
 fi
 
-list_snapshots() {
-  find "$RELEASE_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -r
-}
-
 if [[ "${1:-}" == "--list" || $# -eq 0 ]]; then
-  echo "可回滚代码快照："
-  list_snapshots || true
+  echo "可切换程序 release："
+  list_releases || true
   echo
-  echo "执行示例：sudo after-sales-warehouse-rollback latest"
+  echo "当前指向：$(readlink -f "$CURRENT_LINK" 2>/dev/null || echo '未设置')"
   exit 0
 fi
 
-target="${1:-latest}"
-if [[ "$target" == "latest" ]]; then
-  target="$(list_snapshots | head -n 1)"
+CURRENT_RELEASE="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
+target="${1:-previous}"
+if [[ "$target" == "previous" ]]; then
+  target="$(list_releases | while IFS= read -r name; do
+    candidate="$RELEASE_ROOT/$name"
+    [[ "$(readlink -f "$candidate")" == "$CURRENT_RELEASE" ]] || { echo "$name"; break; }
+  done)"
 fi
 
-if [[ -z "$target" || ! -f "$RELEASE_ROOT/$target/backend.tar.gz" ]]; then
-  echo "未找到快照：$target"
+TARGET_DIR="$RELEASE_ROOT/$target"
+if [[ -z "$target" || ! -d "$TARGET_DIR" ]] || ! release_is_complete "$TARGET_DIR"; then
+  echo "未找到完整 release：${target:-空}"
+  exit 1
+fi
+TARGET_DIR="$(readlink -f "$TARGET_DIR")"
+if [[ "$TARGET_DIR" == "$CURRENT_RELEASE" ]]; then
+  echo "目标已是当前 release，无需切换。"
+  exit 0
+fi
+
+if [[ -x "$BACKUP_COMMAND" ]]; then
+  echo "回滚前执行数据库和媒体备份..."
+  "$BACKUP_COMMAND"
+else
+  echo "未找到必需的备份命令：$BACKUP_COMMAND" >&2
   exit 1
 fi
 
-SNAPSHOT_DIR="$RELEASE_ROOT/$target"
-STAMP="$(date +%Y%m%d_%H%M%S)"
-PRE_ROLLBACK_DIR="$RELEASE_ROOT/pre_rollback_$STAMP"
-ENV_BACKUP="$(mktemp)"
-HAD_ENV=0
+sudo -u "$APP_USER" "$TARGET_DIR/venv/bin/python" "$TARGET_DIR/backend/manage.py" check
 
-cleanup() {
-  rm -f "$ENV_BACKUP"
+restore_current() {
+  local status="$?"
+  trap - ERR
+  if [[ -n "$CURRENT_RELEASE" && -d "$CURRENT_RELEASE" ]]; then
+    ln -sfn "$CURRENT_RELEASE" "$APP_DIR/current.rollback"
+    mv -Tf "$APP_DIR/current.rollback" "$CURRENT_LINK"
+    systemctl restart after-sales-warehouse 2>/dev/null || true
+    systemctl reload nginx 2>/dev/null || true
+  fi
+  echo "回滚验证失败，已恢复原 current 指针。" >&2
+  exit "$status"
 }
-trap cleanup EXIT
+trap restore_current ERR
 
-echo "准备回滚到代码快照：$target"
-
-if [[ -x "$BACKUP_COMMAND" ]]; then
-  echo "回滚前先执行一次数据库和媒体备份..."
-  "$BACKUP_COMMAND"
-else
-  echo "提醒：未找到 $BACKUP_COMMAND，跳过自动数据备份。"
-fi
-
-if [[ -f "$SNAPSHOT_DIR/SHA256SUMS" ]]; then
-  (cd "$SNAPSHOT_DIR" && sha256sum -c SHA256SUMS)
-fi
-
-if [[ -d "$BACKEND_DIR" && -f "$BACKEND_DIR/manage.py" ]]; then
-  install -d -m 755 "$PRE_ROLLBACK_DIR"
-  tar -C "$APP_DIR" \
-    --exclude='backend/.env' \
-    --exclude='backend/db.sqlite3' \
-    --exclude='backend/media' \
-    --exclude='backend/staticfiles' \
-    --exclude='*/__pycache__' \
-    --exclude='*.pyc' \
-    -czf "$PRE_ROLLBACK_DIR/backend.tar.gz" backend
-  sha256sum "$PRE_ROLLBACK_DIR/backend.tar.gz" > "$PRE_ROLLBACK_DIR/SHA256SUMS"
-  echo "已保存回滚前代码快照：$PRE_ROLLBACK_DIR"
-fi
-
-if [[ -f "$BACKEND_DIR/.env" ]]; then
-  cp "$BACKEND_DIR/.env" "$ENV_BACKUP"
-  HAD_ENV=1
-fi
-
-systemctl stop after-sales-warehouse || true
-rm -rf "$BACKEND_DIR"
-tar -C "$APP_DIR" -xzf "$SNAPSHOT_DIR/backend.tar.gz"
-
-if [[ $HAD_ENV -eq 1 ]]; then
-  install -o "$APP_USER" -g "$APP_GROUP" -m 640 "$ENV_BACKUP" "$BACKEND_DIR/.env"
-fi
-
-chown -R "$APP_USER:$APP_GROUP" "$APP_DIR" "$DATA_DIR"
-
-if [[ -f "$BACKEND_DIR/requirements.txt" ]]; then
-  "$APP_DIR/venv/bin/pip" install -r "$BACKEND_DIR/requirements.txt"
-  "$APP_DIR/venv/bin/pip" check
-fi
-
-sudo -u "$APP_USER" "$APP_DIR/venv/bin/python" "$BACKEND_DIR/manage.py" check
-sudo -u "$APP_USER" "$APP_DIR/venv/bin/python" "$BACKEND_DIR/manage.py" collectstatic --noinput
-
-if [[ -r "$SNAPSHOT_DIR/current-release.txt" ]]; then
-  install -o "$APP_USER" -g "$APP_GROUP" -m 640 \
-    "$SNAPSHOT_DIR/current-release.txt" "$APP_DIR/current-release"
-  cat >> "$APP_DIR/current-release" <<EOF
-rolled_back_at=$(date --iso-8601=seconds)
-rollback_snapshot=$target
-pre_rollback_snapshot=$(basename "$PRE_ROLLBACK_DIR")
-database_rollback=not_performed
-EOF
-else
-  cat > "$APP_DIR/current-release" <<EOF
-rolled_back_at=$(date --iso-8601=seconds)
-rollback_snapshot=$target
-pre_rollback_snapshot=$(basename "$PRE_ROLLBACK_DIR")
-database_rollback=not_performed
-release_version=unknown_legacy_snapshot
-source_revision=unknown
-source_revision_short=unknown
-working_tree_dirty=unknown
-source_content_sha256=unknown
-EOF
-  chown "$APP_USER:$APP_GROUP" "$APP_DIR/current-release"
-fi
-
+ln -sfn "$TARGET_DIR" "$APP_DIR/current.next"
+mv -Tf "$APP_DIR/current.next" "$CURRENT_LINK"
 systemctl restart after-sales-warehouse
-systemctl reload nginx || true
-curl --silent --show-error --fail --max-time 10 http://127.0.0.1/health/ >/dev/null
+systemctl reload nginx
+curl --silent --show-error --fail --max-time 15 http://127.0.0.1/health/ >/dev/null
+trap - ERR
 
-echo "代码回滚完成。当前快照：$target"
-echo "注意：数据库未回滚；若此次问题涉及迁移或数据，请按备份恢复手册处理。"
+cat >> "$TARGET_DIR/release-info" <<EOF
+last_activated_at=$(date --iso-8601=seconds)
+activated_by=rollback
+previous_release=$CURRENT_RELEASE
+database_rollback=not_performed
+EOF
+chown "$APP_USER:$APP_GROUP" "$TARGET_DIR/release-info"
+
+echo "程序 release 切换完成：$target"
+echo "数据库未回滚；已验证 Django check 与 /health/。"

@@ -3,10 +3,9 @@ set -Eeuo pipefail
 
 APP_USER=warehouse
 APP_DIR=/opt/after-sales-warehouse
-BACKEND_DIR="$APP_DIR/backend"
+BACKEND_DIR="$APP_DIR/current/backend"
 ENV_FILE="$BACKEND_DIR/.env"
-PYTHON="$APP_DIR/venv/bin/python"
-PIP="$APP_DIR/venv/bin/pip"
+PYTHON="$APP_DIR/current/venv/bin/python"
 ERRORS=0
 WARNINGS=0
 
@@ -26,8 +25,8 @@ if [[ ! -f "$ENV_FILE" ]]; then
   fail "缺少配置文件：$ENV_FILE"
 else
   ok "已找到 .env。"
-  mode="$(stat -c '%a' "$ENV_FILE" 2>/dev/null || echo unknown)"
-  owner="$(stat -c '%U:%G' "$ENV_FILE" 2>/dev/null || echo unknown)"
+  mode="$(stat -L -c '%a' "$ENV_FILE" 2>/dev/null || echo unknown)"
+  owner="$(stat -L -c '%U:%G' "$ENV_FILE" 2>/dev/null || echo unknown)"
   printf '.env 权限：%s %s\n' "$mode" "$owner"
   [[ "$mode" =~ ^6[04]0$|^4[04]0$ ]] && ok '.env 权限未对其他用户开放。' || warn '.env 建议权限为 640 或 600。'
 fi
@@ -84,15 +83,15 @@ else
   rm -f "$deploy_output"
 fi
 
-if [[ -x "$PIP" ]]; then
-  "$PIP" check && ok 'pip check 通过。' || fail 'pip check 发现依赖冲突。'
-  if "$PIP" show pip-audit >/dev/null 2>&1; then
-    "$APP_DIR/venv/bin/pip-audit" || warn 'pip-audit 发现需要评估的依赖漏洞。'
+if [[ -x "$PYTHON" ]] && "$PYTHON" -m pip --version >/dev/null 2>&1; then
+  "$PYTHON" -m pip check && ok 'pip check 通过。' || fail 'pip check 发现依赖冲突。'
+  if "$PYTHON" -m pip show pip-audit >/dev/null 2>&1; then
+    "$PYTHON" -m pip_audit || warn 'pip-audit 发现需要评估的依赖漏洞。'
   else
     warn '未安装 pip-audit；如需联网漏洞扫描，可后续单独安装执行。'
   fi
 else
-  fail "未找到 pip：$PIP"
+  fail "当前 release 的 Python 环境中未找到 pip。"
 fi
 
 section '监听端口'

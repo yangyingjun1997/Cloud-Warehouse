@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-ENV_FILE="/opt/after-sales-warehouse/backend/.env"
+ENV_FILE="/srv/after-sales-warehouse/app.env"
 NGINX_SITE="/etc/nginx/sites-available/after-sales-warehouse"
 SERVER_NAME_SCRIPT="/opt/after-sales-warehouse/auto-register-host.py"
 DRY_RUN=0

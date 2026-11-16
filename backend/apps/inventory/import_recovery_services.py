@@ -33,10 +33,10 @@ def _json_value(value):
     return str(value)
 
 
-def snapshot_instance(instance) -> dict:
+def snapshot_instance(instance, *, include_system_fields=False) -> dict:
     snapshot = {}
     for field in instance._meta.concrete_fields:
-        if field.name in _SNAPSHOT_EXCLUDED_FIELDS:
+        if not include_system_fields and field.name in _SNAPSHOT_EXCLUDED_FIELDS:
             continue
         snapshot[field.attname] = _json_value(getattr(instance, field.attname))
     return snapshot
@@ -220,21 +220,11 @@ def controlled_delete_test_asset(*, actor, asset: Asset, confirmation: str, reas
     snapshot = {
         'asset': snapshot_instance(asset),
         'identifiers': [
-            {
-                'identifier_type': row.identifier_type,
-                'value': row.value,
-                'is_primary': row.is_primary,
-                'is_active': row.is_active,
-            }
+            snapshot_instance(row, include_system_fields=True)
             for row in asset.identifiers.all()
         ],
         'network_endpoints': [
-            {
-                'interface_name': row.interface_name,
-                'ip_address': row.ip_address,
-                'mac_address': row.mac_address,
-                'hostname': row.hostname,
-            }
+            snapshot_instance(row, include_system_fields=True)
             for row in asset.network_endpoints.all()
         ],
         'reason': reason.strip(),

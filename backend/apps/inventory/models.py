@@ -890,7 +890,7 @@ class AssetLifecycleEvent(ImmutableAuditMixin, UUIDModel, TimeStampedModel):
     event_at = models.DateTimeField(default=timezone.now)
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name='asset_lifecycle_events',

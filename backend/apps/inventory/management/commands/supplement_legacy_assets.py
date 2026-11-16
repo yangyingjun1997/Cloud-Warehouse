@@ -193,7 +193,7 @@ class Command(BaseCommand):
             item_type = ItemType.objects.create(
                 category=category,
                 name=name[:120],
-                code=f'LEGACY-{hashlib.sha1(name.encode()).hexdigest()[:12].upper()}',
+                code=f'LEGACY-{hashlib.sha1(name.encode(), usedforsecurity=False).hexdigest()[:12].upper()}',
                 is_serialized=True,
                 unit='个',
             )

@@ -50,6 +50,7 @@
 - 所有配置通过环境变量注入，代码中无任何硬编码凭据
 - 数据库备份、恢复演练、回滚脚本开箱即用
 - 离线操作记录联网后进入服务器复核队列，不直接写库
+- 申请、审批、出入库和审计历史不提供通用硬删除；生命周期附件必须经过登录与角色校验下载
 
 ### 资产编码 V2
 
@@ -89,9 +90,12 @@
 
 ### 前置要求
 
-- Python 3.10+
+- Python 3.12（当前锁定依赖和 Ubuntu 发布运行时）
 - Node.js 18+（仅小程序开发需要）
 - PostgreSQL 14+（生产）/ SQLite（本地开发默认；Windows 数据保存在 `%LOCALAPPDATA%\AfterSalesWarehouse\data`）
+
+> 当前处于内部稳定化阶段。开始开发或部署前必须先阅读 `PROJECT_STATUS.md` 的
+> `2026-11-10 current review` 和 `DEVELOPMENT_PLAN.md` 的 M8；本地未提交工作区不等于 NUC 已部署版本。
 
 ### 1. 克隆并准备环境
 
@@ -196,17 +200,19 @@ sudo bash deploy/ubuntu22/install.sh --host <SERVER_IP>
 构建脚本默认要求 Git 工作区干净，确保包名和 manifest 能准确对应提交。仅紧急调试可显式增加
 `-AllowDirty`；此时包名会自动包含 `dirty` 和内容哈希，不得作为正式发布版本。
 安装完成后，发布版本、Git revision、脏工作区标记和源内容 SHA-256 会写入
-`/opt/after-sales-warehouse/current-release`，可通过
+`/opt/after-sales-warehouse/current/release-info`，可通过
 `sudo /usr/local/sbin/after-sales-warehouse-status` 查看。手工源码部署缺少 manifest 时会明确显示
-`unversioned/unknown`；部署前代码快照会保留旧发布身份，代码回滚后恢复该身份并追加回滚记录。
+`unversioned/unknown`。每个版本独立保存在 `/opt/after-sales-warehouse/releases/`，运行中的
+`/opt/after-sales-warehouse/current` 通过符号链接原子切换；健康检查失败时自动恢复上一个链接。
+已有数据库更新时会先执行 PostgreSQL 快照；快照失败会立即终止部署，不会继续覆盖应用目录。
 
 安装脚本会自动完成：
 
-- 创建 `warehouse` 系统用户与 `/opt/after-sales-warehouse` 目录
+- 创建 `warehouse` 系统用户、独立 release 目录和持久化 `/srv/after-sales-warehouse/app.env`
 - 安装 PostgreSQL、Nginx、Python 依赖
 - 创建数据库与用户（幂等，不重建已有数据）
 - 配置 Gunicorn systemd 服务、Nginx 站点
-- 注册每日备份、健康检查、一致性巡检等 systemd timers
+- 注册每日备份、健康检查、一致性巡检和钉钉 outbox 等 systemd timers
 - 生成自签名 HTTPS 证书（可选，需网络管理员配合）
 
 ### 首次部署后导入历史数据（可选）
@@ -224,6 +230,7 @@ sudo bash deploy/ubuntu22/install.sh --host <SERVER_IP> --offline-update
 ```
 
 该模式不下载系统包或 Python 包，只同步代码、跑迁移、收集静态文件。
+它会复制上一 release 的虚拟环境，因此仅适用于依赖锁文件没有变化的更新。
 
 ---
 
@@ -245,8 +252,8 @@ sudo systemctl start after-sales-warehouse-backup.service
 sudo /usr/local/sbin/after-sales-warehouse-restore-drill
 
 # PostgreSQL 关键业务回滚式冒烟（执行完整写流程，但不保留测试数据）
-sudo -u warehouse /opt/after-sales-warehouse/venv/bin/python \
-  /opt/after-sales-warehouse/backend/manage.py smoke_business_flows \
+sudo -u warehouse /opt/after-sales-warehouse/current/venv/bin/python \
+  /opt/after-sales-warehouse/current/backend/manage.py smoke_business_flows \
   --actor admin --confirm '确认写入冒烟数据' --rollback
 
 # PostgreSQL 隔离测试库竞态测试（临时授权建库，结束自动撤销并删库）
@@ -268,6 +275,27 @@ python tools/read_only_load_test.py \
 ```
 
 该结果只反映只读入口，不代替登录后业务页面压测、资源监控或稳定性测试。
+
+登录后业务页容量基线使用环境变量传入口令，工具只发 GET，JSON 报告不会写入账号、口令或 Cookie：
+
+```powershell
+$env:WAREHOUSE_LOAD_USERNAME = '<测试账号>'
+$env:WAREHOUSE_LOAD_PASSWORD = '<测试口令>'
+python tools/read_only_load_test.py `
+  --base-url http://<SERVER_IP>/ `
+  --path / --path /warehouse/ --path /transactions/ --path /reports/ `
+  --path /requests/ --path /approvals/ --path /warehouse/quick-process/ `
+  --path /api/inventory/assets/ `
+  --requests 160 --concurrency-ramp 1,4,8,12
+$env:WAREHOUSE_LOAD_PASSWORD = ''
+```
+
+本机可用一次性数据库运行认证容量和 DAST；脚本会创建随机临时口令并在结束时停止开发服务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\run_local_capacity.ps1
+powershell -ExecutionPolicy Bypass -File tools\run_local_dast.ps1
+```
 
 ### 定时任务
 

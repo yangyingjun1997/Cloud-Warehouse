@@ -113,8 +113,10 @@ def correct_asset_states(*, assets, to_status, reason, actor, warehouse=None, lo
             asset=asset, status=InventoryReservation.Status.ACTIVE,
         ).exists():
             raise AssetStateCorrectionError(f'资产 {asset} 存在有效预占，必须先解除预占再调整状态。')
-        if not is_admin and asset.status in TERMINAL_ASSET_STATUSES:
-            raise AssetStateCorrectionError(f'资产 {asset} 已处于最终状态，不能普通校正。')
+        if asset.status in TERMINAL_ASSET_STATUSES:
+            raise AssetStateCorrectionError(
+                f'资产 {asset} 已处于最终状态，必须通过冲销或反向业务单据处理。'
+            )
         before = asset_state_snapshot(asset)
         from_status = asset.status
         asset.status = to_status

@@ -15,7 +15,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 
-CONFIG_PATH = Path('/opt/after-sales-warehouse/backend/.env')
+CONFIG_PATH = Path('/srv/after-sales-warehouse/app.env')
 
 
 def load_config(path: Path) -> dict[str, str]:

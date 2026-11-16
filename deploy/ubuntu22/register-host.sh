@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 
 APP_DIR=/opt/after-sales-warehouse
-ENV_FILE="$APP_DIR/backend/.env"
+ENV_FILE=/srv/after-sales-warehouse/app.env
 NGINX_AVAILABLE=/etc/nginx/sites-available/after-sales-warehouse
 SERVICE_NAME=after-sales-warehouse
 

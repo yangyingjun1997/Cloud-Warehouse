@@ -44,7 +44,7 @@ class Command(BaseCommand):
                     category=category,
                     name=stock.name,
                     defaults={
-                        'code': f'LEGACY-{hashlib.sha1(stock.name.encode("utf-8")).hexdigest()[:12].upper()}',
+                        'code': f'LEGACY-{hashlib.sha1(stock.name.encode("utf-8"), usedforsecurity=False).hexdigest()[:12].upper()}',
                         'is_serialized': False,
                         'unit': stock.unit,
                     },

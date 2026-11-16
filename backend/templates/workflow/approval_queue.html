@@ -4,14 +4,231 @@
 {% block crumb %}我的审批{% endblock %}
 
 {% block content %}
+  <style>
+    .filter-compact .management-filter-form {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 6px 8px;
+      align-items: end;
+    }
+    .filter-compact .management-filter-form .form-field { min-width: 0; }
+    .filter-compact .management-filter-form label { font-size: 11px; color: var(--muted); }
+    .filter-compact .management-filter-form input,
+    .filter-compact .management-filter-form select {
+      height: 32px;
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+    .filter-compact .management-filter-form .button { height: 32px; padding: 0 12px; }
+    @media (max-width: 900px) {
+      .filter-compact .management-filter-form { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    /* 批量审批样式 */
+    .batch-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      background: var(--bg-soft);
+      border-radius: 6px;
+      margin-bottom: 10px;
+      font-size: 13px;
+    }
+    .batch-select-all {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .batch-select-all input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+    #selected-task-count {
+      color: var(--muted);
+      flex: 1;
+    }
+    .button-sm {
+      height: 30px;
+      padding: 0 12px;
+      font-size: 12px;
+    }
+    .task-row-selectable {
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+    }
+    .task-checkbox {
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .task-checkbox input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+    .task-content {
+      flex: 1;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+    /* 批量操作对话框 */
+    .batch-dialog {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .batch-dialog.show {
+      display: flex;
+    }
+    .batch-dialog-content {
+      background: var(--bg);
+      border-radius: 8px;
+      padding: 20px;
+      max-width: 480px;
+      width: 90%;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    }
+    .batch-dialog-content h3 {
+      margin: 0 0 12px;
+      font-size: 16px;
+    }
+    .batch-dialog-content textarea {
+      width: 100%;
+      min-height: 80px;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 13px;
+      font-family: inherit;
+      resize: vertical;
+      box-sizing: border-box;
+    }
+    .batch-dialog-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 16px;
+    }
+  </style>
   <div class="page-heading"><div><h1>我的审批</h1><p class="page-copy">仅显示当前账号可处理的审批任务，以及等待仓库执行的申请。</p></div></div>
-  <section class="panel management-filter"><form method="get" class="management-filter-form" hx-get="{% url 'approval_queue' %}" hx-target="#approval-results" hx-select="#approval-results" hx-swap="outerHTML" hx-trigger="input changed delay:400ms, change" hx-push-url="true"><div class="form-field"><label for="approval-query">关键词</label><input id="approval-query" name="q" value="{{ query }}" placeholder="单号、物品、项目、工单或使用人"></div><div class="form-field"><label for="approval-type">申请类型</label><select id="approval-type" name="request_type"><option value="">全部类型</option>{% for value,label in request_types %}<option value="{{ value }}" {% if selected_request_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><div class="form-field"><label for="approval-status">单据状态</label><select id="approval-status" name="status"><option value="">全部状态</option>{% for value,label in status_choices %}<option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><button class="button button-secondary" type="submit">筛选</button><div class="form-field"><label for="approval-start">申请日期起</label><input id="approval-start" name="application_start" type="date" value="{{ application_start }}"></div><div class="form-field"><label for="approval-end">申请日期止</label><input id="approval-end" name="application_end" type="date" value="{{ application_end }}"></div><div class="form-field"><label for="approval-return-start">归还日期起</label><input id="approval-return-start" name="return_start" type="date" value="{{ return_start }}"></div><div class="form-field"><label for="approval-return-end">归还日期止</label><input id="approval-return-end" name="return_end" type="date" value="{{ return_end }}"></div></form></section>
+  <section class="panel management-filter filter-compact"><form method="get" class="management-filter-form" hx-get="{% url 'approval_queue' %}" hx-target="#approval-results" hx-select="#approval-results" hx-swap="outerHTML" hx-trigger="input changed delay:400ms, change" hx-push-url="true"><div class="form-field"><label for="approval-query">关键词</label><input id="approval-query" name="q" value="{{ query }}" placeholder="单号、物品、项目、工单或使用人"></div><div class="form-field"><label for="approval-type">申请类型</label><select id="approval-type" name="request_type"><option value="">全部类型</option>{% for value,label in request_types %}<option value="{{ value }}" {% if selected_request_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><div class="form-field"><label for="approval-status">单据状态</label><select id="approval-status" name="status"><option value="">全部状态</option>{% for value,label in status_choices %}<option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><button class="button button-secondary" type="submit">筛选</button><div class="form-field"><label for="approval-start">申请日期起</label><input id="approval-start" name="application_start" type="date" value="{{ application_start }}"></div><div class="form-field"><label for="approval-end">申请日期止</label><input id="approval-end" name="application_end" type="date" value="{{ application_end }}"></div><div class="form-field"><label for="approval-return-start">归还日期起</label><input id="approval-return-start" name="return_start" type="date" value="{{ return_start }}"></div><div class="form-field"><label for="approval-return-end">归还日期止</label><input id="approval-return-end" name="return_end" type="date" value="{{ return_end }}"></div></form></section>
   <div id="approval-results">
   {% if pending_purchase_requests %}<section class="panel" style="margin-bottom:14px"><div class="panel-head"><h2>采购申请审批</h2><span>{{ pending_purchase_requests|length }} 项</span></div><div class="task-list">{% for purchase in pending_purchase_requests %}<a class="task-row task-row-rich" href="{% url 'purchase_draft_detail' purchase.id %}"><span><strong>采购申请 · {{ purchase.purchase_no }}</strong><small>创建人：{{ purchase.applicant.username|default:'未指定' }} · 申请日期：{{ purchase.application_date|date:'Y-m-d' }} · 提交时间：{{ purchase.submitted_at|date:'Y-m-d H:i' }}</small><small>物品：{% for line in purchase.lines.all %}{{ line.name_snapshot }} × {{ line.quantity }} {{ line.unit }}{% if not forloop.last %}；{% endif %}{% endfor %}</small><small>采购原因：{{ purchase.reason|default:'未填写' }}</small></span><span class="tag pending">待审批</span></a>{% endfor %}</div></section>{% endif %}
   <div class="workflow-grid">
-    <section class="panel"><div class="panel-head"><h2>待我审批</h2><span>{{ pending_tasks|length }} 项</span></div><div class="task-list">{% for task in pending_tasks %}<a class="task-row task-row-rich" href="{% url 'workflow_detail' task.request.id %}"><span><strong>{{ task.request.get_request_type_display }} · {{ task.request.request_no }}</strong>{% if task.request.inventory_no %}<small class="code">出入库单：{{ task.request.inventory_no }}</small>{% endif %}<small>申请人：{{ task.request.applicant.username|default:'未指定申请人' }} · 申请日期：{{ task.request.application_date|date:'Y-m-d' }} · 归还日期：{{ task.request.expected_return_date|date:'Y-m-d'|default:'-' }}{% if task.assigned_to %} · 指定给我{% endif %}</small><small>物品：{% for line in task.request.lines.all %}{% if line.asset %}{{ line.asset.name }}{% else %}{{ line.stock_item.name }} x {{ line.quantity }}{% endif %}{% if not forloop.last %}；{% endif %}{% endfor %}</small><small>位置：{% for line in task.request.lines.all %}{% if line.asset %}{{ line.asset.warehouse.name|default:'未分配仓库' }} / {{ line.asset.location.code|default:'未分配库位' }}{% else %}{{ line.stock_item.warehouse.name|default:'未分配仓库' }} / {{ line.stock_item.location.code|default:'未分配库位' }}{% endif %}{% if not forloop.last %}；{% endif %}{% endfor %}</small><small>接收人：{{ task.request.recipient_name|default:'未填写' }}{% if task.request.usage_location %} · {{ task.request.usage_location }}{% endif %}</small></span><span class="tag pending">待审批</span></a>{% empty %}<div class="empty-state">当前没有待审批任务</div>{% endfor %}</div></section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>待我审批</h2>
+        <span>{{ pending_tasks|length }} 项</span>
+      </div>
+      {% if pending_tasks %}
+      <form method="post" action="{% url 'approval_batch_action' %}" id="batch-approval-form">
+        {% csrf_token %}
+        <div class="batch-toolbar">
+          <label class="batch-select-all"><input type="checkbox" id="select-all-tasks"> 全选</label>
+          <span id="selected-task-count">已选 0 项</span>
+          <button type="button" class="button button-secondary button-sm" onclick="showBatchDialog('approve')">批量批准</button>
+          <button type="button" class="button button-secondary button-sm" onclick="showBatchDialog('reject')">批量拒绝</button>
+        </div>
+        <div class="task-list">
+          {% for task in pending_tasks %}
+          <div class="task-row task-row-rich task-row-selectable">
+            <label class="task-checkbox"><input type="checkbox" name="task_checkbox" value="{{ task.id }}" onchange="updateSelectedCount()"></label>
+            <a class="task-content" href="{% url 'workflow_detail' task.request.id %}">
+              <span><strong>{{ task.request.get_request_type_display }} · {{ task.request.request_no }}</strong>{% if task.request.inventory_no %}<small class="code">出入库单：{{ task.request.inventory_no }}</small>{% endif %}<small>申请人：{{ task.request.applicant.username|default:'未指定申请人' }} · 申请日期：{{ task.request.application_date|date:'Y-m-d' }} · 归还日期：{{ task.request.expected_return_date|date:'Y-m-d'|default:'-' }}{% if task.assigned_to %} · 指定给我{% endif %}</small><small>物品：{% for line in task.request.lines.all %}{% if line.asset %}{{ line.asset.name }}{% else %}{{ line.stock_item.name }} x {{ line.quantity }}{% endif %}{% if not forloop.last %}；{% endif %}{% endfor %}</small><small>位置：{% for line in task.request.lines.all %}{% if line.asset %}{{ line.asset.warehouse.name|default:'未分配仓库' }} / {{ line.asset.location.code|default:'未分配库位' }}{% else %}{{ line.stock_item.warehouse.name|default:'未分配仓库' }} / {{ line.stock_item.location.code|default:'未分配库位' }}{% endif %}{% if not forloop.last %}；{% endif %}{% endfor %}</small><small>接收人：{{ task.request.recipient_name|default:'未填写' }}{% if task.request.usage_location %} · {{ task.request.usage_location }}{% endif %}</small></span>
+              <span class="tag pending">待审批</span>
+            </a>
+          </div>
+          {% endfor %}
+        </div>
+        <input type="hidden" name="task_ids" id="batch-task-ids">
+        <input type="hidden" name="batch_action" id="batch-action-type">
+        <input type="hidden" name="batch_comment" id="batch-comment-input">
+      </form>
+      {% else %}
+      <div class="empty-state">当前没有待审批任务</div>
+      {% endif %}
+    </section>
     <section class="panel"><div class="panel-head"><h2>待执行出入库</h2><span>{{ waiting_requests|length }} 项</span></div><div class="task-list">{% for workflow_request in waiting_requests %}<a class="task-row task-row-rich" href="{% url 'workflow_detail' workflow_request.id %}"><span><strong>{{ workflow_request.get_request_type_display }} · {{ workflow_request.request_no }}</strong><small>申请人：{{ workflow_request.applicant.username|default:'未指定申请人' }} · 申请日期：{{ workflow_request.application_date|date:'Y-m-d' }} · 出入库日期：{{ workflow_request.transaction_date|date:'Y-m-d' }}</small><small>物品：{% for line in workflow_request.lines.all %}{% if line.asset %}{{ line.asset.name }}{% else %}{{ line.stock_item.name }} x {{ line.quantity }}{% endif %}{% if not forloop.last %}；{% endif %}{% endfor %}</small><small>位置：{% for line in workflow_request.lines.all %}{% if line.asset %}{{ line.asset.warehouse.name|default:'未分配仓库' }} / {{ line.asset.location.code|default:'未分配库位' }}{% else %}{{ line.stock_item.warehouse.name|default:'未分配仓库' }} / {{ line.stock_item.location.code|default:'未分配库位' }}{% endif %}{% if not forloop.last %}；{% endif %}{% endfor %}</small><small>接收人：{{ workflow_request.recipient_name|default:'未填写' }}{% if workflow_request.usage_location %} · {{ workflow_request.usage_location }}{% endif %}</small></span><span class="tag waiting">待执行</span></a>{% empty %}<div class="empty-state">当前没有待执行申请</div>{% endfor %}</div></section>
   </div>
   <section class="panel" style="margin-top:14px"><div class="panel-head"><h2>我的近期已办</h2></div><table class="data-table"><thead><tr><th>申请单号</th><th>申请日期</th><th>处理结果</th><th>处理时间</th></tr></thead><tbody>{% for task in completed_tasks %}<tr><td><a class="code" href="{% url 'workflow_detail' task.request.id %}">{{ task.request.request_no }}</a></td><td>{{ task.request.application_date|date:'Y-m-d' }}</td><td>{{ task.get_status_display }}</td><td>{{ task.acted_at|date:'Y-m-d H:i' }}</td></tr>{% empty %}<tr><td colspan="4"><div class="empty-state">暂无已办记录</div></td></tr>{% endfor %}</tbody></table></section>
   </div>
+
+  <!-- 批量操作对话框 -->
+  <div class="batch-dialog" id="batch-dialog">
+    <div class="batch-dialog-content">
+      <h3 id="batch-dialog-title">批量批准</h3>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 10px">将为选中的 <span id="batch-dialog-count">0</span> 条申请统一填写审批意见：</p>
+      <textarea id="batch-comment-text" placeholder="审批意见（可选）"></textarea>
+      <div class="batch-dialog-actions">
+        <button type="button" class="button button-secondary" onclick="closeBatchDialog()">取消</button>
+        <button type="button" class="button button-primary" onclick="submitBatchAction()">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 使用事件委托，HTMX 替换 #approval-results 后仍能正常全选和计数。
+    document.addEventListener('change', function(event) {
+      if (event.target.id === 'select-all-tasks') {
+        document.querySelectorAll('input[name="task_checkbox"]').forEach(cb => {
+          cb.checked = event.target.checked;
+        });
+        updateSelectedCount();
+      } else if (event.target.matches('input[name="task_checkbox"]')) {
+        updateSelectedCount();
+      }
+    });
+
+    // 更新已选数量
+    function updateSelectedCount() {
+      const checked = document.querySelectorAll('input[name="task_checkbox"]:checked');
+      document.getElementById('selected-task-count').textContent = `已选 ${checked.length} 项`;
+    }
+
+    // 显示批量操作对话框
+    function showBatchDialog(action) {
+      const checked = document.querySelectorAll('input[name="task_checkbox"]:checked');
+      if (checked.length === 0) {
+        alert('请先勾选要处理的审批任务');
+        return;
+      }
+      document.getElementById('batch-action-type').value = action;
+      document.getElementById('batch-dialog-title').textContent = action === 'approve' ? '批量批准' : '批量拒绝';
+      document.getElementById('batch-dialog-count').textContent = checked.length;
+      document.getElementById('batch-dialog').classList.add('show');
+    }
+
+    // 关闭对话框
+    function closeBatchDialog() {
+      document.getElementById('batch-dialog').classList.remove('show');
+      document.getElementById('batch-comment-text').value = '';
+    }
+
+    // 提交批量操作
+    function submitBatchAction() {
+      const checked = document.querySelectorAll('input[name="task_checkbox"]:checked');
+      const taskIds = Array.from(checked).map(cb => cb.value).join(',');
+      document.getElementById('batch-task-ids').value = taskIds;
+      document.getElementById('batch-comment-input').value = document.getElementById('batch-comment-text').value;
+      document.getElementById('batch-approval-form').submit();
+    }
+
+    // 点击遮罩关闭
+    document.getElementById('batch-dialog')?.addEventListener('click', function(e) {
+      if (e.target === this) closeBatchDialog();
+    });
+  </script>
 {% endblock %}

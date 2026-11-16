@@ -3,9 +3,9 @@ set -Eeuo pipefail
 
 APP_USER=warehouse
 APP_DIR=/opt/after-sales-warehouse
-BACKEND_DIR="$APP_DIR/backend"
+BACKEND_DIR="$APP_DIR/current/backend"
 ENV_FILE="$BACKEND_DIR/.env"
-PYTHON="$APP_DIR/venv/bin/python"
+PYTHON="$APP_DIR/current/venv/bin/python"
 
 if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
   echo '请使用 sudo 执行 PostgreSQL 并发专项测试。' >&2
@@ -57,4 +57,5 @@ runuser -u "$APP_USER" -- "$PYTHON" manage.py test \
   apps.accounts.test_postgresql_concurrency \
   apps.workflow.test_postgresql_concurrency \
   apps.common.test_postgresql_concurrency \
+  apps.common.test_postgresql_audit_immutability \
   --noinput -v 2

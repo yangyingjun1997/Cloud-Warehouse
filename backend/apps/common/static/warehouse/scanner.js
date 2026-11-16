@@ -243,6 +243,9 @@
     let buffer = '';
     let lastTime = 0;
     let maxGap = 0;
+    let compositionTarget = null;
+    let compositionStartedAt = 0;
+    const handledCompositionTargets = new WeakSet();
 
     function isEditable(el) {
       if (!el) return false;
@@ -252,6 +255,16 @@
 
     function handleKeyDown(event) {
       if (!shouldCapture()) return;
+      if (handledCompositionTargets.has(event.target)
+        && (event.key === 'Enter' || event.key === 'Tab')) {
+        handledCompositionTargets.delete(event.target);
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+      // 中文输入法可能把整段 HID 输入包在 composition 生命周期中，
+      // 此时 keydown 的 key 不再可靠，交给 compositionend 统一取输入框值。
+      if (event.isComposing || compositionTarget === event.target) return;
       // 组合键是人工操作，不参与判定
       if (event.ctrlKey || event.altKey || event.metaKey) {
         buffer = '';
@@ -298,10 +311,41 @@
       if (buffer.length > 128) buffer = buffer.slice(-128);
     }
 
+    function handleCompositionStart(event) {
+      if (!shouldCapture() || !isEditable(event.target)) return;
+      compositionTarget = event.target;
+      compositionStartedAt = Date.now();
+      buffer = '';
+      lastTime = 0;
+      maxGap = 0;
+    }
+
+    function handleCompositionEnd(event) {
+      if (event.target !== compositionTarget) return;
+      const target = compositionTarget;
+      compositionTarget = null;
+      const startedAt = compositionStartedAt;
+      compositionStartedAt = 0;
+      // 等待浏览器把 composition 结果写入 input.value。只接受合理长度，
+      // 避免把普通中文输入误判为扫码；后续 Enter 会被抑制一次，防重复提交。
+      window.setTimeout(() => {
+        if (!shouldCapture() || !isEditable(target)) return;
+        const value = String(target.value || '').trim();
+        if (!looksLikeScan(value) || Date.now() - startedAt > 5000) return;
+        handledCompositionTargets.add(target);
+        onDetected(value, {maxIntervalMs: 0, composition: true});
+        onScan(value);
+      }, 0);
+    }
+
     // 用 capture 阶段，保证比页面自己的 handler 更早看到按键
     document.addEventListener('keydown', handleKeyDown, true);
+    document.addEventListener('compositionstart', handleCompositionStart, true);
+    document.addEventListener('compositionend', handleCompositionEnd, true);
     return function stop() {
       document.removeEventListener('keydown', handleKeyDown, true);
+      document.removeEventListener('compositionstart', handleCompositionStart, true);
+      document.removeEventListener('compositionend', handleCompositionEnd, true);
     };
   }
 

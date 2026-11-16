@@ -56,3 +56,43 @@ class LowStockAlert(UUIDModel, TimeStampedModel):
 
     def __str__(self) -> str:
         return f'{self.get_source_type_display()} - {self.source_name}'
+
+
+class DingTalkOutbox(UUIDModel, TimeStampedModel):
+    class DeliveryMode(models.TextChoices):
+        PERSONAL = 'personal', '个人工作通知'
+        USERS_OR_GROUP = 'users_or_group', '个人通知，失败时群通知'
+        GROUP = 'group', '群机器人'
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', '待发送'
+        SENDING = 'sending', '发送中'
+        DELIVERED = 'delivered', '已送达'
+        FAILED = 'failed', '已失败'
+
+    idempotency_key = models.CharField(max_length=64, unique=True)
+    delivery_mode = models.CharField(
+        max_length=24,
+        choices=DeliveryMode.choices,
+        default=DeliveryMode.USERS_OR_GROUP,
+    )
+    recipient_user_ids = models.JSONField(default=list, blank=True)
+    title = models.CharField(max_length=160)
+    content = models.TextField()
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+    next_attempt_at = models.DateTimeField()
+    locked_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=500, blank=True, default='')
+
+    class Meta:
+        ordering = ['next_attempt_at', 'created_at']
+        indexes = [
+            models.Index(fields=['status', 'next_attempt_at'], name='notify_outbox_due_idx'),
+        ]
+        verbose_name = '钉钉发送队列'
+        verbose_name_plural = '钉钉发送队列'
+
+    def __str__(self) -> str:
+        return f'{self.title} - {self.get_status_display()}'

@@ -12,6 +12,7 @@ services=(
   after-sales-warehouse-health.timer
   after-sales-warehouse-consistency.timer
   after-sales-warehouse-security-cleanup.timer
+  after-sales-warehouse-dingtalk-outbox.timer
 )
 
 echo '=== 售后仓库 NUC 运行状态 ==='
@@ -37,14 +38,14 @@ ss -lntp 2>/dev/null | grep -E ':(80|443|5432|8000)[[:space:]]' || echo '未发�
 echo
 
 echo '--- 版本 ---'
-printf 'Python: '; /opt/after-sales-warehouse/venv/bin/python --version 2>/dev/null || echo '未安装'
-printf 'Django: '; /opt/after-sales-warehouse/venv/bin/python -m django --version 2>/dev/null || echo '未安装'
-printf 'Gunicorn: '; /opt/after-sales-warehouse/venv/bin/gunicorn --version 2>/dev/null || echo '未安装'
+printf 'Python: '; /opt/after-sales-warehouse/current/venv/bin/python --version 2>/dev/null || echo '未安装'
+printf 'Django: '; /opt/after-sales-warehouse/current/venv/bin/python -m django --version 2>/dev/null || echo '未安装'
+printf 'Gunicorn: '; /opt/after-sales-warehouse/current/venv/bin/python -m gunicorn --version 2>/dev/null || echo '未安装'
 printf 'Nginx: '; nginx -v 2>&1 || true
 printf 'PostgreSQL client: '; psql --version 2>/dev/null || echo '未安装'
-if [[ -r /opt/after-sales-warehouse/current-release ]]; then
+if [[ -r /opt/after-sales-warehouse/current/release-info ]]; then
   echo '当前应用发布：'
-  sed -e 's/^/  /' /opt/after-sales-warehouse/current-release
+  sed -e 's/^/  /' /opt/after-sales-warehouse/current/release-info
 else
   echo '当前应用发布：未记录'
 fi
@@ -56,7 +57,7 @@ echo
 echo
 
 echo '--- 已登记的 Web 入口 ---'
-ENV_FILE=/opt/after-sales-warehouse/backend/.env
+ENV_FILE=/srv/after-sales-warehouse/app.env
 if [[ -r "$ENV_FILE" ]]; then
   awk -F= 'index($0, "ALLOWED_HOSTS=") == 1 { print $2 }' "$ENV_FILE" | tr ',' '\n' | sed -e '/^$/d' -e 's/^/  /'
 else
@@ -79,6 +80,7 @@ echo
 echo '--- 下次数据一致性检查 ---'
 systemctl list-timers after-sales-warehouse-consistency.timer --no-pager 2>/dev/null || true
 systemctl list-timers after-sales-warehouse-security-cleanup.timer --no-pager 2>/dev/null || true
+systemctl list-timers after-sales-warehouse-dingtalk-outbox.timer --no-pager 2>/dev/null || true
 echo
 echo '--- 最近一次健康检查 ---'
 systemctl status after-sales-warehouse-health.service --no-pager -l 2>/dev/null || true

@@ -6,6 +6,8 @@ APP_GROUP=warehouse
 APP_DIR=/opt/after-sales-warehouse
 DATA_DIR=/srv/after-sales-warehouse
 RELEASE_ROOT="$APP_DIR/releases"
+CURRENT_LINK="$APP_DIR/current"
+ENV_FILE="$DATA_DIR/app.env"
 DB_NAME=warehouse
 DB_USER=warehouse_app
 SERVER_NAME=_
@@ -190,45 +192,18 @@ if [[ -n "${WEB_ENTRY_ADDRESSES[*]:-}" ]]; then
   RESOLVED_SERVER_NAME="$SERVER_NAME ${WEB_ENTRY_ADDRESSES[*]:-}"
 fi
 
-snapshot_existing_backend() {
-  if [[ ! -d "$APP_DIR/backend" || ! -f "$APP_DIR/backend/manage.py" ]]; then
-    return 0
-  fi
-  local stamp snapshot_dir
-  stamp="$(date +%Y%m%d_%H%M%S)"
-  snapshot_dir="$RELEASE_ROOT/$stamp"
-  install -d -m 755 "$snapshot_dir"
-  tar -C "$APP_DIR" \
-    --exclude='backend/.env' \
-    --exclude='backend/db.sqlite3' \
-    --exclude='backend/media' \
-    --exclude='backend/staticfiles' \
-    --exclude='*/__pycache__' \
-    --exclude='*.pyc' \
-    -czf "$snapshot_dir/backend.tar.gz" backend
-  sha256sum "$snapshot_dir/backend.tar.gz" > "$snapshot_dir/SHA256SUMS"
-  cat > "$snapshot_dir/metadata.txt" <<EOF
-created_at=$(date --iso-8601=seconds)
-source=pre_deploy_snapshot
-host=$(hostname)
-EOF
-  if [[ -r "$APP_DIR/current-release" ]]; then
-    install -m 640 "$APP_DIR/current-release" "$snapshot_dir/current-release.txt"
-  fi
-  echo "已保存当前程序代码快照：$snapshot_dir"
-
-  mapfile -t old_snapshots < <(find "$RELEASE_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -rn | awk 'NR > 10 {print $2}')
-  if (( ${#old_snapshots[@]} > 0 )); then
-    rm -rf "${old_snapshots[@]}"
-  fi
-}
-
 if [[ $OFFLINE_UPDATE -eq 0 ]]; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y python3-venv python3-dev build-essential libpq-dev postgresql postgresql-contrib nginx rsync curl openssl
+  apt-get install -y software-properties-common
+  # Ubuntu 22.04 default python3 is 3.10; Pillow 13 requires Python 3.12.
+  if ! command -v python3.12 >/dev/null 2>&1; then
+    add-apt-repository -y ppa:deadsnakes/ppa
+    apt-get update
+  fi
+  apt-get install -y python3.12 python3.12-venv python3.12-dev build-essential libpq-dev postgresql postgresql-contrib nginx rsync curl openssl
 else
-  for command_name in python3 psql nginx rsync curl openssl; do
+  for command_name in python3.12 psql nginx rsync curl openssl; do
     command -v "$command_name" >/dev/null 2>&1 || {
       echo "Offline update cannot continue: missing command $command_name."
       exit 1
@@ -238,7 +213,7 @@ fi
 
 id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin "$APP_USER"
 # 部署/更新前对生产数据库做一次即时快照，避免代码更新失败时只能回退到昨夜备份。
-# 只在数据库已存在时执行（首次部署无库可备），失败不阻断部署但明确提示。
+# 只在数据库已存在时执行（首次部署无库可备）；已有数据库快照失败时立即停止部署。
 snapshot_existing_database() {
   if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" 2>/dev/null | grep -q 1; then
     return 0
@@ -251,8 +226,9 @@ snapshot_existing_database() {
     sha256sum "$target/database.dump" > "$target/SHA256SUMS"
     echo "已保存部署前数据库快照：$target"
   else
-    echo "[警告] 部署前数据库快照失败，继续部署（请尽快人工确认 pg_dump 可用）。"
+    echo "[错误] 部署前数据库快照失败，已停止部署；现有程序和数据库均未覆盖。" >&2
     rm -rf "$target"
+    return 1
   fi
   # 部署前快照保留最近 20 份，超出后清掉最旧的。
   mapfile -t old_predeploy < <(find "$DATA_DIR/backups" -mindepth 1 -maxdepth 1 -type d -name 'pre-deploy-*' -printf '%T@ %p\n' | sort -rn | awk 'NR > 20 {print $2}')
@@ -261,19 +237,73 @@ snapshot_existing_database() {
   fi
 }
 
-install -d -o "$APP_USER" -g "$APP_GROUP" "$APP_DIR" "$DATA_DIR/media" "$DATA_DIR/static" "$DATA_DIR/backups"
+install -d -o "$APP_USER" -g "$APP_GROUP" "$APP_DIR" "$DATA_DIR/media" "$DATA_DIR/backups"
 install -d -m 755 "$RELEASE_ROOT"
-snapshot_existing_backend
 snapshot_existing_database
-rsync -a --delete --exclude '.env' --exclude 'db.sqlite3' --exclude '__pycache__' --exclude '*.pyc' "$SOURCE_BACKEND/" "$APP_DIR/backend/"
 
-python3 -m venv "$APP_DIR/venv"
+RELEASE_STAMP="$(date +%Y%m%d_%H%M%S)"
+SAFE_RELEASE_VERSION="$(printf '%s' "$RELEASE_VERSION" | tr -c 'A-Za-z0-9._-' '-')"
+CANDIDATE_DIR="$RELEASE_ROOT/${RELEASE_STAMP}-${SAFE_RELEASE_VERSION}"
+PREVIOUS_RELEASE=""
+RELEASE_SWITCHED=0
+
+# Preserve the old in-place layout as the first selectable atomic release.
+if [[ ! -L "$CURRENT_LINK" && -f "$APP_DIR/backend/manage.py" && -x "$APP_DIR/venv/bin/python" ]]; then
+  LEGACY_DIR="$RELEASE_ROOT/${RELEASE_STAMP}-legacy"
+  install -d -m 755 "$LEGACY_DIR"
+  cp -a "$APP_DIR/backend" "$LEGACY_DIR/backend"
+  cp -a "$APP_DIR/venv" "$LEGACY_DIR/venv"
+  if [[ -d "$DATA_DIR/static" ]]; then
+    cp -a "$DATA_DIR/static" "$LEGACY_DIR/static"
+  else
+    install -d -m 755 "$LEGACY_DIR/static"
+  fi
+  cat > "$LEGACY_DIR/release-info" <<EOF
+release_version=legacy-in-place
+created_at=$(date --iso-8601=seconds)
+database_compatibility=pre-atomic-layout
+EOF
+  ln -sfn "$LEGACY_DIR" "$CURRENT_LINK"
+fi
+if [[ -L "$CURRENT_LINK" ]]; then
+  PREVIOUS_RELEASE="$(readlink -f "$CURRENT_LINK")"
+fi
+
+deployment_failed() {
+  local status="$?"
+  trap - ERR
+  if [[ $RELEASE_SWITCHED -eq 1 && -n "$PREVIOUS_RELEASE" && -d "$PREVIOUS_RELEASE" ]]; then
+    ln -sfn "$PREVIOUS_RELEASE" "$APP_DIR/current.rollback"
+    mv -Tf "$APP_DIR/current.rollback" "$CURRENT_LINK"
+    systemctl restart after-sales-warehouse 2>/dev/null || true
+    systemctl reload nginx 2>/dev/null || true
+    echo "[错误] 发布失败，已恢复 current 指针：$PREVIOUS_RELEASE" >&2
+  else
+    echo "[错误] 候选版本构建失败，current 指针未改变。" >&2
+  fi
+  if [[ -d "$CANDIDATE_DIR" && "$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)" != "$CANDIDATE_DIR" ]]; then
+    rm -rf "$CANDIDATE_DIR"
+  fi
+  exit "$status"
+}
+trap deployment_failed ERR
+
+install -d -o "$APP_USER" -g "$APP_GROUP" -m 755 "$CANDIDATE_DIR/backend"
+rsync -a --delete --exclude '.env' --exclude 'db.sqlite3' --exclude '__pycache__' --exclude '*.pyc' "$SOURCE_BACKEND/" "$CANDIDATE_DIR/backend/"
+
 if [[ $OFFLINE_UPDATE -eq 0 ]]; then
-  "$APP_DIR/venv/bin/pip" install --upgrade pip
-  "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/backend/requirements.txt"
+  python3.12 -m venv "$CANDIDATE_DIR/venv"
+  "$CANDIDATE_DIR/venv/bin/python" -m pip install --upgrade pip
+  "$CANDIDATE_DIR/venv/bin/python" -m pip install -r "$CANDIDATE_DIR/backend/requirements-linux.txt"
 else
-  "$APP_DIR/venv/bin/python" -c "import corsheaders, django, dotenv, openpyxl, PIL, psycopg, pypinyin, qrcode, rest_framework; print('Existing Python dependencies are available.')"
-  "$APP_DIR/venv/bin/pip" check
+  EXISTING_VENV="${PREVIOUS_RELEASE:+$PREVIOUS_RELEASE/venv}"
+  if [[ -z "$EXISTING_VENV" || ! -x "$EXISTING_VENV/bin/python" ]]; then
+    echo "Offline update requires an existing atomic release with a working virtual environment."
+    exit 1
+  fi
+  cp -a "$EXISTING_VENV" "$CANDIDATE_DIR/venv"
+  "$CANDIDATE_DIR/venv/bin/python" -c "import corsheaders, django, dotenv, gunicorn, openpyxl, PIL, psycopg, pypinyin, qrcode, rest_framework; print('Copied Python dependencies are available.')"
+  "$CANDIDATE_DIR/venv/bin/python" -m pip check
 fi
 
 DB_PASSWORD="$(openssl rand -base64 36 | tr -d '\n')"
@@ -284,9 +314,12 @@ if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NA
   sudo -u postgres createdb -O "$DB_USER" "$DB_NAME"
 fi
 
-if [[ ! -f "$APP_DIR/backend/.env" ]]; then
+if [[ ! -f "$ENV_FILE" && -f "$APP_DIR/backend/.env" ]]; then
+  install -o "$APP_USER" -g "$APP_GROUP" -m 640 "$APP_DIR/backend/.env" "$ENV_FILE"
+fi
+if [[ ! -f "$ENV_FILE" ]]; then
   SECRET_KEY="$(openssl rand -hex 48)"
-  cat > "$APP_DIR/backend/.env" <<EOF
+  cat > "$ENV_FILE" <<EOF
 DEBUG=0
 SECRET_KEY=$SECRET_KEY
 ALLOWED_HOSTS=$ALLOWED_HOSTS_CSV
@@ -298,7 +331,7 @@ DB_PASSWORD=$DB_PASSWORD
 DB_HOST=127.0.0.1
 DB_PORT=5432
 MEDIA_ROOT=$DATA_DIR/media
-STATIC_ROOT=$DATA_DIR/static
+STATIC_ROOT=$CURRENT_LINK/static
 CORS_ALLOW_ALL_ORIGINS=0
 USE_HTTPS=0
 SECURE_HSTS_SECONDS=0
@@ -312,12 +345,11 @@ DINGTALK_APP_SECRET=
 DINGTALK_AGENT_ID=
 CONSISTENCY_STATE_FILE=$DATA_DIR/consistency-check.state.json
 EOF
-  chmod 640 "$APP_DIR/backend/.env"
+  chmod 640 "$ENV_FILE"
 fi
 
 # .env 可能来自更早的部署，其中的白名单缺少后来新增的出口地址。
 # 这里补齐而不是重建文件，以免丢失 SECRET_KEY、数据库口令等运行期数据。
-ENV_FILE="$APP_DIR/backend/.env"
 env_allowed="$(get_env_value "$ENV_FILE" ALLOWED_HOSTS)"
 for candidate in "$SERVER_NAME" ${WEB_ENTRY_ADDRESSES[@]:-} 127.0.0.1 localhost; do
   [[ -z "$candidate" || "$candidate" == "_" ]] && continue
@@ -339,20 +371,42 @@ set_env_value "$ENV_FILE" CONSISTENCY_STATE_FILE "$DATA_DIR/consistency-check.st
 
 chmod 640 "$ENV_FILE"
 chown "$APP_USER:$APP_GROUP" "$ENV_FILE"
+ln -sfn "$ENV_FILE" "$CANDIDATE_DIR/backend/.env"
 
 if [[ $IMPORT_SQLITE -eq 1 && -f "$SOURCE_BACKEND/db.sqlite3" && ! -f "$DATA_DIR/.sqlite-imported" ]]; then
   echo "Exporting existing SQLite data for one-time PostgreSQL import..."
-  DB_ENGINE=django.db.backends.sqlite3 DB_NAME="$SOURCE_BACKEND/db.sqlite3" "$APP_DIR/venv/bin/python" "$APP_DIR/backend/manage.py" dumpdata --natural-foreign --natural-primary --exclude contenttypes --exclude auth.Permission --exclude sessions > /tmp/after-sales-warehouse-initial.json
+  DB_ENGINE=django.db.backends.sqlite3 DB_NAME="$SOURCE_BACKEND/db.sqlite3" "$CANDIDATE_DIR/venv/bin/python" "$CANDIDATE_DIR/backend/manage.py" dumpdata --natural-foreign --natural-primary --exclude contenttypes --exclude auth.Permission --exclude sessions > /tmp/after-sales-warehouse-initial.json
 fi
 
-chown -R "$APP_USER:$APP_GROUP" "$APP_DIR" "$DATA_DIR"
-sudo -u "$APP_USER" "$APP_DIR/venv/bin/python" "$APP_DIR/backend/manage.py" migrate --noinput
+install -d -o "$APP_USER" -g "$APP_GROUP" -m 755 "$CANDIDATE_DIR/static"
+chown -R "$APP_USER:$APP_GROUP" "$CANDIDATE_DIR" "$DATA_DIR"
+sudo -u "$APP_USER" "$CANDIDATE_DIR/venv/bin/python" "$CANDIDATE_DIR/backend/manage.py" check
+sudo -u "$APP_USER" "$CANDIDATE_DIR/venv/bin/python" "$CANDIDATE_DIR/backend/manage.py" migrate --plan
+sudo -u "$APP_USER" env STATIC_ROOT="$CANDIDATE_DIR/static" "$CANDIDATE_DIR/venv/bin/python" "$CANDIDATE_DIR/backend/manage.py" collectstatic --noinput
+sudo -u "$APP_USER" "$CANDIDATE_DIR/venv/bin/python" "$CANDIDATE_DIR/backend/manage.py" migrate --noinput
 if [[ -f /tmp/after-sales-warehouse-initial.json && ! -f "$DATA_DIR/.sqlite-imported" ]]; then
-  sudo -u "$APP_USER" "$APP_DIR/venv/bin/python" "$APP_DIR/backend/manage.py" loaddata /tmp/after-sales-warehouse-initial.json
+  sudo -u "$APP_USER" "$CANDIDATE_DIR/venv/bin/python" "$CANDIDATE_DIR/backend/manage.py" loaddata /tmp/after-sales-warehouse-initial.json
   touch "$DATA_DIR/.sqlite-imported"
   rm -f /tmp/after-sales-warehouse-initial.json
 fi
-sudo -u "$APP_USER" "$APP_DIR/venv/bin/python" "$APP_DIR/backend/manage.py" collectstatic --noinput
+
+cat > "$CANDIDATE_DIR/release-info" <<EOF
+deployed_at=$(date --iso-8601=seconds)
+server_name=$SERVER_NAME
+host=$(hostname)
+release_version=$RELEASE_VERSION
+source_revision=$SOURCE_REVISION
+source_revision_short=$SOURCE_REVISION_SHORT
+working_tree_dirty=$WORKING_TREE_DIRTY
+source_content_sha256=$SOURCE_CONTENT_SHA256
+previous_release=$PREVIOUS_RELEASE
+database_snapshot=required_before_migrate
+EOF
+chown "$APP_USER:$APP_GROUP" "$CANDIDATE_DIR/release-info"
+
+ln -sfn "$CANDIDATE_DIR" "$APP_DIR/current.next"
+mv -Tf "$APP_DIR/current.next" "$CURRENT_LINK"
+RELEASE_SWITCHED=1
 
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse.service" /etc/systemd/system/after-sales-warehouse.service
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-low-stock-summary.service" /etc/systemd/system/after-sales-warehouse-low-stock-summary.service
@@ -369,6 +423,8 @@ install -m 644 "$SCRIPT_DIR/after-sales-warehouse-consistency.service" /etc/syst
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-consistency.timer" /etc/systemd/system/after-sales-warehouse-consistency.timer
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-security-cleanup.service" /etc/systemd/system/after-sales-warehouse-security-cleanup.service
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-security-cleanup.timer" /etc/systemd/system/after-sales-warehouse-security-cleanup.timer
+install -m 644 "$SCRIPT_DIR/after-sales-warehouse-dingtalk-outbox.service" /etc/systemd/system/after-sales-warehouse-dingtalk-outbox.service
+install -m 644 "$SCRIPT_DIR/after-sales-warehouse-dingtalk-outbox.timer" /etc/systemd/system/after-sales-warehouse-dingtalk-outbox.timer
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-logrotate" /etc/logrotate.d/after-sales-warehouse
 install -d -m 755 /etc/systemd/journald.conf.d
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-journald.conf" /etc/systemd/journald.conf.d/after-sales-warehouse.conf
@@ -398,6 +454,7 @@ systemctl enable --now after-sales-warehouse-backup.timer
 systemctl enable --now after-sales-warehouse-health.timer
 systemctl enable --now after-sales-warehouse-consistency.timer
 systemctl enable --now after-sales-warehouse-security-cleanup.timer
+systemctl enable --now after-sales-warehouse-dingtalk-outbox.timer
 systemctl enable nginx
 # `enable --now` does not reload an already-running Nginx process.
 systemctl reload nginx
@@ -407,17 +464,16 @@ systemd-tmpfiles --create /etc/tmpfiles.d/after-sales-warehouse.conf
 systemctl restart systemd-journald
 systemctl restart after-sales-warehouse-health.timer after-sales-warehouse-backup.timer
 
-cat > "$APP_DIR/current-release" <<EOF
-deployed_at=$(date --iso-8601=seconds)
-server_name=$SERVER_NAME
-host=$(hostname)
-release_version=$RELEASE_VERSION
-source_revision=$SOURCE_REVISION
-source_revision_short=$SOURCE_REVISION_SHORT
-working_tree_dirty=$WORKING_TREE_DIRTY
-source_content_sha256=$SOURCE_CONTENT_SHA256
-EOF
-chown "$APP_USER:$APP_GROUP" "$APP_DIR/current-release"
+curl --silent --show-error --fail --max-time 15 http://127.0.0.1/health/ >/dev/null
+trap - ERR
+
+# Keep the current five atomic releases. Legacy tar snapshots are not matched.
+mapfile -t old_releases < <(find "$RELEASE_ROOT" -mindepth 2 -maxdepth 2 -type f -name release-info -printf '%T@ %h\n' | sort -rn | awk 'NR > 5 {print $2}')
+if (( ${#old_releases[@]} > 0 )); then
+  for old_release in "${old_releases[@]}"; do
+    [[ "$old_release" == "$(readlink -f "$CURRENT_LINK")" ]] || rm -rf "$old_release"
+  done
+fi
 
 echo "Deployment completed. Web entry points:"
 for candidate in ${WEB_ENTRY_ADDRESSES[@]:-}; do

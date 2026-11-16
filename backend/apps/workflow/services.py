@@ -34,7 +34,7 @@ from apps.inventory.availability import is_asset_available
 from apps.inventory.models import Asset, CompositeUnit, ItemType, Location, StockItem, StockItemHolding, Warehouse
 from apps.inventory.state_services import RETURNABLE_ASSET_STATUSES
 from apps.notifications.models import Notification
-from apps.notifications.dingtalk import send_users_or_group
+from apps.notifications.outbox import enqueue_users_or_group, outbox_key
 
 from .models import (
     ApprovalLog,
@@ -66,11 +66,16 @@ def is_operator(user) -> bool:
 
 
 def _notify_users(users, title: str, content: str, *, level='info', request=None):
-    users = [user for user in users if user and user.is_active]
+    users = list({user.id: user for user in users if user and user.is_active}.values())
     notifications = [Notification(recipient=user, title=title, content=content, level=level, related_model='WorkflowRequest' if request else '', related_object_id=str(request.id) if request else '') for user in users]
     if notifications:
         Notification.objects.bulk_create(notifications)
-    transaction.on_commit(lambda: send_users_or_group(users, title, content))
+    enqueue_users_or_group(
+        users,
+        title,
+        content,
+        idempotency_key=outbox_key('workflow', request.id if request else '', title, content),
+    )
 
 
 def _notify_purchase_users(users, title: str, content: str, *, level='info', purchase_request=None):
@@ -88,7 +93,14 @@ def _notify_purchase_users(users, title: str, content: str, *, level='info', pur
     ]
     if notifications:
         Notification.objects.bulk_create(notifications)
-    transaction.on_commit(lambda: send_users_or_group(users, title, content))
+    enqueue_users_or_group(
+        users,
+        title,
+        content,
+        idempotency_key=outbox_key(
+            'purchase-request', purchase_request.id if purchase_request else '', title, content,
+        ),
+    )
 
 
 def _log(request, actor, action: str, comment=''):
@@ -1310,7 +1322,12 @@ def _notify_purchase_order_users(users, title: str, content: str, *, level='info
     ]
     if notifications:
         Notification.objects.bulk_create(notifications)
-    transaction.on_commit(lambda: send_users_or_group(users, title, content))
+    enqueue_users_or_group(
+        users,
+        title,
+        content,
+        idempotency_key=outbox_key('purchase-order', order.id if order else '', title, content),
+    )
 
 
 @transaction.atomic

@@ -537,21 +537,26 @@ def _user_role_label(user, is_operator: bool, is_system_admin: bool) -> str:
 
 
 def _get_by_uuid(model, value):
+    normalized = _normalized_uuid(value)
+    if not normalized:
+        return None
+    return model.objects.filter(pk=normalized).first()
+
+
+def _normalized_uuid(value):
     if not value:
-        return None
+        return ''
     try:
-        UUID(str(value))
+        return str(UUID(str(value)))
     except (TypeError, ValueError, AttributeError):
-        return None
-    return model.objects.filter(pk=value).first()
+        return ''
 
 
 def _unique_uuid_values(values):
     result = []
     for value in values:
-        try:
-            normalized = str(UUID(str(value)))
-        except (TypeError, ValueError, AttributeError):
+        normalized = _normalized_uuid(value)
+        if not normalized:
             continue
         if normalized not in result:
             result.append(normalized)
@@ -1110,48 +1115,6 @@ def permission_management(request):
     for group_name in group_names:
         groups[group_name], _ = Group.objects.get_or_create(name=group_name)
     if request.method == 'POST':
-        if request.POST.get('action') == 'purge_data':
-            if not request.user.is_superuser:
-                messages.error(request, '只有服务器超级管理员可以执行系统清理。')
-            elif request.POST.get('confirmation', '').strip() != '清空所有业务数据':
-                messages.error(request, '确认文字不正确，未执行清理。')
-            elif not request.user.check_password(request.POST.get('password', '')):
-                messages.error(request, '当前账号密码不正确，未执行清理。')
-            else:
-                with transaction.atomic():
-                    Notification.objects.all().delete()
-                    LowStockAlert.objects.all().delete()
-                    OperationAuditLog.objects.all().delete()
-                    InventoryCheckAdjustment.objects.all().delete()
-                    InventoryCheckScan.objects.all().delete()
-                    InventoryCheckLine.objects.all().delete()
-                    InventoryCheckTask.objects.all().delete()
-                    InventoryTransaction.objects.all().delete()
-                    ReturnReminderLog.objects.all().delete()
-                    LoanExtensionRequest.objects.all().delete()
-                    StockItemLoan.objects.all().delete()
-                    InventoryReservation.objects.all().delete()
-                    WorkflowRequestTemplate.objects.all().delete()
-                    ApprovalTask.objects.all().delete()
-                    ApprovalLog.objects.all().delete()
-                    WorkflowRequest.objects.all().delete()
-                    AssetNetworkEndpoint.objects.all().delete()
-                    InventoryConversion.objects.all().delete()
-                    StockItemHolding.objects.all().delete()
-                    Asset.objects.all().delete()
-                    StockItem.objects.all().delete()
-                    ImportIssue.objects.all().delete()
-                    ImportBatch.objects.all().delete()
-                    Location.objects.all().delete()
-                    ItemType.objects.all().delete()
-                    Category.objects.all().delete()
-                    Warehouse.objects.all().delete()
-                    UserListPreference.objects.all().delete()
-                    UserProfile.objects.exclude(user=request.user).delete()
-                    User.objects.exclude(pk=request.user.pk).delete()
-                    Department.objects.all().delete()
-                messages.success(request, '已清空全部业务数据和其他账号，当前超级管理员及角色组已保留。')
-            return redirect('permission_management')
         if request.POST.get('action') == 'create_user':
             username = request.POST.get('username', '').strip()
             password = request.POST.get('password', '')
@@ -1398,9 +1361,12 @@ def _warehouse_filtered_assets(request):
     availability_state = request.GET.get('availability_state', '').strip() or request.GET.get('availability', '').strip()
     quality_state = request.GET.get('quality_state', '').strip()
     disposition_state = request.GET.get('disposition_state', '').strip()
-    warehouse_id = request.GET.get('warehouse', '').strip()
-    location_id = request.GET.get('location', '').strip()
-    item_type_id = request.GET.get('item_type', '').strip()
+    warehouse_text = request.GET.get('warehouse', '').strip()
+    location_text = request.GET.get('location', '').strip()
+    item_type_text = request.GET.get('item_type', '').strip()
+    warehouse_id = _normalized_uuid(warehouse_text)
+    location_id = _normalized_uuid(location_text)
+    item_type_id = _normalized_uuid(item_type_text)
     assets = Asset.objects.select_related('item_type', 'warehouse', 'location')
     if query:
         assets = assets.filter(asset_search_query(query)).distinct()
@@ -1422,11 +1388,17 @@ def _warehouse_filtered_assets(request):
     for field, value in state_filters.items():
         if value in valid_states[field]:
             assets = assets.filter(**{field: value})
-    if warehouse_id:
+    if warehouse_text and not warehouse_id:
+        assets = assets.none()
+    elif warehouse_id:
         assets = assets.filter(warehouse_id=warehouse_id)
-    if location_id:
+    if location_text and not location_id:
+        assets = assets.none()
+    elif location_id:
         assets = assets.filter(location_id=location_id)
-    if item_type_id:
+    if item_type_text and not item_type_id:
+        assets = assets.none()
+    elif item_type_id:
         assets = assets.filter(item_type_id=item_type_id)
     return assets
 
@@ -1477,10 +1449,16 @@ def warehouse_management(request):
     availability_state = request.GET.get('availability_state', '').strip() or request.GET.get('availability', '').strip()
     quality_state = request.GET.get('quality_state', '').strip()
     disposition_state = request.GET.get('disposition_state', '').strip()
-    warehouse_id = request.GET.get('warehouse', '').strip()
-    location_id = request.GET.get('location', '').strip()
-    item_type_id = request.GET.get('item_type', '').strip()
+    warehouse_text = request.GET.get('warehouse', '').strip()
+    location_text = request.GET.get('location', '').strip()
+    item_type_text = request.GET.get('item_type', '').strip()
+    warehouse_id = _normalized_uuid(warehouse_text)
+    location_id = _normalized_uuid(location_text)
+    item_type_id = _normalized_uuid(item_type_text)
     tab = request.GET.get('tab', 'assets')
+    asset_view = request.GET.get('view', 'assets').strip()
+    if asset_view not in {'assets', 'types'}:
+        asset_view = 'assets'
     selected_statuses = [value for value in status.split(',') if value]
     # 资产过滤逻辑与 CSV 导出共用 _warehouse_filtered_assets，保证口径一致。
     assets = _warehouse_filtered_assets(request)
@@ -1489,11 +1467,17 @@ def warehouse_management(request):
         stock_items = stock_items.filter(
             Q(name__icontains=query) | Q(code__icontains=query) | Q(item_type__name__icontains=query)
         ).distinct()
-    if warehouse_id:
+    if warehouse_text and not warehouse_id:
+        stock_items = stock_items.none()
+    elif warehouse_id:
         stock_items = stock_items.filter(warehouse_id=warehouse_id)
-    if location_id:
+    if location_text and not location_id:
+        stock_items = stock_items.none()
+    elif location_id:
         stock_items = stock_items.filter(location_id=location_id)
-    if item_type_id:
+    if item_type_text and not item_type_id:
+        stock_items = stock_items.none()
+    elif item_type_id:
         stock_items = stock_items.filter(item_type_id=item_type_id)
     low_serialized_types = _serialized_type_availability(
         ItemType.objects.filter(is_serialized=True, safety_stock__gt=0)
@@ -1501,6 +1485,67 @@ def warehouse_management(request):
     low_stock = _stock_item_availability(
         StockItem.objects.filter(safety_stock__gt=0)
     ).filter(available_count__lte=F('safety_stock')).count() + low_serialized_types.count()
+
+    # 类型聚合使用同一个已过滤资产子查询，避免逐类型查询造成 N+1。
+    asset_ids = assets.values('pk')
+    asset_type_groups = ItemType.objects.filter(
+        is_serialized=True,
+        assets__in=asset_ids,
+    ).annotate(
+        total_count=Count('assets', filter=Q(assets__in=asset_ids), distinct=True),
+        in_stock_count=Count(
+            'assets',
+            filter=Q(assets__in=asset_ids, assets__status=Asset.Status.IN_STOCK),
+            distinct=True,
+        ),
+        available_count=Count(
+            'assets',
+            filter=Q(assets__in=asset_ids) & available_asset_filter('assets__'),
+            distinct=True,
+        ),
+        reserved_count=Count(
+            'assets',
+            filter=Q(
+                assets__in=asset_ids,
+                assets__reservations__status=InventoryReservation.Status.ACTIVE,
+            ),
+            distinct=True,
+        ),
+        maintenance_count=Count(
+            'assets',
+            filter=Q(
+                assets__in=asset_ids,
+                assets__status__in=[Asset.Status.MAINTENANCE, Asset.Status.REPAIRING],
+            ),
+            distinct=True,
+        ),
+        terminal_count=Count(
+            'assets',
+            filter=Q(
+                assets__in=asset_ids,
+                assets__status__in=[
+                    Asset.Status.SOLD, Asset.Status.SCRAPPED, Asset.Status.LOST,
+                    Asset.Status.DISABLED, Asset.Status.RETURNED_TO_VENDOR,
+                ],
+            ),
+            distinct=True,
+        ),
+        history_action_count=Count(
+            'assets__transactions',
+            filter=Q(assets__in=asset_ids),
+            distinct=True,
+        ),
+        last_activity_at=Max(
+            'assets__transactions__created_at',
+            filter=Q(assets__in=asset_ids),
+        ),
+    ).order_by('name')
+    for item_type in asset_type_groups:
+        item_type.unavailable_count = max(item_type.total_count - item_type.available_count, 0)
+        item_type.stock_state = (
+            '低于安全库存' if item_type.safety_stock and item_type.available_count < item_type.safety_stock
+            else '达到安全库存'
+        )
     page_size = request.GET.get('page_size', '').strip()
     if not page_size:
         preference = UserListPreference.objects.filter(
@@ -1594,6 +1639,8 @@ def warehouse_management(request):
         'selected_location': location_id,
         'selected_item_type': item_type_id,
         'active_tab': tab if tab in {'assets', 'stock'} else 'assets',
+        'asset_view': asset_view,
+        'asset_type_groups': asset_type_groups,
         'warehouses': Warehouse.objects.filter(is_active=True).order_by('name'),
         'locations': Location.objects.select_related('warehouse').order_by('warehouse__name', 'code'),
         'item_types': ItemType.objects.order_by('name'),
@@ -3397,9 +3444,13 @@ def warehouse_setup_edit(request, section, object_id=None):
 
 @role_required(can_print_asset_labels, message='当前账号没有二维码标签管理权限。')
 def warehouse_qr_labels(request):
-    asset_ids = request.POST.getlist('asset_ids') or request.GET.getlist('asset_ids')
-    if not asset_ids:
+    raw_asset_ids = request.POST.getlist('asset_ids') or request.GET.getlist('asset_ids')
+    asset_ids = _unique_uuid_values(raw_asset_ids)
+    if not raw_asset_ids:
         messages.error(request, '请先勾选至少一项资产再打印二维码。')
+        return redirect('warehouse_management')
+    if len(asset_ids) != len(raw_asset_ids):
+        messages.error(request, '标签资产编号格式不正确，请重新勾选后再试。')
         return redirect('warehouse_management')
     assets = Asset.objects.select_related('item_type').filter(pk__in=asset_ids).order_by('system_asset_no')
     labels = []
@@ -3485,11 +3536,15 @@ def _filter_request_queryset(queryset, params):
         queryset = queryset.filter(request_type=params['request_type'])
     if params.get('status'):
         queryset = queryset.filter(status=params['status'])
-    if params.get('warehouse'):
+    warehouse_text = params.get('warehouse', '').strip()
+    warehouse_id = _normalized_uuid(warehouse_text)
+    if warehouse_text and not warehouse_id:
+        queryset = queryset.none()
+    elif warehouse_id:
         queryset = queryset.filter(
-            Q(target_warehouse_id=params['warehouse'])
-            | Q(lines__asset__warehouse_id=params['warehouse'])
-            | Q(lines__stock_item__warehouse_id=params['warehouse'])
+            Q(target_warehouse_id=warehouse_id)
+            | Q(lines__asset__warehouse_id=warehouse_id)
+            | Q(lines__stock_item__warehouse_id=warehouse_id)
         )
     if params.get('project_code'):
         queryset = queryset.filter(project_code__icontains=params['project_code'].strip())
@@ -3564,9 +3619,13 @@ def transaction_list(request):
         )
     if request.GET.get('action'):
         transactions = transactions.filter(action=request.GET['action'])
-    if request.GET.get('warehouse'):
+    warehouse_text = request.GET.get('warehouse', '').strip()
+    warehouse_id = _normalized_uuid(warehouse_text)
+    if warehouse_text and not warehouse_id:
+        transactions = transactions.none()
+    elif warehouse_id:
         transactions = transactions.filter(
-            Q(source_warehouse_id=request.GET['warehouse']) | Q(target_warehouse_id=request.GET['warehouse'])
+            Q(source_warehouse_id=warehouse_id) | Q(target_warehouse_id=warehouse_id)
         )
     if request.GET.get('project_code'):
         transactions = transactions.filter(project_code__icontains=request.GET['project_code'].strip())
@@ -3789,12 +3848,15 @@ def report_dashboard(request):
         'asset', 'stock_item', 'source_warehouse', 'target_warehouse'
     ).order_by('created_at')
     action = request.GET.get('action', '')
-    warehouse_id = request.GET.get('warehouse', '')
+    warehouse_text = request.GET.get('warehouse', '').strip()
+    warehouse_id = _normalized_uuid(warehouse_text)
     project_code = request.GET.get('project_code', '').strip()
     work_order_no = request.GET.get('work_order_no', '').strip()
     if action:
         transactions = transactions.filter(action=action)
-    if warehouse_id:
+    if warehouse_text and not warehouse_id:
+        transactions = transactions.none()
+    elif warehouse_id:
         transactions = transactions.filter(Q(source_warehouse_id=warehouse_id) | Q(target_warehouse_id=warehouse_id))
     if project_code:
         transactions = transactions.filter(project_code__icontains=project_code)
@@ -4041,7 +4103,12 @@ def transaction_export(request):
     except ValueError:
         pass
     if request.GET.get('action'): transactions = transactions.filter(action=request.GET['action'])
-    if request.GET.get('warehouse'): transactions = transactions.filter(Q(source_warehouse_id=request.GET['warehouse']) | Q(target_warehouse_id=request.GET['warehouse']))
+    warehouse_text = request.GET.get('warehouse', '').strip()
+    warehouse_id = _normalized_uuid(warehouse_text)
+    if warehouse_text and not warehouse_id:
+        transactions = transactions.none()
+    elif warehouse_id:
+        transactions = transactions.filter(Q(source_warehouse_id=warehouse_id) | Q(target_warehouse_id=warehouse_id))
     if request.GET.get('project_code'): transactions = transactions.filter(project_code__icontains=request.GET['project_code'])
     if request.GET.get('work_order_no'): transactions = transactions.filter(work_order_no__icontains=request.GET['work_order_no'])
     action_labels = dict(WorkflowRequest.RequestType.choices)

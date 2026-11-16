@@ -10,7 +10,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from apps.accounts.models import AccountSession
-from apps.common.models import ApiAccessToken, ApiThrottleState, LoginThrottleState, SecurityAuditEvent
+from apps.common.models import ApiAccessToken, ApiThrottleState, LoginThrottleState
 
 
 class Command(BaseCommand):
@@ -52,21 +52,18 @@ class Command(BaseCommand):
             inactive_account_sessions.order_by().values('pk')
         )
         account_session_count = AccountSession.objects.filter(pk__in=account_session_ids).count()
-        security_events = SecurityAuditEvent.objects.filter(created_at__lt=cutoff)
         counts = {
             'login_states': login_states.count(),
             'account_sessions': account_session_count,
             'api_states': api_states.count(),
             'tokens': token_count,
-            'security_events': security_events.count(),
         }
 
         mode = '预览' if options['dry_run'] else '清理'
         self.stdout.write(
             f'{mode}安全状态：登录限流 {counts["login_states"]} 条，'
             f'过期设备会话 {counts["account_sessions"]} 条，'
-            f'接口限流 {counts["api_states"]} 条，失效令牌 {counts["tokens"]} 条，'
-            f'安全事件 {counts["security_events"]} 条。'
+            f'接口限流 {counts["api_states"]} 条，失效令牌 {counts["tokens"]} 条。'
         )
         if options['dry_run']:
             return
@@ -79,10 +76,8 @@ class Command(BaseCommand):
         account_session_deleted, _ = AccountSession.objects.filter(pk__in=account_session_ids).delete()
         api_deleted, _ = api_states.delete()
         token_deleted, _ = ApiAccessToken.objects.filter(pk__in=token_ids).delete()
-        event_deleted, _ = security_events.delete()
         self.stdout.write(self.style.SUCCESS(
             f'安全状态清理完成：登录限流 {login_deleted} 条，'
             f'过期设备会话 {account_session_deleted} 条，'
-            f'接口限流 {api_deleted} 条，失效令牌 {token_deleted} 条，'
-            f'安全事件 {event_deleted} 条。'
+            f'接口限流 {api_deleted} 条，失效令牌 {token_deleted} 条。'
         ))

@@ -3,6 +3,7 @@
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
+import warnings
 
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
@@ -12,6 +13,8 @@ from PIL import Image, UnidentifiedImageError
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
 MAX_ATTACHMENT_SIZE = 20 * 1024 * 1024
 IMAGE_SUFFIXES = {'.jpg', '.jpeg', '.png', '.webp'}
+ALLOWED_IMAGE_FORMATS = {'JPEG', 'PNG', 'WEBP'}
+MAX_IMAGE_PIXELS = 25_000_000
 ALLOWED_ATTACHMENT_SUFFIXES = IMAGE_SUFFIXES | {
     '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt', '.log', '.csv', '.zip',
 }
@@ -25,8 +28,18 @@ def validate_image_upload(uploaded_file, *, max_size=MAX_IMAGE_SIZE):
         raise ValidationError(f'图片不能超过 {max_size // (1024 * 1024)} MB。')
     try:
         uploaded_file.seek(0)
-        with Image.open(uploaded_file) as image:
-            image.verify()
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', Image.DecompressionBombWarning)
+            with Image.open(uploaded_file) as image:
+                if image.format not in ALLOWED_IMAGE_FORMATS:
+                    raise ValidationError('只支持 JPEG、PNG 或 WebP 图片。')
+                if image.width * image.height > MAX_IMAGE_PIXELS:
+                    raise ValidationError('图片像素过大，请缩小后重试。')
+                image.verify()
+    except ValidationError:
+        raise
+    except Image.DecompressionBombWarning as exc:
+        raise ValidationError('图片像素过大，请缩小后重试。') from exc
     except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError) as exc:
         raise ValidationError('上传文件不是有效的图片。') from exc
     finally:

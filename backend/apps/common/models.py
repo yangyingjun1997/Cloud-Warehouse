@@ -43,13 +43,26 @@ class UserListPreference(UUIDModel, TimeStampedModel):
         verbose_name_plural = '列表展示偏好'
 
 
+class ImmutableAuditQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        raise ValidationError('审计留痕记录只允许新增，不允许批量修改。')
+
+    def delete(self):
+        raise ValidationError('审计留痕记录不允许批量删除。')
+
+
+class ImmutableAuditManager(models.Manager.from_queryset(ImmutableAuditQuerySet)):
+    pass
+
+
 class ImmutableAuditMixin(models.Model):
     """审计留痕记录的应用层防篡改保护。
 
-    只增不改：禁止通过 ORM 更新或删除既有记录；如需修正必须走数据库层
-    并留下独立说明。仅拦截 save()/delete()，不影响 raw SQL 与批量操作，
-    日常使用（管理员后台、脚本、服务层）会立即抛出 ValidationError。
+    只增不改：禁止通过实例或 QuerySet 更新、删除既有记录。
+    数据库原始 SQL 仍需由 PostgreSQL 权限或触发器提供最终保护。
     """
+
+    objects = ImmutableAuditManager()
 
     class Meta:
         abstract = True
@@ -68,7 +81,7 @@ class OperationAuditLog(ImmutableAuditMixin, UUIDModel, TimeStampedModel):
 
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name='operation_audit_logs',

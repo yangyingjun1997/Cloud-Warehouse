@@ -50,6 +50,23 @@ class AdminStatusAdjustmentTests(WarehouseTestFixture, TestCase):
                 actor=self.admin,
             )
 
+    def test_admin_cannot_restore_terminal_asset_by_direct_correction(self):
+        asset = self.make_asset(status=Asset.Status.SOLD)
+
+        with self.assertRaisesMessage(AssetStateCorrectionError, '冲销或反向业务单据'):
+            correct_asset_states(
+                assets=[asset],
+                to_status=Asset.Status.IN_STOCK,
+                reason='不能绕过反向业务单据',
+                actor=self.admin,
+                warehouse=self.warehouse,
+                location=self.location,
+            )
+
+        asset.refresh_from_db()
+        self.assertEqual(asset.status, Asset.Status.SOLD)
+        self.assertFalse(AssetStateCorrection.objects.filter(asset=asset).exists())
+
 class AdminStateAdjustmentPageTests(WarehouseTestFixture, TestCase):
     def setUp(self):
         self.admin = self.make_user('page-admin', groups=('warehouse_admin',))

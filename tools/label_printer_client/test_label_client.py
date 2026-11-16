@@ -10,6 +10,7 @@ from label_client import (
     render_calibration_sheet,
     render_cell,
     render_sheet,
+    render_zpl_sheet,
 )
 
 
@@ -90,6 +91,78 @@ class LabelRenderingTests(unittest.TestCase):
             sheet_bbox[2] - sheet_bbox[0],
             (cell_bbox[2] - cell_bbox[0]) * 1.5,
         )
+
+    def test_offset_shifts_content_within_fixed_canvas(self):
+        """偏移画进位图内部，画布尺寸固定等于纸张尺寸。
+
+        位图始终从 (0,0) 原点贴到打印 DC，因此无论偏移多少，走纸长度
+        都固定等于纸张高度，不会因位图底边超出纸张而多走纸。正偏移把
+        内容右移/下移，负偏移把内容推出画布被裁切。
+        """
+        base = {
+            **DEFAULT_CONFIG,
+            'dpi': 203,
+            'columns': 1,
+            'rows': 1,
+            'offset_x_mm': 0.0,
+            'offset_y_mm': 0.0,
+        }
+        shifted = {**base, 'offset_x_mm': 9.0, 'offset_y_mm': 11.0}
+        img_base = next(render_sheet(build_test_labels(1), base, 203))
+        img_shifted = next(render_sheet(build_test_labels(1), shifted, 203))
+        # 画布尺寸不变
+        self.assertEqual(img_base.size, img_shifted.size)
+        self.assertEqual(img_base.size, (mm_to_px(60, 203), mm_to_px(40, 203)))
+        # 内容位置确实不同（偏移生效）
+        self.assertIsNotNone(ImageChops.difference(img_base, img_shifted).getbbox())
+
+    def test_large_negative_offset_keeps_canvas_size(self):
+        """负偏移把内容移出画布被裁切，但画布尺寸仍固定不变。"""
+        config = {
+            **DEFAULT_CONFIG,
+            'dpi': 203,
+            'columns': 1,
+            'rows': 1,
+            'offset_x_mm': -100.0,
+            'offset_y_mm': -100.0,
+        }
+        image = next(render_sheet(build_test_labels(1), config, 203))
+        self.assertEqual(image.size, (mm_to_px(60, 203), mm_to_px(40, 203)))
+
+    def test_positive_y_offset_preserves_scale_on_fixed_canvas(self):
+        """正 Y 偏移只平移内容，不压缩内容比例或改变纸张画布。"""
+        config = {
+            **DEFAULT_CONFIG,
+            'dpi': 203,
+            'columns': 1,
+            'rows': 1,
+            'offset_x_mm': 0.0,
+            'offset_y_mm': 11.0,
+        }
+        image = next(render_sheet(build_test_labels(1), config, 203))
+        self.assertEqual(image.size, (mm_to_px(60, 203), mm_to_px(40, 203)))
+        base = {**config, 'offset_y_mm': 0.0}
+        base_image = next(render_sheet(build_test_labels(1), base, 203))
+        # 平移会裁切底部，但不能通过改变 cell_h 让图形缩小。
+        self.assertIsNotNone(ImageChops.difference(base_image, image).getbbox())
+
+    def test_zpl_sheet_declares_exact_60x40_size_and_four_cells(self):
+        config = {
+            **DEFAULT_CONFIG,
+            'dpi': 300,
+            'columns': 2,
+            'rows': 2,
+            'sheet_width_mm': 60,
+            'sheet_height_mm': 40,
+        }
+        labels = build_test_labels(4)
+        for index, label in enumerate(labels):
+            label['qr_payload'] = f'WMS2:A:TEST-{index + 1}'
+        zpl = render_zpl_sheet(labels, config, 300)
+        self.assertIn('^PW709', zpl)
+        self.assertIn('^LL472', zpl)
+        self.assertEqual(zpl.count('^BQN'), 4)
+        self.assertEqual(zpl.count('^XZ'), 1)
 
 
 if __name__ == '__main__':

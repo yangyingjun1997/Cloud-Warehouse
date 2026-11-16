@@ -22,7 +22,7 @@ from apps.workflow.models import (
     WorkflowRequestLine,
     WorkflowRequestTemplate,
 )
-from apps.notifications.models import Notification
+from apps.notifications.models import DingTalkOutbox, Notification
 from django.test import TestCase, override_settings
 from django.test.client import RequestFactory
 from rest_framework.test import APIClient
@@ -447,12 +447,12 @@ class SecurityStateCleanupTests(TestCase):
         LoginThrottleState.objects.filter(key='old-login').update(updated_at=old)
         ApiThrottleState.objects.create(key='old-api', request_count=2, window_started_at=old)
         ApiThrottleState.objects.filter(key='old-api').update(updated_at=old)
-        SecurityAuditEvent.objects.create(
-            event_type='login_failed',
-            subject_hash='c' * 64,
-            ip_hash='d' * 64,
-        )
-        SecurityAuditEvent.objects.filter(subject_hash='c' * 64).update(created_at=old, updated_at=old)
+        with patch('django.utils.timezone.now', return_value=old):
+            SecurityAuditEvent.objects.create(
+                event_type='login_failed',
+                subject_hash='c' * 64,
+                ip_hash='d' * 64,
+            )
         ApiAccessToken.objects.create(
             user=User.objects.create_user(username='cleanup-user', password='password123'),
             token_hash='a' * 64,
@@ -508,7 +508,7 @@ class SecurityStateCleanupTests(TestCase):
 
         self.assertFalse(LoginThrottleState.objects.filter(key='old-login').exists())
         self.assertFalse(ApiThrottleState.objects.filter(key='old-api').exists())
-        self.assertFalse(SecurityAuditEvent.objects.filter(subject_hash='c' * 64).exists())
+        self.assertTrue(SecurityAuditEvent.objects.filter(subject_hash='c' * 64).exists())
         self.assertFalse(ApiAccessToken.objects.filter(token_prefix='cleanup-old').exists())
         self.assertTrue(ApiAccessToken.objects.filter(pk=active.pk).exists())
         self.assertFalse(AccountSession.objects.filter(pk=stale_session.pk).exists())
@@ -1601,20 +1601,12 @@ class DashboardAndAdminTests(TestCase):
         self.assertTrue(User.objects.filter(username='new-employee').exists())
         self.assertTrue(User.objects.get(username='new-employee').profile.employee_no == 'EMP-001')
 
-    def test_data_purge_requires_exact_confirmation_and_preserves_current_superuser(self):
+    def test_data_purge_is_not_exposed_or_executable(self):
         admin = User.objects.create_superuser(username='purge-admin', password='password123', email='')
         self.client.force_login(admin)
         response = self.client.get('/permissions/')
-        self.assertContains(response, '请输入：清空所有业务数据')
-        self.assertContains(response, '确认并清空')
-
-        response = self.client.post('/permissions/', {
-            'action': 'purge_data',
-            'confirmation': '错误确认文字',
-            'password': 'password123',
-        })
-        self.assertRedirects(response, '/permissions/')
-        self.assertTrue(Asset.objects.exists())
+        self.assertNotContains(response, '清空系统业务数据')
+        self.assertNotContains(response, 'purge_data')
 
         response = self.client.post('/permissions/', {
             'action': 'purge_data',
@@ -1622,10 +1614,10 @@ class DashboardAndAdminTests(TestCase):
             'password': 'password123',
         })
         self.assertRedirects(response, '/permissions/')
-        self.assertFalse(Asset.objects.exists())
-        self.assertEqual(list(User.objects.values_list('username', flat=True)), ['purge-admin'])
+        self.assertTrue(Asset.objects.exists())
+        self.assertTrue(User.objects.filter(username='purge-admin').exists())
 
-    def test_data_purge_with_empty_confirmation_does_not_delete_data(self):
+    def test_legacy_empty_purge_post_does_not_delete_data(self):
         admin = User.objects.create_superuser(username='purge-empty-admin', password='password123', email='')
         self.client.force_login(admin)
         response = self.client.post('/permissions/', {
@@ -1635,9 +1627,6 @@ class DashboardAndAdminTests(TestCase):
         })
         self.assertRedirects(response, '/permissions/')
         self.assertTrue(Asset.objects.exists())
-        messages = list(response.wsgi_request._messages)
-        self.assertEqual(len(messages), 1)
-        self.assertIn('确认文字不正确', str(messages[0]))
 
     def test_create_employee_rejects_short_password_without_server_error(self):
         admin = User.objects.create_superuser(username='create-admin', password='password123', email='')
@@ -2228,8 +2217,7 @@ class ConsistencyCheckTests(TestCase):
         self.assertEqual(response.redirect_chain[-1][0], '/')
         self.assertContains(response, '当前账号没有数据一致性检查权限。')
 
-    @patch('apps.common.management.commands.check_data_consistency.send_group_message', return_value=True)
-    def test_consistency_command_notifies_only_on_first_change_and_recovery(self, send_group_message):
+    def test_consistency_command_notifies_only_on_first_change_and_recovery(self):
         import tempfile
         from pathlib import Path
         from django.core.management import call_command
@@ -2238,30 +2226,29 @@ class ConsistencyCheckTests(TestCase):
             state_file = str(Path(directory) / 'consistency.json')
             call_command('check_data_consistency', '--notify', '--state-file', state_file)
             call_command('check_data_consistency', '--notify', '--state-file', state_file)
-            self.assertEqual(send_group_message.call_count, 1)
+            self.assertEqual(DingTalkOutbox.objects.count(), 1)
 
             Asset.objects.filter(serial_number='DUPLICATE-SN').first().save(
                 update_fields=['serial_number'],
             )
             # 上面的 save 没有改变内容，确保状态保持去重。
             call_command('check_data_consistency', '--notify', '--state-file', state_file)
-            self.assertEqual(send_group_message.call_count, 1)
+            self.assertEqual(DingTalkOutbox.objects.count(), 1)
 
             changed_asset = Asset.objects.filter(serial_number='DUPLICATE-SN').first()
             changed_asset.serial_number = 'CHANGED-SN'
             changed_asset.save(update_fields=['serial_number'])
             call_command('check_data_consistency', '--notify', '--state-file', state_file)
-            self.assertEqual(send_group_message.call_count, 2)
+            self.assertEqual(DingTalkOutbox.objects.count(), 2)
 
             InventoryReservation.objects.all().delete()
             StockItemHolding.objects.all().delete()
             Asset.objects.all().delete()
             call_command('check_data_consistency', '--notify', '--state-file', state_file)
-            self.assertEqual(send_group_message.call_count, 3)
-            self.assertIn('已恢复', send_group_message.call_args.args[0])
+            self.assertEqual(DingTalkOutbox.objects.count(), 3)
+            self.assertIn('已恢复', DingTalkOutbox.objects.order_by('-created_at').first().title)
 
-    @patch('apps.common.management.commands.check_data_consistency.send_group_message', return_value=False)
-    def test_consistency_command_does_not_save_state_when_notification_fails(self, send_group_message):
+    def test_consistency_command_saves_state_after_durable_enqueue(self):
         import tempfile
         from pathlib import Path
         from django.core.management import call_command
@@ -2269,8 +2256,8 @@ class ConsistencyCheckTests(TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state_path = Path(directory) / 'consistency.json'
             call_command('check_data_consistency', '--notify', '--state-file', str(state_path))
-            self.assertFalse(state_path.exists())
-            self.assertTrue(send_group_message.called)
+            self.assertTrue(state_path.exists())
+            self.assertEqual(DingTalkOutbox.objects.count(), 1)
 
 
 class ListPreferenceTests(TestCase):
@@ -2369,12 +2356,11 @@ class ExportAuditArchiveTests(TestCase):
         from django.utils import timezone
         from datetime import timedelta
 
-        old = OperationAuditLog.objects.create(
-            actor=self.actor, action='old', target_model='Asset',
-        )
-        # 把 created_at 改到 10 天前（绕过 auto_now_add 用 queryset update）
         past = timezone.now() - timedelta(days=10)
-        OperationAuditLog.objects.filter(pk=old.pk).update(created_at=past)
+        with patch('django.utils.timezone.now', return_value=past):
+            OperationAuditLog.objects.create(
+                actor=self.actor, action='old', target_model='Asset',
+            )
 
         with tempfile.TemporaryDirectory() as tmp:
             out = io.StringIO()

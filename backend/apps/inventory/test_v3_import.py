@@ -8,8 +8,8 @@ from apps.common.models import OperationAuditLog
 
 from .import_batch_services import create_import_batch
 from .models import (
-    Asset, Category, ImportBatch, ImportMutation, InventoryDomain, ItemType,
-    Location, StockItem, Warehouse,
+    Asset, AssetNetworkEndpoint, Category, ImportBatch, ImportMutation,
+    InventoryDomain, ItemType, Location, StockItem, Warehouse,
 )
 from .import_recovery_services import (
     ControlledAssetDeletionError, ImportRecoveryError,
@@ -374,6 +374,18 @@ class ControlledTestAssetDeletionTests(TestCase):
 
     def test_superuser_can_delete_asset_without_business_history(self):
         asset = self._asset()
+        endpoint = AssetNetworkEndpoint.objects.create(
+            asset=asset,
+            interface_name='eth0',
+            ip_address='192.0.2.10',
+            subnet_mask='255.255.255.0',
+            gateway='192.0.2.1',
+            mac_address='00:11:22:33:44:55',
+            hostname='delete-test',
+            vlan_id=120,
+            is_primary=True,
+            notes='完整快照测试',
+        )
         asset_id = asset.id
         label = controlled_delete_test_asset(
             actor=self.admin, asset=asset,
@@ -386,6 +398,16 @@ class ControlledTestAssetDeletionTests(TestCase):
             action='controlled_test_asset_deleted', target_id=asset_id,
         )
         self.assertEqual(audit.before_data['reason'], '调试阶段重复录入')
+        endpoint_snapshot = audit.before_data['network_endpoints'][0]
+        self.assertEqual(endpoint_snapshot['id'], str(endpoint.id))
+        self.assertEqual(endpoint_snapshot['asset_id'], str(asset_id))
+        self.assertEqual(endpoint_snapshot['subnet_mask'], '255.255.255.0')
+        self.assertEqual(endpoint_snapshot['gateway'], '192.0.2.1')
+        self.assertEqual(endpoint_snapshot['vlan_id'], 120)
+        self.assertTrue(endpoint_snapshot['is_primary'])
+        self.assertEqual(endpoint_snapshot['notes'], '完整快照测试')
+        self.assertIn('created_at', endpoint_snapshot)
+        self.assertIn('updated_at', endpoint_snapshot)
         self.assertTrue(audit.after_data['deleted'])
 
     def test_delete_is_blocked_by_request_history(self):

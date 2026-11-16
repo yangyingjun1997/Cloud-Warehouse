@@ -1,0 +1,11 @@
+[Unit]
+Description=Deliver After-sales Warehouse DingTalk outbox
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=warehouse
+Group=warehouse
+WorkingDirectory=/opt/after-sales-warehouse/current/backend
+EnvironmentFile=/srv/after-sales-warehouse/app.env
+ExecStart=/opt/after-sales-warehouse/current/venv/bin/python manage.py process_dingtalk_outbox --limit 100 --max-attempts 8

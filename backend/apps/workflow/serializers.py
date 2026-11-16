@@ -1,4 +1,7 @@
+from django.db import transaction
 from rest_framework import serializers
+
+from apps.common.permissions import can_view_financials
 
 from .models import ApprovalLog, ApprovalTask, InventoryTransaction, WorkflowRequest, WorkflowRequestLine
 from .services import is_operator
@@ -100,6 +103,13 @@ class InventoryTransactionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if request is None or not can_view_financials(request.user):
+            data.pop('cost_amount', None)
+        return data
+
 
 class WorkflowRequestSerializer(serializers.ModelSerializer):
     lines = WorkflowRequestLineSerializer(many=True, required=False)
@@ -152,6 +162,7 @@ class WorkflowRequestSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['request_no', 'inventory_no', 'applicant', 'department', 'status', 'is_quick_process', 'contact_source']
 
+    @transaction.atomic
     def create(self, validated_data):
         lines = validated_data.pop('lines', [])
         request_obj = WorkflowRequest.objects.create(**validated_data)

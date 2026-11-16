@@ -18,9 +18,9 @@ from .low_stock import (
     send_weekly_summary,
     stock_item_snapshot,
 )
-from .models import LowStockAlert, Notification
+from .models import DingTalkOutbox, LowStockAlert, Notification
 from .return_reminders import send_return_due_reminders
-from .dingtalk import send_user_message
+from .dingtalk import send_group_message, send_user_message
 
 
 User = get_user_model()
@@ -76,6 +76,12 @@ class NotificationApiTests(TestCase):
         self.assertEqual(result.channel, 'dingtalk_personal')
         self.assertIn('未配置', result.reason)
 
+    @override_settings(DINGTALK_WEBHOOK='file:///tmp/not-a-webhook')
+    @patch('apps.notifications.dingtalk.urlopen')
+    def test_group_dingtalk_rejects_non_https_non_official_url(self, mocked_open):
+        self.assertFalse(send_group_message('测试通知', '测试内容'))
+        mocked_open.assert_not_called()
+
 
 class LowStockNotificationTests(TestCase):
     def setUp(self):
@@ -84,8 +90,7 @@ class LowStockNotificationTests(TestCase):
         self.report_user.groups.add(Group.objects.get_or_create(name='warehouse_reports')[0])
         self.category = Category.objects.create(name='预警测试分类', code='ALERT-CAT')
 
-    @patch('apps.notifications.low_stock.send_group_message', return_value=True)
-    def test_stock_item_alerts_once_and_notifies_when_recovered(self, send_group_message):
+    def test_stock_item_alerts_once_and_notifies_when_recovered(self):
         stock_item = StockItem.objects.create(
             name='测试滤芯', code='ALERT-STOCK', quantity=5, safety_stock=5, unit='件',
         )
@@ -94,7 +99,7 @@ class LowStockNotificationTests(TestCase):
 
         alert = LowStockAlert.objects.get(source_id=stock_item.id)
         self.assertTrue(alert.is_active)
-        self.assertEqual(send_group_message.call_count, 1)
+        self.assertEqual(DingTalkOutbox.objects.count(), 1)
         self.assertEqual(Notification.objects.filter(title='安全库存预警').count(), 2)
         self.assertTrue(OperationAuditLog.objects.filter(
             action='low_stock_alert_started', target_id=alert.id,
@@ -102,7 +107,7 @@ class LowStockNotificationTests(TestCase):
 
         with self.captureOnCommitCallbacks(execute=True):
             apply_snapshot(stock_item_snapshot(stock_item.id))
-        self.assertEqual(send_group_message.call_count, 1)
+        self.assertEqual(DingTalkOutbox.objects.count(), 1)
 
         StockItem.objects.filter(pk=stock_item.id).update(quantity=6)
         with self.captureOnCommitCallbacks(execute=True):
@@ -110,7 +115,7 @@ class LowStockNotificationTests(TestCase):
         alert.refresh_from_db()
         self.assertFalse(alert.is_active)
         self.assertIsNotNone(alert.resolved_at)
-        self.assertEqual(send_group_message.call_count, 2)
+        self.assertEqual(DingTalkOutbox.objects.count(), 2)
         self.assertEqual(Notification.objects.filter(title='安全库存已恢复').count(), 2)
         self.assertTrue(OperationAuditLog.objects.filter(
             action='low_stock_alert_resolved', target_id=alert.id,
@@ -149,8 +154,7 @@ class LowStockNotificationTests(TestCase):
         self.assertEqual(snapshot.current_quantity, 0)
         self.assertTrue(snapshot.is_low)
 
-    @patch('apps.notifications.low_stock.send_group_message', return_value=True)
-    def test_weekly_summary_contains_active_alerts(self, send_group_message):
+    def test_weekly_summary_contains_active_alerts(self):
         stock_item = StockItem.objects.create(
             name='测试电池', code='ALERT-WEEKLY', quantity=1, safety_stock=3, unit='块',
         )
@@ -159,9 +163,9 @@ class LowStockNotificationTests(TestCase):
         count = send_weekly_summary()
 
         self.assertEqual(count, 1)
-        send_group_message.assert_called_once()
-        self.assertIn('每周安全库存汇总', send_group_message.call_args.args[0])
-        self.assertIn('测试电池', send_group_message.call_args.args[1])
+        message = DingTalkOutbox.objects.get()
+        self.assertIn('每周安全库存汇总', message.title)
+        self.assertIn('测试电池', message.content)
 
 
 class ReturnReminderTests(TestCase):
@@ -187,8 +191,7 @@ class ReturnReminderTests(TestCase):
             expected_return_date=self.request_obj.expected_return_date,
         )
 
-    @patch('apps.notifications.return_reminders.send_group_message', return_value=True)
-    def test_due_reminder_is_sent_once_per_day(self, send_group_message):
+    def test_due_reminder_is_sent_once_per_day(self):
         with self.captureOnCommitCallbacks(execute=True):
             first_count = send_return_due_reminders()
         with self.captureOnCommitCallbacks(execute=True):
@@ -198,4 +201,8 @@ class ReturnReminderTests(TestCase):
         self.assertEqual(second_count, 0)
         self.assertEqual(Notification.objects.filter(recipient=self.borrower, title='借用归还提醒').count(), 1)
         self.assertEqual(Notification.objects.filter(recipient=self.operator, title='借用到期汇总').count(), 1)
-        send_group_message.assert_called_once()
+        self.assertEqual(DingTalkOutbox.objects.count(), 2)
+        self.assertEqual(
+            set(DingTalkOutbox.objects.values_list('delivery_mode', flat=True)),
+            {DingTalkOutbox.DeliveryMode.PERSONAL, DingTalkOutbox.DeliveryMode.GROUP},
+        )

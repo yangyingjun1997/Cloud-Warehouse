@@ -366,6 +366,17 @@ class StockItemSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['quantity', 'source_import_batch', 'created_at', 'updated_at']
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if request is None:
+            data.pop('unit_cost', None)
+            return data
+        from apps.common.permissions import can_view_financials
+        if not can_view_financials(request.user):
+            data.pop('unit_cost', None)
+        return data
+
     def validate(self, attrs):
         if self.instance and 'quantity' in self.initial_data:
             raise serializers.ValidationError({'quantity': '当前库存不能直接修改；请通过出入库或盘点调整流程变更。'})

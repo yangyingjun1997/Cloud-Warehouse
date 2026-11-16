@@ -13,8 +13,8 @@ from apps.inventory.availability import available_asset_filter
 from apps.workflow.models import InventoryReservation
 from apps.common.models import OperationAuditLog
 
-from .dingtalk import send_group_message
 from .models import LowStockAlert, Notification
+from .outbox import enqueue_group, outbox_key
 
 
 User = get_user_model()
@@ -61,7 +61,7 @@ def _message(snapshot: StockSnapshot, *, recovered: bool) -> tuple[str, str]:
     )
 
 
-def _deliver_transition(snapshot: StockSnapshot, *, recovered: bool) -> None:
+def _deliver_transition(snapshot: StockSnapshot, *, recovered: bool, idempotency_key: str) -> None:
     title, content = _message(snapshot, recovered=recovered)
     notifications = [
         Notification(recipient=user, title=title, content=content, level='success' if recovered else 'warning')
@@ -69,7 +69,7 @@ def _deliver_transition(snapshot: StockSnapshot, *, recovered: bool) -> None:
     ]
     if notifications:
         Notification.objects.bulk_create(notifications)
-    send_group_message(f'售后仓库：{title}', content)
+    enqueue_group(f'售后仓库：{title}', content, idempotency_key=idempotency_key)
 
 
 @transaction.atomic
@@ -113,7 +113,13 @@ def apply_snapshot(snapshot: StockSnapshot, *, notify: bool = True) -> LowStockA
             },
         )
     if notify and transitioned:
-        transaction.on_commit(lambda: _deliver_transition(snapshot, recovered=not snapshot.is_low))
+        marker = alert.active_since if snapshot.is_low else alert.resolved_at
+        key = outbox_key('low-stock', alert.id, 'active' if snapshot.is_low else 'resolved', marker)
+        transaction.on_commit(lambda: _deliver_transition(
+            snapshot,
+            recovered=not snapshot.is_low,
+            idempotency_key=key,
+        ))
     return alert
 
 
@@ -182,5 +188,11 @@ def send_weekly_summary() -> int:
         f'{index}. {alert.source_name}：当前 {alert.current_quantity}，安全库存 {alert.safety_stock}'
         for index, alert in enumerate(active_alerts, start=1)
     ]
-    send_group_message('售后仓库：每周安全库存汇总', '\n'.join(lines))
+    content = '\n'.join(lines)
+    year, week, _ = timezone.localdate().isocalendar()
+    enqueue_group(
+        '售后仓库：每周安全库存汇总',
+        content,
+        idempotency_key=outbox_key('low-stock-weekly', year, week, content),
+    )
     return len(active_alerts)

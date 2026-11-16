@@ -17,6 +17,17 @@ class HtmlNoStoreTests(WarehouseTestFixture, TestCase):
         self.assertIn('id="scanner-status"', content)
         self.assertIn('设备与扫码状态', content)
 
+    def test_security_headers_restrict_external_content_and_capabilities(self):
+        response = self.client.get('/login/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("default-src 'self'", response['Content-Security-Policy'])
+        self.assertIn("object-src 'none'", response['Content-Security-Policy'])
+        self.assertIn("frame-ancestors 'none'", response['Content-Security-Policy'])
+        self.assertEqual(response['Referrer-Policy'], 'same-origin')
+        self.assertIn('camera=(self)', response['Permissions-Policy'])
+        self.assertIn('usb=()', response['Permissions-Policy'])
+
     def test_scanner_toggle_exists_on_item_entry_pages(self):
         user = self.make_operator('scanner-page')
         self.client.force_login(user)
@@ -79,6 +90,20 @@ class HtmlNoStoreTests(WarehouseTestFixture, TestCase):
         self.assertContains(worker, 'FRESH_STATIC_PATHS')
         self.assertContains(worker, "fetch(request, {cache: 'no-store'})")
         self.assertNotContains(worker, "'/static/warehouse/scanner.js',\n  '/static/warehouse/offline.js',\n  '/static/warehouse/vendor")
+
+    def test_offline_queue_has_retention_sync_cleanup_and_logout_cleanup(self):
+        offline_path = finders.find('warehouse/offline.js')
+        self.assertIsNotNone(offline_path)
+        with open(offline_path, encoding='utf-8') as offline_file:
+            source = offline_file.read()
+
+        self.assertIn('const RETENTION_MS = 7 * 24 * 60 * 60 * 1000', source)
+        self.assertIn('function pruneExpired()', source)
+        self.assertIn('await remove(item.id)', source)
+        self.assertIn('function clearCurrentUser()', source)
+        self.assertIn('form[action$="/logout/"]', source)
+        self.assertIn('未同步内容无法恢复', source)
+
     def test_first_html_response_clears_old_cache(self):
         user = self.make_operator('cache-reset')
         self.client.force_login(user)
@@ -86,6 +111,6 @@ class HtmlNoStoreTests(WarehouseTestFixture, TestCase):
         self.assertEqual(response['Clear-Site-Data'], '"cache"')
         self.assertIn('warehouse-cache-reset', response.cookies)
 
-        self.client.cookies['warehouse-cache-reset'] = '3'
+        self.client.cookies['warehouse-cache-reset'] = '4'
         response = self.client.get('/warehouse/quick-process/')
         self.assertNotIn('Clear-Site-Data', response)

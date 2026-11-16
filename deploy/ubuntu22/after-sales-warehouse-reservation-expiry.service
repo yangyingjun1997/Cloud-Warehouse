@@ -6,9 +6,9 @@ After=postgresql.service
 Type=oneshot
 User=warehouse
 Group=warehouse
-WorkingDirectory=/opt/after-sales-warehouse/backend
-EnvironmentFile=/opt/after-sales-warehouse/backend/.env
-ExecStart=/opt/after-sales-warehouse/venv/bin/python manage.py expire_inventory_reservations
+WorkingDirectory=/opt/after-sales-warehouse/current/backend
+EnvironmentFile=/srv/after-sales-warehouse/app.env
+ExecStart=/opt/after-sales-warehouse/current/venv/bin/python manage.py expire_inventory_reservations
 
 [Install]
 WantedBy=multi-user.target

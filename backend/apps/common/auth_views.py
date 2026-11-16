@@ -71,3 +71,9 @@ class RateLimitedLoginView(auth_views.LoginView):
                 client_ip=get_client_ip(self.request),
             )
         return response
+
+
+class RestrictedPasswordChangeView(auth_views.PasswordChangeView):
+    """密码修改只接受浏览器表单实际使用的方法。"""
+
+    http_method_names = ['get', 'post', 'head', 'options']

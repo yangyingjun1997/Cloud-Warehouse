@@ -2,8 +2,9 @@
   'use strict';
 
   const DB_NAME = 'warehouse-offline';
-  const DB_VERSION = 2;
+  const DB_VERSION = 3;
   const STORE = 'queue';
+  const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
   function currentUserId() {
     return String(document.body?.dataset.userId || '');
@@ -41,8 +42,12 @@
           if (!item.ownerUserId) {
             item.status = 'orphaned';
             item.lastError = '旧版本离线记录未绑定账号，已停止自动同步。';
-            cursor.update(item);
           }
+          if (!item.expiresAt) {
+            const createdAt = Date.parse(item.createdAt || '') || Date.now();
+            item.expiresAt = new Date(createdAt + RETENTION_MS).toISOString();
+          }
+          cursor.update(item);
           cursor.continue();
         };
       };
@@ -51,10 +56,57 @@
     });
   }
 
-  function readAll() {
+  function isExpired(item, now) {
+    const expiresAt = Date.parse(item.expiresAt || '');
+    return Number.isFinite(expiresAt) && expiresAt <= now;
+  }
+
+  function pruneExpired() {
     return openDb().then(db => new Promise((resolve, reject) => {
+      let removed = 0;
+      const request = db.transaction(STORE, 'readwrite').objectStore(STORE).openCursor();
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          resolve(removed);
+          return;
+        }
+        if (isExpired(cursor.value, Date.now()) || cursor.value.status === 'synced') {
+          cursor.delete();
+          removed += 1;
+        }
+        cursor.continue();
+      };
+      request.onerror = () => reject(request.error);
+    }));
+  }
+
+  function readAll() {
+    return pruneExpired().then(() => openDb()).then(db => new Promise((resolve, reject) => {
       const request = db.transaction(STORE, 'readonly').objectStore(STORE).getAll();
       request.onsuccess = () => resolve((request.result || []).filter(item => item.ownerUserId === currentUserId()));
+      request.onerror = () => reject(request.error);
+    }));
+  }
+
+  function clearCurrentUser() {
+    const ownerUserId = currentUserId();
+    if (!ownerUserId) return Promise.resolve(0);
+    return openDb().then(db => new Promise((resolve, reject) => {
+      let removed = 0;
+      const request = db.transaction(STORE, 'readwrite').objectStore(STORE).openCursor();
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          resolve(removed);
+          return;
+        }
+        if (cursor.value.ownerUserId === ownerUserId) {
+          cursor.delete();
+          removed += 1;
+        }
+        cursor.continue();
+      };
       request.onerror = () => reject(request.error);
     }));
   }
@@ -146,6 +198,7 @@
       ownerUserId: currentUserId(),
       deviceId: deviceId(),
       createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + RETENTION_MS).toISOString(),
       url: form.action || window.location.href,
       pageUrl: window.location.href,
       title: form.dataset.offlineTitle || document.title,
@@ -195,12 +248,7 @@
         if (!response.ok || (result && result.ok === false)) {
           throw new Error(result?.message || `服务器返回 ${response.status}`);
         }
-        item.status = 'synced';
-        item.syncedAt = new Date().toISOString();
-        item.serverStatus = result?.status || '';
-        item.serverOperationId = result?.operation_id || '';
-        item.lastError = '';
-        await put(item);
+        await remove(item.id);
       } catch (error) {
         item.lastError = error.message || '同步失败';
         item.lastAttemptAt = new Date().toISOString();
@@ -270,6 +318,26 @@
     });
   }
 
+  function registerLogoutCleanup() {
+    const form = document.querySelector('form[action$="/logout/"]');
+    if (!form) return;
+    form.addEventListener('submit', async event => {
+      if (form.dataset.offlineCleanupComplete === 'true') return;
+      event.preventDefault();
+      try {
+        const items = await readAll();
+        if (items.length && !window.confirm(
+          `退出登录将清除本账号保存在这台设备上的 ${items.length} 条离线记录，未同步内容无法恢复。确认退出吗？`
+        )) return;
+        await clearCurrentUser();
+      } catch (_) {
+        if (!window.confirm('无法确认本机离线记录是否已清理。仍要退出吗？')) return;
+      }
+      form.dataset.offlineCleanupComplete = 'true';
+      HTMLFormElement.prototype.submit.call(form);
+    });
+  }
+
   function init() {
     const updateNetwork = () => {
       updateIndicator();
@@ -278,10 +346,17 @@
     window.addEventListener('online', updateNetwork);
     window.addEventListener('offline', updateNetwork);
     registerForms();
+    registerLogoutCleanup();
+    pruneExpired().then(removed => {
+      if (removed) showStatus(`已清理 ${removed} 条过期或已同步的本机离线记录。`, 'success');
+    }).catch(() => {});
     updateNetwork();
   }
 
-  window.WarehouseOffline = {readAll, updateIndicator, syncQueue, retryItem, removeItem, currentUserId};
+  window.WarehouseOffline = {
+    readAll, updateIndicator, syncQueue, retryItem, removeItem,
+    clearCurrentUser, pruneExpired, currentUserId,
+  };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();

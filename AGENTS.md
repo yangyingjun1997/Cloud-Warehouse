@@ -12,12 +12,21 @@
 
 ## Mandatory workflow
 
+### Source-of-truth and progress discipline
+
+- 每次开始工作时必须区分三个状态：Git 已提交基线、本地未提交最新工作区、NUC 实际运行 release。三者不得混写成“当前版本”。
+- `PROJECT_STATUS.md` 中的历史部署记录只证明当时结果；本轮无法连接 NUC 时必须写“未复核”，不得沿用旧健康结论。
+- 新功能必须先进入 `DEVELOPMENT_PLAN.md`，写明范围、风险、自动化验收和现场验收，再开始实现。其他 agent 临时加入但未入计划的功能一律视为“待审查”，不能直接部署。
+- “代码已写”“自动化通过”“现场验收通过”“已部署”是四个独立状态，不得相互替代。
+- 当前稳定化阶段优先修复 `PROJECT_STATUS.md` 的 P1 阻断项；阻断项未关闭前不得叠加无关功能。
+
 ### Before editing
 
 - 执行 `git status --short`，不得覆盖或回退其他人的未提交改动。
 - 阅读目标模块、已有测试和最新迁移，优先沿用 `backend/apps/` 的现有边界。
 - 核对 `PROJECT_STATUS.md` 中的当前任务和非目标；不要顺手扩展范围。
 - 涉及数据删除、全量导入、编码重写、权限或部署时，先确认可恢复路径和审计要求。
+- 扫码、打印、摄像头、离线和 PWA 改动必须先读取对应页面脚本及现场验收记录，不能只凭单元测试推断设备行为。
 
 ### During editing
 
@@ -37,6 +46,9 @@
 - 涉及审计必须验证 `OperationAuditLog` 和 `AssetLifecycleEvent` 的只增不改约束。
 - 提交前至少执行相关专项测试、`python manage.py check`、`git diff --check`。
 - 当前阶段每个完整改动集还必须执行 Django 全量测试；不能运行时在 `PROJECT_STATUS.md` 记录原因和风险。
+- HID 扫码改动必须覆盖英文输入法、中文输入法组合事件、Enter/Tab 后缀、输入框有/无焦点、连续三次扫码和失败后继续扫描。
+- ZEBRA ZT610 打印改动必须区分“位图渲染正确”和“真实走纸正确”。单元测试只能证明前者；后者必须使用 60×40 mm 间隙纸完成真机验收。
+- 审批等批量动作必须覆盖真实 UUID、无权限、部分任务已处理、重复 ID、拒绝原因和并发重复提交；不得只测试页面渲染。
 
 ### Deployment and verification
 
@@ -46,6 +58,7 @@
 - 部署后检查迁移、静态文件、Django/Gunicorn、Nginx、`/health/`，并执行与改动相关的 PostgreSQL 冒烟。
 - 部署失败立即停止后续操作，保留日志并按快照回滚；不得反复覆盖生产目录碰运气。
 - 密码、Webhook、Secret、数据库口令不得写入仓库、日志或文档。
+- NUC 不可达时不得声称完成部署或服务器回归；只允许记录本地代码状态和待部署版本。
 
 ### Before finishing
 
@@ -59,5 +72,5 @@
 
 - 当前交付：响应式 Web/PWA + Django + PostgreSQL + Nginx + systemd。
 - 微信小程序不在当前开发清单，不因 Web 改动同步开发小程序。
-- 当前优先级：导航收口、V3 导入导出、导入回滚、受控测试资产删除、服务器冒烟。
+- 当前优先级：修复批量审批 UUID、中文输入法 HID 扫码、ZT610 60×40 mm 走纸和打印线程生命周期；随后统一依赖锁与文档，再恢复 NUC 部署冒烟。
 - 新功能若不属于 `DEVELOPMENT_PLAN.md` 当前阶段，先记录到 `PROJECT_STATUS.md` 的候选项并与用户确认。

@@ -2,7 +2,7 @@ from django.contrib.auth import views as auth_views
 from django.urls import path
 
 from . import views
-from .auth_views import RateLimitedLoginView
+from .auth_views import RateLimitedLoginView, RestrictedPasswordChangeView
 from apps.workflow import web_views as workflow_web_views
 
 urlpatterns = [
@@ -10,7 +10,7 @@ urlpatterns = [
     path('login/', RateLimitedLoginView.as_view(redirect_authenticated_user=True), name='login'),
     path('logout/', views.logout_view, name='logout'),
     path('account/sessions/', views.account_session_list, name='account_session_list'),
-    path('password/change/', auth_views.PasswordChangeView.as_view(
+    path('password/change/', RestrictedPasswordChangeView.as_view(
         template_name='registration/password_change_form.html',
         success_url='/password/change/done/',
     ), name='password_change'),
@@ -69,6 +69,7 @@ urlpatterns = [
     path('reservations/', workflow_web_views.reservation_dashboard, name='reservation_dashboard'),
     path('transactions/', views.transaction_list, name='transaction_list'),
     path('approvals/', workflow_web_views.approval_queue, name='approval_queue'),
+    path('approvals/batch-action/', workflow_web_views.approval_batch_action, name='approval_batch_action'),
     path('workflow/<uuid:request_id>/', workflow_web_views.workflow_detail, name='workflow_detail'),
     path('reports/', views.report_dashboard, name='report_dashboard'),
     path('reports/transactions.csv', views.transaction_export, name='transaction_export'),
