@@ -23,7 +23,7 @@
 - 本轮软件证据：Django 全量测试 `447/447` 通过（SQLite 按设计跳过 8 项 PostgreSQL 专项），打印客户端专项 `11/11` 通过，`manage.py check`、迁移漂移检查、Python/JavaScript 语法检查和差异格式检查通过。
 - NUC 基础部署验证已通过：当前 release、迁移状态、服务状态、`/health/` 和只读业务计数已核对；完整 PostgreSQL 业务冒烟、DS3678 中文输入法真机、ZT610 60×40 mm 连续 10 张走纸均仍未验证。
 - 候选包已构建并做内容检查：357 个文件，含 release manifest；未包含 `.env`、数据库、Excel、媒体、备份、EXE 或构建目录。候选包 SHA-256 以 `dist/*.sha256` 为准，重建后可能变化。
-- 2026-11-16 NUC 已恢复可达并完成候选包部署：当前 release 为 `20261116-m8-m9-candidate`，部署脚本使用 PostgreSQL 快照和离线依赖复用；迁移无待执行，Gunicorn/Nginx/PostgreSQL active，`/health/` 返回 200。部署前后未执行业务数据清理，当前只读计数为资产 636、耗材 31、导入批次 2、申请 0、库存流水 0。
+- 2026-11-16 NUC 已恢复可达并完成候选包部署：当前 release 为 `20261116-m10-profile-candidate`，部署脚本使用 PostgreSQL 快照和离线依赖复用；迁移无待执行，Gunicorn/Nginx/PostgreSQL active，`/health/` 返回 200。部署前后未执行业务数据清理，当前只读计数为资产 636、耗材 31、导入批次 2、申请 0、库存流水 0。
 - M10 个人资料页已完成本机 `10/10` 专项和全量 `450/450` 回归，并随 `20261116-m10-profile-candidate` 部署到 NUC；未登录访问 `/account/profile/` 返回登录跳转，服务端数据库未新增迁移。
 
 ## 2026-11-10 current review
