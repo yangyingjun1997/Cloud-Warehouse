@@ -11,7 +11,7 @@
 - 本机：Win11 开发与自动化测试。
 - NUC：Ubuntu 22.04，调试地址为 `192.168.123.101`；2026-11-16 已恢复连接并部署候选版本，当前 release 已复核。
 - 数据库：NUC 使用 PostgreSQL；部署更新必须保留现有数据。
-- 版本口径：本轮已将累计工作区建立为干净 Git 基线；精确 revision 以候选包 `release-manifest.json` 为准。候选包为 `after-sales-warehouse-20261116-m8-m9-candidate.zip`。NUC 在 2026-11-10 起暂不可达，当前运行 release 未复核。
+- 版本口径：本轮已将累计工作区建立为干净 Git 基线；精确 revision 以候选包 `release-manifest.json` 为准。最新候选包为 `after-sales-warehouse-20261116-m10-profile-candidate.zip`；NUC 当前运行 `20261116-m10-profile-candidate` 已复核。
 
 ## 2026-11-16 current turn
 
