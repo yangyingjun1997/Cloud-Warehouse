@@ -1,0 +1,26 @@
+{% extends "web_base.html" %}
+{% block title %}个人资料 - 售后仓库管理系统{% endblock %}
+{% block crumb %}个人资料{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow">账号设置</p><h1>个人资料</h1><p class="page-copy">维护系统中显示的中文姓名，方便仓库单据识别操作人。</p></div>
+</div>
+
+<section class="panel" style="max-width:720px;margin-top:20px">
+  <div class="panel-head"><div><h2>显示信息</h2><span>登录账号和权限由管理员维护</span></div><span class="avatar">{{ display_name|default:request.user.username|slice:':1' }}</span></div>
+  <form method="post" class="form-grid">
+    {% csrf_token %}
+    <div class="form-field form-field-wide"><label for="display-name">中文姓名</label><input id="display-name" name="display_name" maxlength="50" value="{{ display_name }}" placeholder="例如：张三"><small class="muted">保存后会显示在顶部头像和操作人位置；留空时回退显示登录账号。</small></div>
+    <div class="form-field"><label>登录账号</label><input value="{{ request.user.username }}" readonly></div>
+    <div class="form-field"><label>员工工号</label><input value="{{ profile.employee_no|default:'未设置' }}" readonly></div>
+    <div class="form-field"><label>所属部门</label><input value="{{ profile.department.name|default:'未设置' }}" readonly></div>
+    <div class="form-field"><label>钉钉绑定</label><input value="{% if dingtalk_bound %}已由管理员绑定{% else %}未绑定{% endif %}" readonly></div>
+    <div class="form-actions form-field-wide"><button class="button button-primary" type="submit">保存显示姓名</button><a class="button button-secondary" href="{% url 'password_change' %}">修改密码</a></div>
+  </form>
+</section>
+
+<section class="panel" style="max-width:720px;margin-top:14px">
+  <div class="panel-head"><h2>身份绑定说明</h2></div>
+  <p class="page-copy" style="margin:0">钉钉 userid 不能由用户手工填写后直接视为本人身份。当前由系统管理员核对企业通讯录后维护绑定；后续如接入钉钉可信回调，再增加自助绑定流程。</p>
+</section>
+{% endblock %}

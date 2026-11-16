@@ -526,6 +526,38 @@ def account_session_list(request):
     })
 
 
+@login_required
+def account_profile(request):
+    """Allow a user to maintain only the display name used by the UI."""
+    profile = UserProfile.objects.filter(user=request.user).select_related('department').first()
+    if request.method == 'POST':
+        display_name = ' '.join(request.POST.get('display_name', '').split())
+        if len(display_name) > 50:
+            messages.error(request, '中文姓名最多填写 50 个字符。')
+            return redirect('account_profile')
+        before_name = request.user.get_full_name()
+        request.user.first_name = display_name
+        request.user.last_name = ''
+        request.user.save(update_fields=['first_name', 'last_name'])
+        if before_name != display_name:
+            record_operation(
+                request.user,
+                'account_display_name_updated',
+                request.user,
+                summary='用户更新个人显示姓名',
+                before={'display_name': before_name},
+                after={'display_name': display_name},
+            )
+        messages.success(request, '个人显示姓名已保存。')
+        return redirect('account_profile')
+    return render(request, 'account_profile.html', {
+        'profile': profile,
+        'display_name': request.user.get_full_name().strip(),
+        'dingtalk_bound': bool(profile and profile.is_dingtalk_bound and profile.dingtalk_user_id),
+        'dingtalk_bound_at': profile.dingtalk_bound_at if profile else None,
+    })
+
+
 def _user_role_label(user, is_operator: bool, is_system_admin: bool) -> str:
     if is_system_admin:
         return '系统管理员'

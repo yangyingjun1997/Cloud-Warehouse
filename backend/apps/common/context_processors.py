@@ -18,8 +18,11 @@ def web_navigation(request):
     site_settings = SiteSettings.load()
     if not request.user.is_authenticated:
         return {'global_site_settings': site_settings}
+    display_name = request.user.get_full_name().strip() or request.user.get_username()
     return {
         'global_site_settings': site_settings,
+        'global_user_display_name': display_name,
+        'global_user_avatar': display_name[:1] or request.user.get_username()[:1],
         'global_unread_notification_count': Notification.objects.filter(
             recipient=request.user,
             is_read=False,

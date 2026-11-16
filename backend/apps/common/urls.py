@@ -9,6 +9,7 @@ urlpatterns = [
     path('', views.home, name='home'),
     path('login/', RateLimitedLoginView.as_view(redirect_authenticated_user=True), name='login'),
     path('logout/', views.logout_view, name='logout'),
+    path('account/profile/', views.account_profile, name='account_profile'),
     path('account/sessions/', views.account_session_list, name='account_session_list'),
     path('password/change/', RestrictedPasswordChangeView.as_view(
         template_name='registration/password_change_form.html',
