@@ -69,13 +69,22 @@
 - DS3678 扫码枪、ZEBRA ZT610 60×40 mm 真机走纸
 - Cloudflare WAF / 速率限制
 
-### 7. 遗留问题（未修）
+### 7. P1 修复结果（2026-11-17 已部署验证）
+
+**三个 P1 全部修复并在生产实测生效**，release `20261117-162436-c05db86`，提交 `c05db86`。
+
+| 编号 | 问题 | 修复 | 生产验证 |
+| --- | --- | --- | --- |
+| P1-A | 导出公式注入 | `common/utils.py` 新增 `sanitize_csv_cell`/`sanitize_csv_row`，对 `= + - @ TAB CR` 开头单元格前置单引号；**实际防护 7 处数据行**（一致性检查、资产台账、补货建议、供应商价格、供应商对账、呆滞库存、出入库流水），7 处表头保持原样（表头是固定中文，无需防护） | 生产实跑：`=cmd\|'/c calc'!A1` → `'=cmd\|'/c calc'!A1`；`+1+1` → `'+1+1`；正常文本与 `None` 不变 |
+| P1-B | 盘点 `_resolve_asset` 未归一化 | `_resolve_asset` 与 `scan_check_value` 改用 `normalize_scan_value`（NFKC 折全角、去零宽字符与尾随换行） | 生产实跑：`WMS2：A：AST-1` → `WMS2:A:AST-1`；真实资产 `AST-00000254` 加 `\r\n` 仍能解析 |
+| P1-C | `_resolve_stock` 名称/编码无歧义保护 | 改为编码精确命中优先；名称命中多条时抛 `InventoryCheckError` 要求改用编码，不再 `.first()` 静默取错 | 生产实跑：耗材编码 `STK-RND-0001` 正常解析 |
+
+回归：新增 `apps/inventory/test_p1_hardening.py` **11 例**（公式转义 5 类 payload、归一化 3 类输入、编码优先级、唯一名称、歧义报错、未知值），全量 **551/551** 通过（跳过 8 项 PG 专项）。
+
+### 8. 遗留问题（未修）
 
 | 级别 | 问题 | 位置 |
 | --- | --- | --- |
-| P1 | 导出公式注入（4 处） | v2/v3 导出、check_exports、CSV |
-| P1 | 盘点 `_resolve_asset` 未用 `normalize_scan_value` | `inventory` 服务层 |
-| P1 | `_resolve_stock` 名称/编码混查无歧义保护 | `inventory` 服务层 |
 | P2 | `/me` 权限谓词与实际接口权限不一致 | `accounts` API |
 | P2 | `warehouse_setup` 缺 `@login_required`，`next` 丢失 | `common/views.py:3602,3634` |
 | P2 | 无 `LOGGING` 配置、`CONN_MAX_AGE=0` | `settings.py` |

@@ -7,7 +7,7 @@
 ### 2026-11-17 当前工作区复盘与 P1 修复
 
 - 本轮未连接 NUC、未部署、未修改任何服务器数据库；文档中的 NUC release 和公网健康记录均未在本轮复核。
-- 本机使用仓库 `.venv` 和可写临时目录完成回归：Django `540/540` 通过、跳过 8 项 PostgreSQL 专项；`manage.py check`、迁移漂移、`pip check` 和 `git diff --check` 通过。
+- 本机使用仓库 `.venv` 和可写临时目录完成回归：Django `551/551` 通过、跳过 8 项 PostgreSQL 专项；`manage.py check`、迁移漂移、`pip check` 和 `git diff --check` 通过。
 - 当前工作区仍为脏工作区（70 个文件级别变更），不能直接视为候选发布版本。
 - 本轮已修复 P1-01/P1-02：申请明细主单字段改为只读，未实现的申请单嵌套明细更新明确返回校验错误；V2/V3 全量基准导入在写入前阻断仍有活动状态、预占、维修、耗材持有余额或未归还借用的缺失对象。
 - P1-03（工作区、Git 基线与 NUC release 的候选版本追溯）仍未完成；本轮未构建候选包、未部署。详细证据、测试记录、六视角评审和下一步顺序见 `REVIEW_REPORT.md` 顶部的 2026-11-17 章节。
@@ -15,7 +15,7 @@
 ### 2026-11-17 P1 修复验证
 
 - 专项测试：`27/27` 通过，覆盖伪造嵌套 `request` 不得跨申请单写入、草稿携带 `lines` 的 PUT/PATCH 明确拒绝、资产基准缺失状态/预占/维修阻断、耗材基准缺失且有个人借用余额/未归还借用阻断，以及失败时不产生部分写入。
-- 自动化全量：`540/540` 通过，跳过 8 项 PostgreSQL 专项；未执行 NUC PostgreSQL 并发、真实浏览器/设备、ZT610 真机走纸和公网链路复核。
+- 自动化全量：`551/551` 通过，跳过 8 项 PostgreSQL 专项；未执行 NUC PostgreSQL 并发、真实浏览器/设备、ZT610 真机走纸和公网链路复核。
 - 代码实现、自动化通过、现场验收、部署仍分别记录；本轮只有前两项完成。
 
 ## Current phase
@@ -74,9 +74,10 @@
 
 ### Three version states
 
-- Git 已提交基线：`e3307fea202a6a482542bf2e4762df78058bac13`，短 revision `e3307fe`，最后提交为 `docs: 归档小程序，同步 PWA 收口进展与版本一致性`。此前基线 `1901c85` 之后的全部改动已分批落为 10 个本地提交（**未 push**）：chore 忽略临时目录 → accounts 账号治理 → common 审计与权限 → workflow 审批分离 → inventory 搜索/导入 → 打印 ZPL 位图 → PWA 图标与移动端 → 测试补充 → deploy 隧道与 Nginx → docs 归档。
-- 本地未提交工作区：**干净**（提交后 `git status --short` 为空）。提交前后各跑一次全量测试，均 `540/540` 通过，确认提交内容无遗漏、无 CRLF 转换导致的内容漂移。
-- NUC 实际运行 release：`20261117-152941-1901c85-dirty-10df922f6818`，source revision `1901c85`，`working_tree_dirty=true`，部署时间 `2026-11-17T15:29:47+08:00`。**注意：线上 release 仍标记 source revision `1901c85` 且 dirty，但代码内容与本地 `e3307fe` 一致**（部署包在提交前构建，工作区内容未变）。下次部署会生成以 `e3307fe` 为 source revision 的干净 release。部署地址 `192.168.123.101`；服务器 PostgreSQL、Gunicorn、Nginx、Cloudflare Tunnel 和业务数据均未清理。
+- Git 已提交基线：`c05db869f5bd3df93cc1cd8491001f7475a9ae6e`，短 revision `c05db86`，最后提交为 `fix: 修复导出公式注入、盘点扫码归一化与耗材歧义解析`。自旧基线 `1901c85` 起共 **12 个本地提交（未 push）**：chore 忽略临时目录 → accounts 账号治理 → common 审计与权限 → workflow 审批分离 → inventory 搜索/导入 → 打印 ZPL 位图 → PWA 图标与移动端 → 测试补充 → deploy 隧道与 Nginx → docs 归档 → docs 基线记录 → **P1 修复**。
+- 本地未提交工作区：**干净**（`git status --short` 为空）。P1 修复前后各跑一次全量测试，均通过。
+- NUC 实际运行 release：`20261117-162436-c05db86`，source revision `c05db869f5bd...`，`working_tree_dirty=false`，部署时间 `2026-11-17T16:26:15+08:00`。**版本标记与本地 HEAD 完全对齐**。部署地址 `192.168.123.101`；服务器 PostgreSQL、Gunicorn、Nginx、Cloudflare Tunnel 和业务数据均未清理。
+- 三个 P1 修复已**在生产环境实跑验证**：导出公式注入（`=cmd|'/c calc'!A1` 被转义为文本）、盘点归一化（`WMS2：A：AST-1` → `WMS2:A:AST-1`，真实资产带尾随换行仍可解析）、耗材编码优先解析。
 
 > 版本读取注意：权威文件是 `/opt/after-sales-warehouse/current/release-info`（随 release 目录走）。同一目录下的 `/opt/after-sales-warehouse/current-release` 是 2026-11-06 遗留的陈旧文件（仍写着 `release_version=20261106-182713`、`source_revision=bbc187c`），读取它会得到错误版本，不要用它判断当前 release。
 
@@ -104,7 +105,7 @@
 
 - 用户确认使用域名 `https://cloudwarehouse.dpdns.org`，并提供真实 AppID `wx02c8193db5952f39`。
 - 手机已实测可访问 `https://cloudwarehouse.dpdns.org/health/`；这是域名入口可达证据，不等于小程序真机业务链路已验收。
-- 当前工作区后端以受控临时目录完成全量 Django 回归：**`540/540` 通过**、`8` 项按设计跳过；`manage.py check`、迁移漂移检查、`pip check`、`git diff --check` 均通过（2026-11-17 本轮实测）。
+- 当前工作区后端以受控临时目录完成全量 Django 回归：**`551/551` 通过**、`8` 项按设计跳过；`manage.py check`、迁移漂移检查、`pip check`、`git diff --check` 均通过（2026-11-17 本轮实测）。
 - 首次全量测试在 Windows 默认 TEMP 不可用时出现 `42` 个环境性错误，切换到仓库内受控临时目录后全部通过；不得将首次失败误写为业务失败。
 - 小程序已于 2026-11-17 归档暂停；此前已完成真实 AppID 与 HTTPS 域名配置、开发者工具预览和体验版上传，但这些记录只证明当时状态。
 - 手机端完整业务链路：公网 `https://cloudwarehouse.dpdns.org/login/` 已实测 200，用户手机 4G 可打开登录页；**iPhone Safari 添加到主屏幕的真实体验仍未验收**（见 P2-01）。
@@ -136,7 +137,7 @@ Nginx 已开 gzip（`deploy/ubuntu22/nginx-after-sales-warehouse.conf`）；Logo
 - **通知轮询降频**：未读数轮询从 30 秒改为 120 秒，且 `document.hidden` 时跳过、切回前台立即补一次。此前访问日志 2349 条请求中 931 条是这一个接口。
 - **停用账号登录提示**：改为「该账号已停用，无法登录。如需恢复使用请联系系统管理员。」仅在"用户名+密码都对、账号被停用"时显示；密码错误仍统一提示，不泄露账号是否存在。
 - 模板 `login.html` 改为渲染表单实际错误而非硬编码文案；`RateLimitedAuthenticationForm.error_messages` 统一了 `invalid_login`/`inactive` 文案，保持枚举防护。
-- 新增测试 `test_disabled_login.py`（4 例）、`test_logo_shrink.py`（3 例）。全量 **`540/540`** 通过，跳过 8 个 PostgreSQL 专项。
+- 新增测试 `test_disabled_login.py`（4 例）、`test_logo_shrink.py`（3 例）。全量 **`551/551`** 通过，跳过 8 个 PostgreSQL 专项。
 
 ### M15 (账号治理，上一轮)
 
