@@ -126,6 +126,32 @@ if DATABASES['default']['ENGINE'] == 'django.db.backends.sqlite3':
     }
     DATABASES['default']['CONN_MAX_AGE'] = 0
 
+# 连接复用：每请求重建 PostgreSQL 连接要额外 5~10ms，内网实测占比可观。
+# PostgreSQL 允许长连接，设为 60 秒；超过 60 秒的空闲连接由 Django 主动关闭，
+# 避免被数据库端或防火墙静默断开后拿到废连接。
+# SQLite 不支持长连接复用，保持 0（上面的分支已显式设过）。
+if DATABASES['default']['ENGINE'] != 'django.db.backends.sqlite3':
+    DATABASES['default']['CONN_MAX_AGE'] = int(os.getenv('DB_CONN_MAX_AGE', '60'))
+    DATABASES['default']['CONN_HEALTH_CHECKS'] = True
+
+# ---------------------------------------------------------------- 模板缓存
+#
+# 默认 Django 每个请求都会重新读取并编译模板文件；本项目 web_base.html 有 1200+ 行
+# 内联 CSS，重复解析开销明显。启用 cached loader 后模板只编译一次，进程内复用。
+# DEBUG 下必须关闭，否则改模板要重启才生效，开发体验变差。
+# DEBUG 下关闭模板缓存，否则改模板要重启才生效。
+# 注意：一旦在 OPTIONS 里定义 loaders，Django 不允许同时保留 APP_DIRS=True，
+# 所以启用缓存时必须把 APP_DIRS 置为 False，否则启动即报
+# "app_dirs must not be set when loaders is defined"。
+if not DEBUG:
+    TEMPLATES[0]['APP_DIRS'] = False
+    TEMPLATES[0]['OPTIONS']['loaders'] = [
+        ('django.template.loaders.cached.Loader', [
+            'django.template.loaders.filesystem.Loader',
+            'django.template.loaders.app_directories.Loader',
+        ]),
+    ]
+
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
     {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},

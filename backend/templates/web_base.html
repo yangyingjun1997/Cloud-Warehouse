@@ -206,6 +206,8 @@
     .notice { margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 5px; font-size: 12px; }
     .notice.success { color: #176e68; background: var(--teal-soft); border-color: #b9dcd7; }
     .notice.error { color: #a34e42; background: var(--coral-soft); border-color: #efc2ba; }
+    .notice.warning { color: #8a5a12; background: var(--amber-soft); border-color: #eccf9b; }
+    .notice a { color: inherit; font-weight: 650; }
     .network-status { display: inline-flex; align-items: center; min-height: 27px; padding: 0 8px; color: #176e68; background: var(--teal-soft); border: 1px solid #b9dcd7; border-radius: 4px; font-size: 10px; white-space: nowrap; }
     .network-status.offline { color: #986319; background: var(--amber-soft); border-color: #e8cd9b; }
     .scanner-status { cursor: pointer; font: inherit; font-size: 10px; }
@@ -412,17 +414,57 @@
     .account-table td { vertical-align: top; }
     /* 默认只显示工号/部门/钉钉与权限摘要，点开才展开 11 项权限，
        否则每行都要占 2~3 行胶囊高度，一屏看不到几个账号。 */
-    .account-edit-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; color: var(--teal); background: var(--teal-soft); border: 1px solid #b9dcd7; border-radius: 5px; font-size: 11px; cursor: pointer; }
-    .account-edit-toggle::after { content: "▾"; font-size: 9px; }
-    .account-edit-toggle[aria-expanded="true"]::after { content: "▴"; }
-    .account-edit-body[hidden] { display: none; }
-    .account-edit-body { margin-top: 8px; }
-    .account-table th:nth-child(1) { width: 13%; }
-    .account-table th:nth-child(2) { width: 10%; }
-    .account-table th:nth-child(3) { width: 20%; }
-    .account-table th:nth-child(4) { width: 45%; }
-    .account-table th:nth-child(5) { width: 12%; }
+    .account-table th:nth-child(1) { width: 22%; }
+    .account-table th:nth-child(2) { width: 14%; }
+    .account-table th:nth-child(3) { width: 14%; }
+    .account-table th:nth-child(4) { width: 10%; }
+    .account-table th:nth-child(5) { width: 40%; }
     .account-meta { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
+    .account-row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .account-row-actions .button { min-height: 30px; padding: 0 9px; font-size: 11px; }
+
+    /* ── 账号编辑弹窗 ───────────────────────────────────────────────────
+       权限胶囊、部门、钉钉 ID 全部收进原生 <dialog>，避免展开时把表格行撑高。
+       dialog 自带背板与 Esc 关闭，不需要额外依赖。 */
+    .account-dialog {
+      width: min(100% - 32px, 620px);
+      max-height: min(86vh, 720px);
+      padding: 0;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+      box-shadow: 0 24px 64px rgba(20, 45, 52, .28);
+      overflow: hidden;
+    }
+    .account-dialog::backdrop { background: rgba(20, 40, 46, .45); }
+    .account-dialog-form { display: flex; flex-direction: column; max-height: inherit; }
+    .account-dialog-head {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+      padding: 18px 20px 14px; border-bottom: 1px solid var(--line);
+    }
+    .account-dialog-head h2 { margin: 0; font-size: 16px; }
+    .account-dialog-head p { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .account-dialog-close {
+      flex: 0 0 auto; width: 28px; height: 28px; padding: 0;
+      color: var(--muted); background: transparent; border: 1px solid var(--line);
+      border-radius: 5px; font-size: 16px; line-height: 1; cursor: pointer;
+    }
+    .account-dialog-close:hover { color: var(--ink); background: var(--canvas); }
+    .account-dialog-body { flex: 1 1 auto; padding: 16px 20px; overflow-y: auto; }
+    .account-dialog-block + .account-dialog-block { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
+    .account-dialog-block h3 { margin: 0 0 10px; color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+    .account-dialog-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .account-dialog-grid .form-field input, .account-dialog-grid .form-field select { min-height: 34px; font-size: 12px; }
+    .account-dialog-hint { margin: 10px 0 0; color: var(--muted); font-size: 11px; }
+    .account-dialog-foot {
+      display: flex; justify-content: flex-end; gap: 8px;
+      padding: 14px 20px; border-top: 1px solid var(--line); background: var(--canvas);
+    }
+    @media (max-width: 760px) {
+      .account-dialog { width: calc(100% - 16px); max-height: 90vh; }
+      .account-dialog-grid { grid-template-columns: 1fr; }
+      .account-dialog-head, .account-dialog-body, .account-dialog-foot { padding-left: 14px; padding-right: 14px; }
+    }
     .account-role-form { flex-wrap: wrap; align-items: center; }
     .account-role-form .permission-choices { flex: 1 1 100%; }
     .dingtalk-input { min-height: 32px; min-width: 150px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 5px; font-size: 11px; }
@@ -968,7 +1010,7 @@
       {% elif module_purchase %}
         <nav class="module-tabs" aria-label="采购与报表">{% if global_can_manage_inventory %}{% nav_active 'replenishment_suggestions' 'purchase_draft_list' 'purchase_draft_detail' 'purchase_draft_edit' as tab_drafts %}<a class="module-tab {% if tab_drafts %}active{% endif %}" href="{% url 'purchase_draft_list' %}">采购申请</a>{% endif %}{% if global_can_manage_inventory or global_can_execute_inventory %}{% nav_active 'purchase_order_list' 'purchase_order_detail' as tab_orders %}<a class="module-tab {% if tab_orders %}active{% endif %}" href="{% url 'purchase_order_list' %}">采购订单</a>{% endif %}{% if global_can_view_reports %}{% nav_active 'report_dashboard' as tab_reports %}<a class="module-tab {% if tab_reports %}active{% endif %}" href="{% url 'report_dashboard' %}">报表中心</a>{% nav_active 'stale_inventory_report' as tab_stale %}<a class="module-tab {% if tab_stale %}active{% endif %}" href="{% url 'stale_inventory_report' %}">呆滞库存</a>{% nav_active 'supplier_price_history' as tab_prices %}<a class="module-tab {% if tab_prices %}active{% endif %}" href="{% url 'supplier_price_history' %}">价格历史</a>{% nav_active 'supplier_reconciliation' as tab_reconciliation %}<a class="module-tab {% if tab_reconciliation %}active{% endif %}" href="{% url 'supplier_reconciliation' %}">采购到货</a>{% endif %}</nav>
       {% endif %}
-      <div class="content">{% if messages %}{% for message in messages %}<div class="notice {{ message.tags }}">{{ message }}</div>{% endfor %}{% endif %}{% block content %}{% endblock %}</div>
+      <div class="content">{% if messages %}{% for message in messages %}<div class="notice {{ message.tags }}">{{ message }}</div>{% endfor %}{% endif %}{% if global_domain_alert %}<div class="notice {{ global_domain_alert.level }}" role="status"><strong>域名续费提醒</strong>　{{ global_domain_alert.message }}{% if global_domain_alert.domain_name %}（{{ global_domain_alert.domain_name }}，到期日 {{ global_domain_alert.expiry_date|date:'Y-m-d' }}）{% endif %}{% if global_user_is_system_admin %}　<a href="{% url 'system_settings' %}">去设置到期日</a>{% endif %}</div>{% endif %}{% if global_incomplete_profile_count %}<div class="notice warning" role="status"><strong>账号资料待补全</strong>　有 {{ global_incomplete_profile_count }} 个启用账号缺少中文名，列表里只能显示拼音账号。　<a href="{% url 'permission_management' %}">去补全</a></div>{% endif %}{% block content %}{% endblock %}</div>
     </main>
   </div>
   <nav class="mobile-bottom-nav" aria-label="移动端主导航">
@@ -1247,14 +1289,21 @@
   })();
   // 账号编辑区默认折叠，点"编辑权限"才展开，避免每行占两三行高度。
   (() => {
-    document.querySelectorAll('.account-edit-toggle').forEach((button) => {
+    // 账号编辑弹窗：用原生 <dialog> 的 showModal，Esc 与背板点击都能关闭。
+    document.querySelectorAll('.account-edit-open').forEach((button) => {
       button.addEventListener('click', () => {
-        const form = document.getElementById(button.dataset.target);
-        if (!form) return;
-        const open = form.hidden;
-        form.hidden = !open;
-        button.setAttribute('aria-expanded', open ? 'true' : 'false');
-        button.textContent = open ? '收起' : '编辑权限';
+        const dialog = document.getElementById(button.dataset.dialog);
+        if (!dialog) return;
+        dialog.showModal();
+      });
+    });
+    document.querySelectorAll('.account-dialog').forEach((dialog) => {
+      dialog.querySelectorAll('.account-dialog-close').forEach((btn) => {
+        btn.addEventListener('click', () => dialog.close());
+      });
+      // 点击背板关闭：dialog 本身覆盖整屏，事件目标是 dialog 时才视为点背板
+      dialog.addEventListener('click', (event) => {
+        if (event.target === dialog) dialog.close();
       });
     });
   })();

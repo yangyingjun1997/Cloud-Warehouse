@@ -68,7 +68,8 @@
       <div id="selection-warning" class="selection-warning" hidden>红色物品与当前出入库类型不匹配，请移除或切换类型后再执行。</div>
 
       <div class="form-grid request-form-grid">
-        <div class="form-field" data-types="borrow,issue,sale" data-required-types="borrow,issue,sale"><label for="recipient_name">实际接收人 <span class="required">*</span></label><input id="recipient_name" name="recipient_name" value="{{ request.POST.recipient_name }}" maxlength="120"></div>
+        <div class="form-field" data-types="borrow,issue,sale" data-required-types="borrow,issue,sale"><label for="recipient_select">实际使用人/接收人 <span class="required">*</span></label><select id="recipient_select" name="recipient_id"><option value="">请选择系统内账号</option>{% for person in recipient_choices %}<option value="{{ person.id }}" {% if request.POST.recipient_id == person.id|stringformat:'s' %}selected{% endif %}>{{ person|person_label }}</option>{% endfor %}</select><label class="checkbox-inline"><input type="checkbox" id="recipient_external" name="is_external_recipient" value="1" {% if request.POST.is_external_recipient %}checked{% endif %}> 接收人不在系统内（手工填写姓名）</label></div>
+        <div class="form-field" data-types="borrow,issue,sale" data-required-types="borrow,issue,sale" id="recipient-name-field" hidden><label for="recipient_name">接收人姓名 <span class="required">*</span></label><input id="recipient_name" name="recipient_name" value="{{ request.POST.recipient_name }}" maxlength="120"></div>
         <div class="form-field" data-types="borrow,issue,sale" data-required-types="borrow,issue,sale"><label for="recipient_phone">联系电话 <span class="required">*</span></label><input id="recipient_phone" name="recipient_phone" type="tel" value="{{ request.POST.recipient_phone }}" maxlength="32"></div>
         <div class="form-field" data-types="borrow,issue,sale"><label for="customer_ref">客户资料</label><select id="customer_ref" name="customer_ref"><option value="">未选择客户资料</option>{% for customer in customers %}<option value="{{ customer.id }}" data-name="{{ customer.name }}" {% if request.POST.customer_ref == customer.id|stringformat:'s' %}selected{% endif %}>{{ customer.name }}（{{ customer.code }}）</option>{% endfor %}</select></div>
         <div class="form-field" data-types="borrow,issue,sale"><label for="recipient_company">使用部门/客户单位</label><input id="recipient_company" name="recipient_company" value="{{ request.POST.recipient_company }}" maxlength="120" placeholder="未建档时可手工填写"></div>
@@ -105,6 +106,21 @@
       const searchType = document.getElementById('search-request-type');
       const selectedItems = document.getElementById('selected-items');
       const empty = document.getElementById('selection-empty');
+
+      // 接收人二选一：勾选「不在系统内」才显示手工姓名输入框，
+      // 否则用下拉框里的账号（与新建申请表单逻辑一致）。
+      const externalBox = document.getElementById('recipient_external');
+      const nameField = document.getElementById('recipient-name-field');
+      const nameInput = document.getElementById('recipient_name');
+      const recipientSelect = document.getElementById('recipient_select');
+      function syncRecipientFields() {
+        const external = Boolean(externalBox && externalBox.checked);
+        if (nameField) nameField.hidden = !external;
+        if (nameInput) nameInput.required = external;
+        if (recipientSelect) recipientSelect.required = !external;
+      }
+      if (externalBox) externalBox.addEventListener('change', syncRecipientFields);
+      syncRecipientFields();
       const count = document.getElementById('selected-count');
       const warning = document.getElementById('selection-warning');
       const queryInput = document.getElementById('item-query');

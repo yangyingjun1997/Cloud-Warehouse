@@ -220,6 +220,13 @@ class SiteSettings(models.Model):
     logo = models.ImageField('站点 Logo', upload_to='branding/', blank=True, null=True)
     label_logo = models.ImageField('标签彩色 Logo', upload_to='branding/', blank=True, null=True)
     label_logo_mono = models.ImageField('标签单色 Logo', upload_to='branding/', blank=True, null=True)
+    # 域名到期提醒：域名每年续费一次，容易忘。填了到期日之后，
+    # 剩余 30 天起在页面顶部提示，10 天内升级为醒目警告。
+    domain_expiry_date = models.DateField(
+        '域名到期日', blank=True, null=True,
+        help_text='填写后，到期前 30 天会在页面顶部提醒续费。',
+    )
+    domain_name = models.CharField('域名', max_length=120, blank=True, default='')
     updated_by = models.CharField('最后修改人', max_length=64, blank=True, default='')
 
     class Meta:

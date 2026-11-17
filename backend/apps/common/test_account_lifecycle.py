@@ -75,7 +75,7 @@ class EmployeeNoOptionalTests(TestCase):
         response = self.client.post('/permissions/', {
             'action': 'create_user',
             'username': 'no-emp-no',
-            'password': 'password123',
+            'password': 'Wms9#Pass',
             'employee_no': '',
             'permissions': ['warehouse_entry'],
         })
@@ -89,7 +89,7 @@ class EmployeeNoOptionalTests(TestCase):
             self.client.post('/permissions/', {
                 'action': 'create_user',
                 'username': f'no-emp-{index}',
-                'password': 'password123',
+                'password': 'Wms9#Pass',
                 'employee_no': '',
                 'permissions': ['warehouse_entry'],
             })
@@ -108,7 +108,7 @@ class AccountLifecycleAuditTests(TestCase):
         self.client.post('/permissions/', {
             'action': 'create_user',
             'username': 'created-audit',
-            'password': 'password123',
+            'password': 'Wms9#Pass',
             'permissions': ['warehouse_outbound'],
         })
         log = OperationAuditLog.objects.filter(action='account_created').first()

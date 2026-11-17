@@ -1592,7 +1592,7 @@ class DashboardAndAdminTests(TestCase):
         response = self.client.post('/permissions/', {
             'action': 'create_user',
             'username': 'new-employee',
-            'password': 'password123',
+            'password': 'Wms9#Pass',
             'employee_no': 'EMP-001',
             'phone': '13800138000',
             'role': 'employee',
@@ -1611,7 +1611,7 @@ class DashboardAndAdminTests(TestCase):
         response = self.client.post('/permissions/', {
             'action': 'purge_data',
             'confirmation': '清空所有业务数据',
-            'password': 'password123',
+            'password': 'Wms9#Pass',
         })
         self.assertRedirects(response, '/permissions/')
         self.assertTrue(Asset.objects.exists())
@@ -1623,7 +1623,7 @@ class DashboardAndAdminTests(TestCase):
         response = self.client.post('/permissions/', {
             'action': 'purge_data',
             'confirmation': '',
-            'password': 'password123',
+            'password': 'Wms9#Pass',
         })
         self.assertRedirects(response, '/permissions/')
         self.assertTrue(Asset.objects.exists())
@@ -1646,7 +1646,7 @@ class DashboardAndAdminTests(TestCase):
         response = self.client.post('/permissions/', {
             'action': 'create_user',
             'username': 'no-department-user',
-            'password': 'password123',
+            'password': 'Wms9#Pass',
             'employee_no': 'EMP-NO-DEPARTMENT',
             'department_id': '',
             'permissions': ['warehouse_entry'],
@@ -1668,16 +1668,33 @@ class DashboardAndAdminTests(TestCase):
         self.assertFalse(User.objects.filter(username='seven-password-user').exists())
 
     def test_create_employee_accepts_eight_character_password(self):
+        """8 位密码可以建号，但必须通过强度校验（纯数字 12345678 会被拒绝）。"""
         admin = User.objects.create_superuser(username='eight-password-admin', password='password123', email='')
         self.client.force_login(admin)
         response = self.client.post('/permissions/', {
             'action': 'create_user',
             'username': 'eight-password-user',
-            'password': '12345678',
+            'password': 'Wms8#kQp',
             'employee_no': 'EMP-EIGHT-PASSWORD',
         })
         self.assertRedirects(response, '/permissions/')
-        self.assertTrue(User.objects.get(username='eight-password-user').check_password('12345678'))
+        self.assertTrue(User.objects.get(username='eight-password-user').check_password('Wms8#kQp'))
+
+    def test_create_employee_rejects_weak_password(self):
+        """2026-11-17 起建号走密码强度策略：纯数字、常见弱口令都要挡住。"""
+        admin = User.objects.create_superuser(username='weak-password-admin', password='password123', email='')
+        self.client.force_login(admin)
+        for weak in ('12345678', 'password123', 'aaaaaaaa'):
+            with self.subTest(password=weak):
+                self.client.post('/permissions/', {
+                    'action': 'create_user',
+                    'username': f'weak-user-{weak[:4]}',
+                    'password': weak,
+                })
+                self.assertFalse(
+                    User.objects.filter(username=f'weak-user-{weak[:4]}').exists(),
+                    f'{weak} 不应建号成功',
+                )
 
     def test_system_administrator_can_delete_non_superuser_account(self):
         admin = User.objects.create_superuser(username='delete-admin', password='password123', email='')

@@ -63,6 +63,7 @@ from apps.common.permissions import (
 from apps.common.security_audit import record_login_event
 from apps.common.utils import generate_temporary_password as _generate_temporary_password
 from apps.common.utils import sanitize_csv_row as _csv_safe
+from apps.accounts.password_policy import validate_password_strength
 from apps.accounts.models import AccountRequest, AccountSession, Department, UserProfile
 from apps.accounts.username_services import suggest_username
 from apps.accounts.session_services import (
@@ -1162,8 +1163,8 @@ def permission_management(request):
             dingtalk_user_id = request.POST.get('dingtalk_user_id', '').strip()
             if not username or not password:
                 messages.error(request, '请填写登录账号和初始密码。')
-            elif len(password) < 8:
-                messages.error(request, '初始密码至少需要 8 个字符。')
+            elif (password_error := validate_password_strength(password, username)):
+                messages.error(request, f'初始密码不符合要求：{password_error}')
             elif not permissions.issubset(PERMISSION_GROUPS):
                 messages.error(request, '请选择有效的业务权限。')
             elif User.objects.filter(username=username).exists():
@@ -4074,6 +4075,8 @@ def quick_inventory_process(request):
         'customers': Customer.objects.filter(is_active=True).order_by('name'),
         'projects': Project.objects.filter(is_active=True).select_related('customer').order_by('name'),
         'work_orders': WorkOrder.objects.filter(is_active=True).select_related('project').order_by('name'),
+        # 与新建申请保持一致的接收人选择：优先从系统内账号选，外部人员才手工填姓名
+        'recipient_choices': User.objects.filter(is_active=True).order_by('first_name', 'username'),
         'user_can_use_admin': is_system_administrator(request.user), 'user_is_operator': True,
         'user_is_system_admin': is_system_administrator(request.user),
         'user_role_label': _user_role_label(request.user, True, is_system_administrator(request.user)),

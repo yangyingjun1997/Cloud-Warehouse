@@ -30,3 +30,15 @@ sudo -u postgres pg_restore --list "$TARGET/database.dump" >/dev/null
 tar -tzf "$TARGET/media.tar.gz" >/dev/null
 find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +"$RETENTION_DAYS" -exec rm -rf {} +
 echo "备份完成并通过完整性检查：$TARGET"
+
+# 保留策略执行完后再统计，反映清理后的真实占用
+KEPT_COUNT="$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '20*' | wc -l)"
+DUMP_SIZE="$(du -h "$TARGET/database.dump" | cut -f1)"
+MEDIA_SIZE="$(du -h "$TARGET/media.tar.gz" | cut -f1)"
+
+# 成功通知：只在每周一播报，避免每天一条噪音，同时留下「备份还在跑」的证据。
+# 失败仍然每次都报（上面的 trap）。
+if [[ "$(date +%u)" == "1" ]] && [[ -x "$NOTIFIER" ]]; then
+  "$NOTIFIER" '售后仓库备份周报' "主机：$(hostname)  \n时间：$(date --iso-8601=seconds)  \n本次备份：$TARGET  \n数据库：$DUMP_SIZE  \n媒体文件：$MEDIA_SIZE  \n当前保留：$KEPT_COUNT 份（保留 ${RETENTION_DAYS} 天）" || true
+fi
+

@@ -47,6 +47,16 @@
           {{ form.subtitle }}{{ form.subtitle.errors }}
         </div>
         <div class="form-field">
+          <label for="{{ form.domain_name.id_for_label }}">对外域名</label>
+          {{ form.domain_name }}{{ form.domain_name.errors }}
+          <small class="field-help">例如 cloudwarehouse.dpdns.org，仅用于到期提醒展示。</small>
+        </div>
+        <div class="form-field">
+          <label for="{{ form.domain_expiry_date.id_for_label }}">域名到期日</label>
+          {{ form.domain_expiry_date }}{{ form.domain_expiry_date.errors }}
+          <small class="field-help">填写后，到期前 30 天在页面顶部提醒；10 天内转为醒目警告。</small>
+        </div>
+        <div class="form-field">
           <label for="{{ form.logo.id_for_label }}">站点 Logo</label>
           {{ form.logo }}{{ form.logo.errors }}
           <small class="field-help">PNG/JPG，不超过 2 MB；留空则继续使用默认图标。</small>

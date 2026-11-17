@@ -77,7 +77,13 @@ class SiteSettingsForm(forms.ModelForm):
 
     class Meta:
         model = SiteSettings
-        fields = ['site_name', 'subtitle', 'logo', 'label_logo', 'label_logo_mono']
+        fields = [
+            'site_name', 'subtitle', 'logo', 'label_logo', 'label_logo_mono',
+            'domain_name', 'domain_expiry_date',
+        ]
+        widgets = {
+            'domain_expiry_date': forms.DateInput(attrs={'type': 'date'}),
+        }
 
     def clean_logo(self):
         return _shrink_logo(_validate_logo(self.cleaned_data.get('logo')))
