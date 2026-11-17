@@ -10,6 +10,25 @@
 
 旧计划、旧进度和旧验收报告不得重新引入根目录；历史结论与上述文件冲突时，以上述文件为准。
 
+## Handoff protocol
+
+任何接力 agent 必须先读取本文件和五个权威文件，再开始搜索或编辑。进入任务后的第一条状态记录必须明确以下三种版本，不得混称：
+
+1. Git 已提交基线：`git rev-parse HEAD` 的 revision。
+2. 本地未提交工作区：`git status --short` 列出的文件及其是否属于本轮任务。
+3. NUC 实际运行 release：读取服务器 `/opt/after-sales-warehouse/current/release-info`；无法连接时写“未复核”。
+
+接力 agent 必须从 `PROJECT_STATUS.md` 的“Rapid handoff”开始，沿 `DEVELOPMENT_PLAN.md` 当前阶段继续，不得依据聊天记录或旧报告自行恢复已废弃方案。完成一个任务后，必须同时更新状态、计划（若范围或验收改变）和变更记录，并写明代码实现、自动化通过、现场验收和部署是否分别完成。
+
+当前调试数据库和代码保护规则：
+
+- NUC 地址固定为 `192.168.123.101`，数据库是 PostgreSQL；任何部署不得清库、重建、重导 11.2 或覆盖 `/srv/after-sales-warehouse/app.env`。
+- 本机默认使用 `runtime-data/db.sqlite3`；不要直接操作 NUC 数据库，也不要把本机测试数据当成服务器数据。
+- 当前最新本地工作区包含未提交改动；除非用户明确要求提交，不得替他人提交、回退或覆盖这些文件。
+- 新功能必须先登记开发计划；P1 阻断项未关闭前不得顺手加入无关功能。
+- 发布前必须先做 PostgreSQL 快照；部署失败停止并保留日志，禁止反复覆盖目录碰运气。
+- 不得把密码、Webhook、Secret、数据库口令或完整环境文件写入代码、日志、报告、候选包或聊天。
+
 ## Mandatory workflow
 
 ### Source-of-truth and progress discipline
@@ -72,5 +91,5 @@
 
 - 当前交付：响应式 Web/PWA + Django + PostgreSQL + Nginx + systemd。
 - 微信小程序不在当前开发清单，不因 Web 改动同步开发小程序。
-- 当前优先级：修复批量审批 UUID、中文输入法 HID 扫码、ZT610 60×40 mm 走纸和打印线程生命周期；随后统一依赖锁与文档，再恢复 NUC 部署冒烟。
+- 当前优先级：① PWA/移动端收口（iPhone Safari 添加到主屏幕、扫码去重、日期筛选对齐均已修复）；② 遗留 P1：导出公式注入（4 处）、盘点 `_resolve_asset` 归一化、`_resolve_stock` 歧义保护、`/me` 权限谓词不一致、`warehouse_setup` 缺 `@login_required`；③ 邮件摘要（免费 SMTP 方案，待用户确认服务商）；④ 统一依赖锁与文档。
 - 新功能若不属于 `DEVELOPMENT_PLAN.md` 当前阶段，先记录到 `PROJECT_STATUS.md` 的候选项并与用户确认。

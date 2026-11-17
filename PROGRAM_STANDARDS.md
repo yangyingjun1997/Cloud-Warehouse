@@ -8,6 +8,7 @@
 - Nginx 负责 80/443 入口，Gunicorn 仅监听 `127.0.0.1:8000`。
 - systemd 管理 Web 服务、备份、健康检查、预警和清理任务。
 - 版本状态必须分为 commit、working tree 和 deployed release；脏工作区内容不得冒充 Git 提交版本或已部署版本。
+- 接力开发必须先阅读 `AGENTS.md` 的 Handoff protocol 和 `PROJECT_STATUS.md` 的 Rapid handoff；不得用聊天记录、旧报告或历史部署记录替代当前状态。
 
 ## Product structure
 
@@ -75,6 +76,8 @@
 - 依赖锁文件必须是 UTF-8/ASCII 文本且能在全新 Python 3.12 环境安装；旧开发环境通过不能替代锁定依赖回归。
 - ZT610 真机验收至少连续打印 10 张物理标签，测量首末张走纸、间隙定位、累计漂移、二维码识别率和中文清晰度；多走一张或多走约 10 mm 均判定失败。
 - 功能完成状态必须记录测试命令、结果、未执行项和现场验收状态；硬件不可用或服务器不可达时只能标记 blocked/unverified。
+- 测试进程被中断、环境缺少临时目录或命令无最终退出结果时，状态只能写 interrupted/unverified，不能写 passed。
+- 文档必须区分“代码已写”“专项通过”“全量通过”“现场验收通过”“已部署”五个状态；一个状态不得推导出另一个状态。
 - 正式构建默认要求 Git 工作区干净；紧急脏工作区构建必须显式使用 `-AllowDirty`，版本号包含 `dirty` 和源文件内容哈希，禁止伪装成提交版本。
 - 服务器 `/opt/after-sales-warehouse/current/release-info` 必须记录发布版本、完整/短 Git revision、脏工作区状态和源内容 SHA-256；缺少 manifest 的部署必须标记为未版本化。
 - 服务器更新必须保留数据库、媒体和 `/srv/after-sales-warehouse/app.env`；候选版本在独立 release 中完成依赖、检查和静态文件，再原子切换 `current`，健康失败恢复上一指针。

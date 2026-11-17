@@ -4,11 +4,62 @@
 
 ## Unreleased
 
+### Review
+
+- 2026-11-17：完成复盘后的 P1 修复。申请明细主单字段改为只读，申请单更新携带 `lines` 明确拒绝；V2/V3 全量基准导入在写入前阻断活动资产、预占、未完成维修、耗材持有余额和未归还借用，避免整批导入产生库存破坏。新增专项 `27/27`，Django 全量 `536/536` 通过、跳过 8 项 PostgreSQL 专项；`check`、迁移漂移、`pip check`、`git diff --check` 通过。本轮未连接 NUC、未部署、未修改服务器数据库。
+
 ### Planned
 
 - M9 的资产台账物品类型聚合视图、只读测试数据候选报告和账号策略收口已实现并完成本机专项验证；本条不表示服务器数据已清理或第三方登录已实现。
 
 ### Added
+
+- 2026-11-17：启动 M8 微信小程序 HTTPS 体验版接入。目标地址为 `https://cloudwarehouse.dpdns.org`，AppID 为用户提供的 `wx02c8193db5952f39`；小程序源码已完成地址、AppID 和合法域名校验切换，尚未上传体验版。
+- 2026-11-17：用户已完成微信开发者工具真机预览和体验版上传。手机完整业务链路尚未回归，admin 小程序当前仅提供现场端的工作台、申请与审批、通知，Web 后台管理能力不在本里程碑范围内。
+
+- 2026-11-17：工作区脏候选 release `20261117-113500-1901c85-dirty-bcc703adf026` 已部署到 NUC。部署前 PostgreSQL 快照为 `pre-deploy-20261117_113812`；无待执行迁移，业务、Nginx、PostgreSQL、Cloudflare Tunnel 均 active；补登记 `cloudwarehouse.dpdns.org` 到应用白名单和 Nginx。未清库、未重导、未修改服务器业务数据。
+
+- 2026-11-17：收口复盘。全量 `540/540` 通过（跳过 8 项 PG 专项）、`check`/迁移漂移/`pip check`/`git diff --check` 全通过；页面渲染冒烟 **32 页面 × 7 角色 = 224 组合零 5xx**；服务器四服务 active、迁移无待执行、8 个 timer 正常、PWA 图标与 manifest 全部 200、公网 `/login/` 与 `/health/` 200。清理约 86 MB 无用产物（dist 32 个历史包、2 个 11-06 归档共 71 MB、测试临时目录）。修正文档一致性：`PROJECT_STATUS.md` 的 release 从落后两个版本更新为 `10df922f6818`、测试基线 536→540、未提交改动口径更新为 121 项；`AGENTS.md` 当前优先级更新为 PWA 收口 → 遗留 P1 → 邮件摘要 → 依赖锁。
+- 2026-11-17：移动端 UI 与延迟修复并部署（release `20261117-151147-1901c85-dirty-9c91f97b8cef`）。① **模板注释泄漏**：`web_base.html` 用了跨行 `{# #}`，Django 只支持单行注释，导致注释原文渲染到每页顶部；改为 `{% comment %}` 并加测试锁定；② **日期输入框对不齐**：全局 `min-height:38px` 压过局部 `height:32px`，且 Safari 日期控件原生更高；改为固定两行网格（label 16px + 控件 32px）+ `::-webkit-date-and-time-value` 归位，并把 `filter-compact` 样式从各模板提取到 `web_base.html` 全局，9 个带日期筛选页面同时生效；③ **按钮文字折叠**：`.button` 缺 `white-space: nowrap`；④ **布局错位**：`我的申请`/`我的借用` 的操作按钮从 `page-heading` 移出为独立 `page-actions` 行。全量 `540/540` 通过。
+- 2026-11-17：**公网延迟从 3.17s 降到 1.07s**。根因是 cloudflared 同时使用外接网卡的 IPv6 出口（`2606:4700::`，RTT 370ms 且抖动到 438ms），而 IPv4 边缘只有 198ms。通过 systemd `RestrictAddressFamilies=AF_INET AF_UNIX` 强制隧道只走 IPv4；用户随后拔掉外接 USB 网卡，路由进一步收敛到单条公司 WiFi，延迟稳定在 1.07–1.5s。移动热点方案最终未采用（运营商封 7844 端口）。
+- 2026-11-17：PWA 移动端修复并部署（release `20261117-142820-1901c85-dirty-6b038429c864`）。① **iOS 图标**：新增 `icon-180/192/512.png` 与 `icon-maskable-512.png`，manifest 改为提供 PNG（iOS 不读 SVG），`web_base.html` 与 `registration/login_base.html` 均补 `apple-touch-icon`、`apple-mobile-web-app-capable/status-bar-style/title`；② **扫码刷屏**：`scanner.js::record` 对「已存在」「未识别」不再追加列表行，去重窗口 1500ms→3000ms，提示语改为「请移开换下一个」；③ **移动端横向溢出**：表格 520px 硬宽度改为由 `.table-scroll` 内部消化，补 `html,body{overflow-x:hidden}` 与 `min-width:0` 兜底。新增 `test_pwa_meta.py`（3 例），全量 `539/539` 通过。
+- 2026-11-17：确认 iPhone PWA 必须用 **Safari** 添加到主屏幕：iOS 上 Chrome/Firefox 均被强制使用 WebKit，且只有 Safari 支持 `display: standalone` 独立窗口；Chrome iOS 只能加成带地址栏的书签。
+- 2026-11-17：**战略收敛：放弃微信小程序，专做 PWA。** `miniprogram/` 33 个文件移入 `docs/archive/miniprogram-paused-20261117/`，新增归档说明记录决策依据（六大需求 Web 端已全实现、双份维护成本高、小程序离线能力不优于 PWA、真机运行时校验未完成）。用户确认仓管员以 iPhone 为主、离线本期不做。`DEVELOPMENT_PLAN.md` 新增 M17「PWA 移动端收口」里程碑，Non-goals 同步更新。
+- 2026-11-17：完成四层回归并出报告（写入 `REVIEW_REPORT.md` 顶部新章节）：本机 Django 全量 **536/536** 通过（跳过 8 项 PG 专项）、`check`/迁移漂移/`pip check`/`git diff --check` 全通过；服务器 4 个服务 active、迁移无待执行、8 个 timer 正常；**Web 页面 31×7 角色 = 217 组合零 5xx**；公网 `https://cloudwarehouse.dpdns.org/login/` 200、健康检查正常。
+- 2026-11-17：本轮新识别 3 个 P2：iPhone PWA 缺 PNG 图标与 iOS 专用 meta（`manifest.webmanifest` 仅 SVG，iOS 不支持）、`warehouse_setup`/`warehouse_setup_edit` 缺 `@login_required` 导致未登录重定向链绕行且 `next` 丢失、`check --deploy` 的 4 个 HTTPS 警告缺架构说明（Cloudflare 终止 TLS，源站必须保持 HTTP）。无新增 P0/P1。
+- 2026-11-17：打通公网入口 `https://cloudwarehouse.dpdns.org`（Cloudflare Named Tunnel，隧道名 `warehouse-nuc`）。服务器新增 systemd 服务 `cloudflared.service`：`User=cloudflared`、token 通过 `--token-file` 读取（不出现在命令行与 ps 输出）、文件权限 `root:cloudflared 640`、开机自启。Cloudflare 侧配置 `Published application` 路由到 `http://localhost:80`；`ALLOWED_HOSTS`、`CSRF_TRUSTED_ORIGINS`、Nginx `server_name` 均已加入该域名。用户用手机 4G 实测可正常打开登录页；公司内网继续走原内网地址，不受影响。新增 `deploy/ubuntu22/cloudflared.service`。
+- 2026-11-17：网络隔离方案探索结论（**未采用**，脚本保留备查）：尝试用 network namespace 把外接 USB 无线网卡隔离给隧道专用，实测 **Linux 内核不允许 WiFi 网卡进入 netns**（`ip link set wlan0 netns xxx` 返回 `RTNETLINK answers: Invalid argument`，因 wireless phy 是全局对象）。改用 iptables `owner --uid-owner` + fwmark 策略路由可成功隔离并让 cloudflared 走出指定网卡，但**移动热点（运营商网络）封 7844、8080 等非标端口**，隧道无法建立，故最终仍走公司网。新增 `deploy/ubuntu22/tunnel-routing.sh`、`deploy/ubuntu22/tunnel-netns.sh` 备查。
+- 2026-11-17：修复标签打印客户端 ZPL 通道中文丢失：ZT610 内置字体（`^A0N`）不含中文字形，直接 `^FD` 输出中文会被打印机静默丢弃（表现为中文全没、数字字母仍在）。改为整页位图以 `^GFA` 嵌入、纸张边界仍由 `^PW`/`^LL` 锁定，兼顾中文正确与不多走纸。客户端 `BwtLabelClient.exe` 已重建（29.9 MB），新增回归断言确保中文字形真的渲染出像素。
+- 2026-11-17：发布构建脚本排除本地测试/审查临时目录，避免 `.test-tmp`、`.review-tmp` 等可再生输出进入部署包；仅完成本地脚本验证，尚未部署到 NUC。
+- 2026-11-16：完成 M11 台账视图状态隔离：类型汇总钻取到单件资产时使用一次性上下文，返回汇总页清除钻取类型条件；切换视图和清空条件保持当前视图。个人资料页增加仅用于尝试唤起本机钉钉客户端的 `dingtalk://` 入口，不自动修改绑定状态。专项 `7/7`、系统检查、迁移漂移检查和差异格式检查通过。
+- 2026-11-16：性能优化已部署（release `20261116-181751-1901c85-dirty-bb8da5de8be5`）。三项根因：① Nginx 未开 gzip，基础模板约 100 KB、zxing 库 395 KB 明文传输；② 站点 logo 是 566×530 的 79 KB PNG，却只显示在 34px 位置，且每页都加载；③ 通知未读数每 30 秒轮询一次，访问日志中 2349 条请求里 931 条是它。修复后：登录页 3130→1433 字节、zxing 395 KB→103 KB、logo 79.7 KB→16.7 KB；轮询改为 120 秒且页面在后台时跳过。同时在上传环节压缩 Logo（缩到 320px + 128 色量化，约降 79%），后续上传自动生效。
+- 2026-11-16：停用账号登录提示改为明确文案「该账号已停用，无法登录」。只有"用户名+密码都正确但账号已停用"时才显示该提示，密码错误时仍统一提示"用户名或密码不正确"，不泄露账号是否存在。
+- 2026-11-16：M15 账号治理已部署：release `20261116-174612-1901c85-dirty-14517796e138`。包含「停用/启用账号」、「工号改选填」、「申请表单精简为姓名+电话」、「中文名自动生成拼音账号」、「建号与提权补审计」、「导入未知模板不再 500」、「搜索深度上限」、「编辑权限按钮无反应修复」。三个新迁移（`accounts/0006`、`0007`、`common/0015`）均为纯新增/放宽约束。全量 `522/522` 通过、跳过 8 个 PostgreSQL 专项。
+- 2026-11-16：账号删除的正确姿势改为「停用」。此前任何做过一次操作（哪怕只是改自己中文名）的账号都会因 `OperationAuditLog.actor` 是 PROTECT 而永远无法删除，提示却写"已有受保护的业务记录"，容易误判。现新增停用（立即作废会话、保留全部历史引用、写 `account_disabled` 审计），并把删除失败文案明确指向停用。`OperationAuditLog` 增加 `actor_username`/`actor_display_name` 快照，`actor` 外键**保持 PROTECT**——数据库触发器 `warehouse_immutable_audit` 禁止对审计表做任何 UPDATE/DELETE，改 `SET_NULL` 会在删号时发 UPDATE 被拒（首次部署已实测拦下）。
+- 2026-11-16：员工工号改为选填（公司暂无统一工号体系，外包同事可能没有工号），保留唯一约束供将来对接 HR/钉钉；登录页申请开通账号不再要求填写工号和部门（申请人不知道系统内的部门名称，填了也是错的），去重键改为「姓名+电话」，部门由管理员建号时从字典选择。
+- 2026-11-16：新增 `apps/accounts/username_services.py`，按中文姓名用 pypinyin 自动生成登录账号（「杨俊杰」→ `yangjunjie`，重名追加 2/3/4…），权限页待开通申请列表直接展示建议账号。
+- 2026-11-16：补账号治理审计：`account_created`（建号及所分配权限）与 `account_permissions_updated`（提权/降权，含前后权限集合与 is_admin）此前完全缺失，现已写入。
+- 2026-11-16：修复导入未知 Excel 模板返回 500（V3/V2 嗅探均不匹配时 `summary` 未定义），改为提示"无法识别该 Excel 模板"并返回 200；修复布尔搜索解析器可被深嵌套括号打成 500（新增深度上限 16 并捕获 `RecursionError`）；修复权限页「编辑权限」按钮因 `data-target` 与表单 `id` 不一致而点击无反应。
+- 2026-11-16：标签打印 ZPL 通道中文丢失修复：ZT610 内置字体（`^A0N`）没有中文字形，直接 `^FD` 输出中文会被打印机静默丢弃。改为整页位图以 `^GFA` 嵌入、纸张边界仍由 `^PW`/`^LL` 锁定，兼顾"中文正常"与"不越界多走纸"；客户端 `BwtLabelClient.exe` 已重建（29.9 MB），新增回归断言确保中文真的渲染出像素。
+- 2026-11-16：`label-printer` 账号设为不可删除（打印客户端专用 API 账号，删除会导致所有打印机停止工作且报错不直观）。
+- 2026-11-16：M14 已部署到 NUC：release `20261116-163159-1901c85-dirty-5218c11d2586`（source `1901c85`，dirty）。包含两个纯新增迁移（`accounts/0005_accountrequest`、`workflow/0020_workflowrequest_recipient_and_external_flag`），部署后 `showmigrations` 确认均已应用。服务、健康检查、`/login/`、`/login/request-account/` 均正常；资产 636、耗材 31、账号 5、申请 0 与部署前一致，新表 0 行。全量回归 `488/488` 通过、跳过 8 个 PostgreSQL 专项。
+- 2026-11-16：人员显示统一为「中文姓名（登录账号）」，覆盖申请、采购、审批、盘点、转换、导入、台账流水、审计日志、资产生命周期等 14 个模板；新增 `person_label` 过滤器与 `person` 标签。`username` 仍是唯一真相且不可变，改名不影响历史单据归属。
+- 2026-11-16：权限页重排：11 项权限改为可换行胶囊、勾选即时变色；角色列只显示权限项数量，消除权限名拉长导致的整行变形；表格改为固定列宽。
+- 2026-11-16：管理员可为账号重置密码，生成 12 位临时密码（`secrets`，去除易混淆字符），立即作废该账号全部登录会话并写 `account_password_reset` 审计；超级管理员密码仍只能走服务器运维。
+- 2026-11-16：登录页新增「申请开通账号」入口与 `AccountRequest` 模型；权限页新增待开通申请列表，可标记已建号或驳回。**不开放自助注册**，提交申请不会创建账号。
+- 2026-11-16：审批职责分离：通知范围从"全部仓库操作员"收窄为具备审批权限的账号；指定审批人下拉排除申请人自己；存在其他审批人时禁止自批，系统中只剩一位审批人时放行并写 `request_self_approved` 审计与超管提醒。
+- 2026-11-16：出入库申请接收人改为选人：可从系统账号选择并按账号派生姓名，或勾选「接收人不在系统内」手工填写并打 `is_external_recipient` 标记；兼容直接提交姓名的旧调用。
+- 2026-11-16：M12 补充已部署：release `20261116-152337-1901c85-dirty-1d0cba9e1619`（source `1901c85`，dirty）。权限页新增「工号与部门」列，管理员可在线修改员工工号与所属部门，含非空、全表唯一校验与 `account_profile_updated` 审计（此前创建账号后无任何修改入口，只能去 `/admin/` 或改库）。单据人员显示统一为「中文姓名（登录账号）」，新增 `person_label` 过滤器；`username` 仍是唯一真相且不可变，改名不影响历史单据归属。全量回归 `471/471` 通过、跳过 8 个 PostgreSQL 专项；部署后服务、健康检查通过，资产/耗材/批次/申请/流水/账号计数与部署前一致。
+- 2026-11-16：重新构建标签打印客户端 `tools/label_printer_client/dist/BwtLabelClient.exe`（29.9 MB，2026-11-16 15:22，SHA-256 前缀 `a6732f0eedb69c04`）。原有 EXE 为 2026-11-09 构建，早于 11-16 的源码改动，不包含当前 RAW ZPL 通道；客户端自测 `11 passed`。`dist/` 在 `.gitignore` 中，不进入仓库与发布包。ZT610 60×40 mm 真机走纸仍待验收。
+- 2026-11-16：M12 已部署到 NUC：release `20261116-145503-1901c85-dirty-5a814624ed8f`（source `1901c85`，dirty），内容哈希 `5a814624ed8f…`。部署前 PostgreSQL 快照由 `install.sh` 完成，迁移无待执行，Gunicorn/Nginx/PostgreSQL 均 active，Gunicorn `/health/` 返回数据库正常、Nginx `/health/` 与 `/login/` 均 200；服务器上确认 `asset_reset_filter_query` 与 `detail-list` 已生效。部署前后业务计数完全一致（资产 636、耗材 31、批次 2、申请 0、流水 0、账号 5、审计 1055），未清理或覆盖服务器数据。全量回归 `461/461` 通过、跳过 8 个 PostgreSQL 专项。
+- 2026-11-16：资产台账搜索框右侧新增「清空」动作，一次清除搜索词与全部筛选条件，保留当前标签页、视图与每页条数；无筛选时按钮为禁用态。移除「更多筛选」面板内重复的清空入口。修正统计卡片点击后静默清空筛选的问题（卡片标签为“当前筛选资产/耗材配件”），现保持当前筛选切换标签页。专项 `7/7` 通过。
+- 2026-11-16：个人资料页改为只读信息展示：登录账号、员工工号、所属部门、钉钉绑定状态改用既有 `.detail-list` 组件呈现，不再使用看起来可编辑的只读输入框；移除无法在 PC 端兑现的 `dingtalk://dingtalkclient/` 按钮与大段说明文字，仅保留“留空时显示登录账号”一行提示。新增断言确认伪造 `username`/`employee_no`/`department`/`dingtalk_user_id` 的 POST 不改变任何数据。
+- 2026-11-16：钉钉身份登录列入 `DEVELOPMENT_PLAN.md` M13 未来规划，标注为受 HTTPS 回调地址与建号策略阻塞，当前未实现；通讯录只读同步作为可先行步骤记录。
+- 2026-11-16：接力复跑全量回归并完成部署。使用绝对可写临时目录（`TEMP`/`TMP`/`TMPDIR` 指向 `.test-run-temp`，未改应用逻辑）完成 Django 全量 `452/452` 通过、跳过 8 个 PostgreSQL 专项；`manage.py check`、`makemigrations --check --dry-run`、`git diff --check` 一并通过。定位到 Windows 默认 `%TEMP%` 对 Python 不可写会让 openpyxl 导出类用例批量报错并表现为 500，属环境故障而非代码缺陷。修复发布包卫生：`build-package.ps1` 排除 `.test-tmp`/`.review-tmp`/`.test-run-temp`/`.review-tmp`；`.gitignore` 增加 `.test-run-temp/`。
+- 2026-11-16：候选包 `after-sales-warehouse-20261116-m11-profile-filter-dirty-b8edaa14defb.zip` 已部署到 NUC `192.168.123.101`，当前 release 为 `20261116-m11-profile-filter-dirty-b8edaa14defb`，source revision `1901c85`，内容哈希 `b8edaa14defb…`，`working_tree_dirty=true`。部署前 PostgreSQL 快照写入 `pre-deploy-20261116_141756`；迁移无待执行、163 个静态文件同步、Gunicorn/Nginx/PostgreSQL 均 active、`/health/` 返回数据库正常、Nginx `/login/` 200 与 `/` 302 符合预期。部署前后业务计数完全一致（资产 636、耗材 31、批次 2、申请 0、流水 0、账号 5、审计 1055），未清理或覆盖服务器数据；回滚列表保留 5 个可切换 release。
+- 2026-11-16：记录一处易误判的版本陷阱：`/opt/after-sales-warehouse/current-release` 是 2026-11-06 遗留文件，仍写着旧版本号；判断 NUC 实际版本必须读 `current/release-info`。
+- 2026-11-16：修正 M11 交互遗漏：库存台账“更多筛选”不再因 URL 条件自动展开，改为仅用户点击后展开；钉钉入口改用 `dingtalk://dingtalkclient/` 链接元素，提高桌面客户端协议唤起兼容性。专项 `7/7`、系统检查、迁移漂移检查和差异格式检查通过。
+- 2026-11-16：M11 已部署到 NUC `192.168.123.101`，release 为 `20261116-m11-view-profile-candidate-dirty-ae4d716aabc1`；部署前 PostgreSQL 快照、迁移检查、三项服务状态和 `/health/` 通过，服务器业务数据未清理或覆盖。
 
 - 2026-11-16：完成 M8 本机软件修复：批量审批改用 UUID 并逐项报告失败原因；中文输入法扫码增加 composition 生命周期和 Enter/Tab 兜底；ZT610 增加 RAW ZPL 60×40 mm 主通道；打印客户端 worker 重启改为独立停止事件并等待旧线程退出。Django 全量 `447/447`、打印客户端专项 `11/11` 通过；NUC、DS3678 和 ZT610 真机仍未验收。
 - 2026-11-16：完成 M9 本机功能：资产台账按物品类型聚合/单件切换、只读测试数据候选报告、admin 创建账号策略收口。未删除任何测试数据，未开放公开注册或第三方登录。

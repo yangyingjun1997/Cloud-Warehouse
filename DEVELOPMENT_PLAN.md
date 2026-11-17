@@ -1,6 +1,6 @@
 # Development Plan
 
-更新时间：2026-11-16
+更新时间：2026-11-17
 
 ## Goal
 
@@ -8,9 +8,36 @@
 
 ## Non-goals
 
-- 不开发或同步微信小程序。
+- **微信小程序已归档暂停（2026-11-17）**：不再作为交付物，代码移入 `docs/archive/miniprogram-paused-20261117/`。当前唯一客户端是响应式 Web/PWA。恢复前必须重新登记里程碑并评估 PWA 是否已满足现场需求。
 - 不清空服务器数据库，不重导 11.2 源表。
 - 不新增与当前收口无关的大功能。
+
+## M17 PWA 移动端收口（当前阶段）
+
+Status: in progress. 承接“放弃小程序、专做 PWA”的战略决策。
+
+用户前提：仓管员以 **iPhone 为主**；**离线能力本期不做**。
+
+范围：
+
+- 修复 iPhone PWA 图标与 iOS 专用 meta（`REVIEW_REPORT.md` P2-01）：
+  - 生成 180×180 / 192×192 / 512×512 PNG 图标
+  - `manifest.webmanifest` 增加 PNG 条目，保留 SVG 作为补充
+  - `web_base.html` `<head>` 增加 `apple-touch-icon`、`apple-mobile-web-app-capable`、`apple-mobile-web-app-status-bar-style`、`apple-mobile-web-app-title`
+- 移动端扫码入口显性化：评估底部导航常驻扫码按钮的可行性，优先保证快速出入库和盘点页的扫码可达性。
+- 快速出入库与盘点页在 760px 以下的可用性验证（按钮尺寸、单列布局、扫码焦点）。
+
+验收：
+
+- iPhone Safari 添加到主屏幕后图标为品牌图、点击无地址栏、状态栏样式正确。
+- 快速出入库、盘点、扫码在 iPhone 上可完成核心动作。
+- 不影响现有 Web 桌面端与内网访问。
+
+不做：
+
+- 离线队列增强（用户明确本期不做）
+- 后台推送（iOS 限制，继续用轮询）
+- 小程序恢复
 - 不兼容错误的 637 件资产结论；以程序规则和现场核对为准。
 
 ## Milestones
@@ -136,6 +163,17 @@ Status: software implementation complete, field and NUC verification pending. 20
 - NUC 部署前后业务计数一致；服务、迁移、静态文件、健康检查和相关 PostgreSQL 冒烟通过。
 - 未执行的真机、服务器或安全测试必须明确标为未执行，不得标记 completed。
 
+### M8 post-review P1 remediation
+
+Status: local implementation and automated verification complete; candidate packaging, NUC deployment and field acceptance pending.
+
+- 申请明细 API 将所属申请单设为服务端绑定字段；主单更新携带 `lines` 时明确拒绝，避免未实现的嵌套更新造成 500 或静默不一致。
+- V2/V3 全量基准导入在任何业务写入前检查缺失对象的活动状态、库存预占、维修记录、个人耗材持有余额和未归还借用；发现阻断关系时整批回滚且批次保持待复核。
+
+Automated acceptance: 专项 `27/27` 通过；Django 全量 `536/536` 通过，跳过 8 项 PostgreSQL 专项；`check`、迁移漂移、`pip check`、`git diff --check` 通过。
+
+Field acceptance: 未执行。部署前仍需建立可追溯候选 release、做 PostgreSQL 快照，并在 NUC 完成导入保护和申请 API 冒烟；不得清空或覆盖服务器数据库。
+
 ### M9 Inventory presentation and test-data governance
 
 Status: local implementation complete; NUC deployment and any data cleanup remain
@@ -161,7 +199,7 @@ Implementation result:
 
 ### M10 Personal profile and identity display
 
-Status: local implementation complete; deployment verification pending.
+Status: local implementation in progress; focused verification passed, latest full regression interrupted, deployment pending.
 
 - 增加登录用户自己的“个人资料”页面，允许维护中文显示姓名；不开放公开注册。
 - 顶部用户菜单和头像优先显示中文姓名，未填写时回退到登录账号。
@@ -174,6 +212,124 @@ Acceptance:
 - 姓名为空时所有页面安全回退到用户名；中文姓名在头像、顶部菜单和个人资料页一致显示。
 - 非登录用户被重定向到登录页；管理员维护的钉钉绑定状态在个人页正确展示。
 - 增加正向、空姓名、越权字段和 XSS 输入测试；不新增数据库迁移。
+
+### M11 Inventory view state and local DingTalk launcher
+
+Status: implemented, automated regression passed, deployed to NUC; field browser/device acceptance pending.
+
+### M14 Account governance, approval duty separation and person display
+
+Status: implemented, automated regression passed, deployed to NUC; field acceptance pending.
+
+- 人员显示统一为「中文姓名（登录账号）」，覆盖申请、采购、审批、盘点、转换、导入、台账流水、审计日志、资产生命周期等全部单据。`username` 仍是唯一真相且不可变，改名不影响历史归属；无中文姓名只显示账号，账号已删除显示"已删除账号"。
+- 权限页重排：11 项权限改为可换行胶囊并在勾选时即时变色；角色列只显示权限项数量，不再拼接全部权限名，消除"左侧权限名拉长导致整行变形"。
+- 管理员可为账号重置密码：生成 12 位临时密码（`secrets`，去除 0/O/1/l/I），立即作废该账号全部登录会话，写入 `account_password_reset` 审计；超级管理员密码仍只能走服务器运维。
+- 登录页新增「申请开通账号」：只收集姓名/工号/部门/电话/说明，由管理员在权限页待办列表中建号或驳回。**不开放自助注册**，提交申请不会创建任何账号。
+- 审批候选修正：指定审批人下拉只列真正具备审批权限的账号，并排除申请人自己；通知范围从"全部仓库操作员"收窄为"具备审批权限的账号"，消除录入/报表/财务账号的待办噪音。
+- 职责分离：存在其他可用审批人时禁止审批自己的申请；系统中只剩一位审批人时放行，但写 `request_self_approved` 审计并向超管发提醒。
+- 接收人改为选人：默认从系统账号中选择并按账号派生姓名；勾选"接收人不在系统内"后切换为手工填写，并在单据上打 `is_external_recipient` 标记。兼容直接提交姓名的旧调用。
+
+Acceptance:
+
+- 所有单据上的人员显示为「姓名（账号）」；改名后历史单据仍指向同一账号。
+- 权限页在 11 项权限全选时行高稳定、列宽不溢出。
+- 重置密码后旧密码失效、旧会话被作废；超级管理员不可在此重置。
+- 登录页提交申请不产生账号；重复工号不重复建待办；管理员可驳回。
+- 有其他审批人时自批被拒绝并给出明确原因；唯一审批人自批会产生审计与超管提醒。
+- 接收人可选系统账号或标记外部人员；两者都不填时提交被拒绝。
+- 相关专项、`manage.py check`、迁移漂移检查、全量 Django 测试和 `git diff --check` 通过。
+
+### M8 WeChat mini program HTTPS experience release
+
+Status: in progress. 本里程碑只交付移动现场操作体验版，不改变服务器业务数据，不新增小程序专属后端业务规则。
+
+- 将小程序 API 基地址切换为 `https://cloudwarehouse.dpdns.org`，使用用户提供的真实 AppID `wx02c8193db5952f39`。
+- 开启开发者工具的合法域名校验；保留开发工具“预览/体验版”所需的登录、资产查询/扫码、详情、照片上传、借用/领用/归还申请、审批执行和通知能力。
+- 保持耗材、多资产申请、采购、盘点、维修、调拨、报表和基础资料维护在 Web 端，不在本里程碑临时复制。
+- 先完成后端全量回归、域名 HTTPS 健康检查、接口静态契约核对，再构建小程序体验版；不直接宣称正式发布。
+
+Acceptance:
+
+- 本机后端 `check`、迁移漂移检查、依赖检查、JavaScript 语法检查和 Django 全量测试通过；未通过时不得上传小程序。
+- 手机 4G 访问 `https://cloudwarehouse.dpdns.org/health/` 返回数据库正常；开发者工具开启 URL 校验后能完成登录请求。
+- 体验版真机回归覆盖：登录、资产搜索、相机扫码、详情、照片上传、借用/领用/归还申请、审批/执行、通知查看；每项记录实际结果。
+- 小程序配置不含 `127.0.0.1`、`localhost`、`touristappid` 或明文密钥；服务器部署仅更新代码，保留 PostgreSQL 数据。
+- 未实现或未通过的功能必须在 `PROJECT_STATUS.md` 标明，不得用静态检查替代真机验收。
+
+Current result: 用户已完成微信开发者工具真机预览和体验版上传；手机端完整业务链路回归由后续实际使用者执行，当前保持待验收状态。admin 移动端功能暂维持现场端范围，不在本里程碑扩展为完整后台。
+
+Implementation result:
+
+- 新增 `apps/common/templatetags/person.py`（`person_label` 过滤器 + `person` 标签）；14 个模板改用该标签。
+- 新增 `apps/accounts/models.py::AccountRequest` 与迁移 `0005_accountrequest`；`apps/common/auth_views.py` 增加 `AccountRequestForm` 与 `account_request_create`；权限页展示待办并支持标记已建号/驳回。
+- 新增 `apps/workflow/models.py::WorkflowRequest.recipient` 与 `is_external_recipient`，迁移 `0020_workflowrequest_recipient_and_external_flag`。
+- `apps/workflow/services.py`：新增 `_approver_users()` 与 `_person_display()`；`approve_request` 增加职责分离判断与自批审计。
+- `apps/common/utils.py`：新增 `generate_temporary_password()`。
+- 新增测试：`test_account_request.py`（11 例）、`workflow/test_approval_separation.py`（6 例）、`PersonLabelTests`（5 例已在 `test_account_admin_edit.py`）。
+- 全量 `488/488` 通过，跳过 8 个 PostgreSQL 专项；两个迁移均为纯新增（可空字段 + 新表），无破坏性操作。
+
+- 资产台账的“按物品类型汇总”和“按单件资产”保留为两个独立显示视图。类型汇总页的筛选状态属于汇总页；从某类型钻取到单件页时，类型条件只作用于单件页，返回汇总页时不携带该钻取条件。
+- 不改变现有筛选业务口径，不新增数据库字段；通过显式的钻取上下文参数生成返回链接，避免把单件页的 `item_type` 污染到类型汇总页。
+- 个人资料页增加“尝试打开钉钉客户端”入口。该入口只负责通过 `dingtalk://dingtalkclient/` 协议唤起本机客户端并给出未安装提示，不把客户端已打开或已登录推断为系统身份绑定。
+- 钉钉 userid、中文实名和账号绑定仍由现有管理员流程维护；可信 OAuth/回调绑定不在本次实现范围。
+
+Acceptance:
+
+- 在类型汇总页筛选后进入任意类型的单件资产页，返回类型汇总时保留汇总筛选但清除钻取产生的类型条件；直接在汇总页选择物品类型筛选时，条件仍按原逻辑生效。
+- 单件资产页和类型汇总页的切换链接不会丢失用户明确设置的搜索、状态、仓库、库位等汇总条件。
+- 个人资料页点击打开钉钉时调用本机协议；未安装或协议不可用时显示清晰提示；页面不显示“已绑定”或修改绑定成功等误导性结果。
+- 相关 Django 页面测试、模板静态检查、`manage.py check`、全量 Django 测试和 `git diff --check` 通过。
+
+Implementation result:
+
+- 已增加显式 `from_type=1` 钻取上下文；从类型汇总进入单件资产后，返回类型汇总会移除钻取产生的 `item_type`，但保留用户明确设置的搜索、状态、仓库和库位条件。
+- 类型汇总与单件资产的切换链接和“清空条件”链接保持当前视图，不再因清空或返回意外切换到另一种视图。
+- 资产台账的“更多筛选”不再根据 URL 条件自动展开，只有用户主动点击摘要才展开；快捷跳转和带筛选结果的返回页均保持收起。
+- 个人资料页已增加通过 `dingtalk://dingtalkclient/` 尝试唤起本机钉钉的入口；没有新增绑定接口、数据库迁移或自动绑定判断。
+- 本机相关专项 `7/7` 通过，系统检查、迁移漂移检查和差异格式检查通过。
+- 2026-11-16 接力补齐：使用绝对可写临时目录完成 Django 全量 `452/452` 通过（跳过 8 个 PostgreSQL 专项），`manage.py check`、`makemigrations --check --dry-run`（`No changes detected`）、`git diff --check` 一并通过。
+- 2026-11-16 已部署：release `20261116-m11-profile-filter-dirty-b8edaa14defb`（source `1901c85`，dirty）。部署前 PostgreSQL 快照为 `pre-deploy-20261116_141756`，迁移无待执行，Gunicorn/Nginx/PostgreSQL 均 active，`/health/` 正常，部署前后业务计数完全一致（资产 636、耗材 31、批次 2、申请 0、流水 0、账号 5、审计 1055），回滚列表保留 5 个可切换 release。
+- 仍需现场验收：真实浏览器中的类型汇总钻取/返回/清空条件与“更多筛选”手动展开；安装钉钉的 Windows 机器上的协议唤起。自动化测试只覆盖服务端渲染，不能替代这两项。
+
+### M12 Account profile read-only clarity and warehouse filter reset
+
+Status: implemented locally; automated regression passed; deployment pending.
+
+- 权限页补齐账号档案维护：管理员可在「已有账号」行内直接修改员工工号与所属部门（此前创建后无入口，只能去 `/admin/` 或改库）。工号做非空与全表唯一校验；变更写入 `OperationAuditLog`（action `account_profile_updated`，含变更前后快照）。
+- 单据人员显示统一为「中文姓名（登录账号）」，例如「张三（zhangsan）」。`username` 仍是唯一真相且不可变；中文姓名仅用于展示，改名不会让历史单据"换人"，括号内账号保证可追溯。无中文姓名时只显示账号，账号已删除时显示"已删除账号"。
+
+- 资产台账搜索框右侧新增「清空」：一次性清除搜索词与全部筛选条件（四个状态维度、仓库、库位、物品类型、排序），保留当前标签页、当前视图和每页条数。无筛选条件时按钮为禁用态，避免布局跳动。
+- 移除「更多筛选」面板内重复的“清空条件”入口，清空动作只保留一个位置。
+- 修正统计卡片静默丢弃筛选的问题：卡片标签为“当前筛选资产/耗材配件”，点击后应保持当前筛选切换标签页，此前会清空全部条件。
+- 个人资料页改为信息展示：登录账号、员工工号、所属部门、钉钉绑定状态以只读列表呈现，不再使用看起来可编辑的只读输入框；页面仅保留中文姓名为可编辑项，并去掉冗长说明段落。
+
+Acceptance:
+
+- 任意筛选组合下点「清空」回到当前视图的初始列表，`tab`、`view`、`page_size` 不变；无筛选时按钮禁用。
+- 清除条件后不跳转到另一视图；耗材标签页下清空不携带资产视图参数。
+- 统计卡片点击后筛选条件不丢失。
+- 个人资料页不出现可提交的账号/工号/部门/钉钉字段；伪造这些字段的 POST 不改变任何数据。
+- 相关专项、`manage.py check`、迁移漂移检查、全量 Django 测试和 `git diff --check` 通过。
+
+Implementation result:
+
+- `warehouse_management.html`：搜索框右侧新增清空按钮（禁用态复用 `.button-secondary.is-disabled`）；面板内重复清空入口移除；统计卡片改用 `asset_filter_query`/`stock_filter_query` 保留筛选。
+- `views.py`：新增 `asset_reset_filter_query` 与 `has_active_filters`；判断是否“有筛选”时排除 `page_size`/`sort`/`dir`，否则每页条数会让按钮永远可点。
+- `account_profile.html`：只读项改用既有 `.detail-list` 组件展示；移除无法在 PC 端兑现的 `dingtalk://` 按钮与大段说明，仅保留“留空时显示登录账号”一行提示。
+- `permission_management.html`：新增「工号与部门」列，行内可编辑员工工号与所属部门；账号列同时显示中文姓名。
+- `apps/common/templatetags/person.py`：新增 `person_label` 过滤器与 `person` 标签，统一「中文姓名（登录账号）」格式；`asset_lookup.html`、`purchase_draft_detail.html`、`purchase_draft_list.html`、`asset_lifecycle.html` 已改用该标签。
+- 新增 `test_account_admin_edit.py`（7 例：改工号/部门、重复工号拒绝、保留原工号、空工号拒绝、页面渲染输入框）与 `PersonLabelTests`（5 例）。
+- 全量 `471/471` 通过，跳过 8 个 PostgreSQL 专项。
+- 新增 `WarehouseResetFilterTests` 7 例与个人资料 2 例只读断言；专项 16/16 通过。
+
+### M13 DingTalk identity login (future, blocked)
+
+Status: planned only; not implemented. Blocked on prerequisites below.
+
+- 目标：账号由钉钉身份直接带入实名、工号、部门，减少管理员手工维护。
+- 前置条件（全部满足才可启动）：① 钉钉开放平台企业内应用并配置可信回调；② 一个钉钉服务器可访问的 HTTPS 地址；③ 自动建号的准入策略（限定企业通讯录，禁止公开注册）；④ 权限仍由管理员授予，钉钉只解决身份不解决授权。
+- 建议分三步独立验收：通讯录只读同步（回填工号/部门/姓名，不需要回调地址）→ 钉钉扫码登录 → 自动建号与权限初始分配。
+- 当前访问入口为 `http://192.168.23.41`，不满足回调条件；`PROJECT_STATUS.md` 已将“正式域名/HTTPS”和“可信钉钉 OAuth”同时列为暂停项。
 
 ## Regression checklist
 

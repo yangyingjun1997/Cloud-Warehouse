@@ -1,17 +1,228 @@
 # Project Status
 
-更新时间：2026-11-16
+更新时间：2026-11-17
 
 本文件是项目当前状态的唯一事实来源。旧计划、旧验收报告和聊天记录不得覆盖这里的结论。
+
+### 2026-11-17 当前工作区复盘与 P1 修复
+
+- 本轮未连接 NUC、未部署、未修改任何服务器数据库；文档中的 NUC release 和公网健康记录均未在本轮复核。
+- 本机使用仓库 `.venv` 和可写临时目录完成回归：Django `540/540` 通过、跳过 8 项 PostgreSQL 专项；`manage.py check`、迁移漂移、`pip check` 和 `git diff --check` 通过。
+- 当前工作区仍为脏工作区（70 个文件级别变更），不能直接视为候选发布版本。
+- 本轮已修复 P1-01/P1-02：申请明细主单字段改为只读，未实现的申请单嵌套明细更新明确返回校验错误；V2/V3 全量基准导入在写入前阻断仍有活动状态、预占、维修、耗材持有余额或未归还借用的缺失对象。
+- P1-03（工作区、Git 基线与 NUC release 的候选版本追溯）仍未完成；本轮未构建候选包、未部署。详细证据、测试记录、六视角评审和下一步顺序见 `REVIEW_REPORT.md` 顶部的 2026-11-17 章节。
+
+### 2026-11-17 P1 修复验证
+
+- 专项测试：`27/27` 通过，覆盖伪造嵌套 `request` 不得跨申请单写入、草稿携带 `lines` 的 PUT/PATCH 明确拒绝、资产基准缺失状态/预占/维修阻断、耗材基准缺失且有个人借用余额/未归还借用阻断，以及失败时不产生部分写入。
+- 自动化全量：`540/540` 通过，跳过 8 项 PostgreSQL 专项；未执行 NUC PostgreSQL 并发、真实浏览器/设备、ZT610 真机走纸和公网链路复核。
+- 代码实现、自动化通过、现场验收、部署仍分别记录；本轮只有前两项完成。
 
 ## Current phase
 
 - 阶段：内部调试，准备仓库小范围试运行。
-- 交付：响应式 Web/PWA；微信小程序暂停。
+- 交付：**响应式 Web/PWA（唯一客户端）**。微信小程序已于 2026-11-17 归档暂停，代码在 `docs/archive/miniprogram-paused-20261117/`。
 - 本机：Win11 开发与自动化测试。
-- NUC：Ubuntu 22.04，调试地址为 `192.168.123.101`；2026-11-16 已恢复连接并部署候选版本，当前 release 已复核。
+- NUC：Ubuntu 22.04，`192.168.123.101`；公网入口 `https://cloudwarehouse.dpdns.org`（Cloudflare Tunnel）。
+
+### 2026-11-17 战略决策：放弃小程序，专做 PWA
+
+用户确认仓管员以 **iPhone 为主**、**离线本期不做**。依据：
+
+1. 六大需求（快速出入库、扫码连续处理、待审批与待执行、低库存异常提醒、盘点扫码、维修状态更新）在 Web/PWA 端**全部已实现并现场验证**。
+2. 双份客户端维护成本高：业务规则快速演进期（自批禁止、接收人选人、人员显示）已多次出现两端不同步。
+3. 小程序离线能力并不优于 PWA；PWA 已有 IndexedDB 离线队列。
+4. 小程序真机运行时校验未完成。
+
+**已识别的 PWA 移动端缺陷**：iPhone 缺 PNG 图标与 iOS 专用 meta（P2-01，见 `REVIEW_REPORT.md`）。
+
+### 2026-11-17 iPhone 使用方式（已确认）
+
+- **必须用 Safari「添加到主屏幕」**。iOS 上 Chrome/Firefox 都被强制使用 WebKit，且只有 Safari 支持 `display: standalone` 独立窗口；Chrome iOS 只能加成带地址栏的书签，不是真正的 PWA。
+- 当前 release `20261117-151147-1901c85-dirty-9c91f97b8cef` 已补 PNG 图标与 iOS meta，公网 `https://cloudwarehouse.dpdns.org` 实测 200。
+
+### 2026-11-17 网络与延迟基线（已实测）
+
+- **出口**：cloudflared 走公司 WiFi（`wlp89s0` → `192.168.20.1`）。外接 USB 网卡已拔除，移动热点方案**最终未采用**（运营商封 7844 端口，隧道建不起来）。
+- **强制 IPv4**：`cloudflared.service` 使用 `RestrictAddressFamilies=AF_INET AF_UNIX`。此前隧道同时走外接网卡的 IPv6 出口（RTT 370ms、抖动到 438ms），而 IPv4 边缘仅 198ms。
+- **延迟实测**：内网 `/login/` **11ms**；公网 `/login/` 从 **3.17s → 1.07–1.5s**。
+- **1.5s 是 Cloudflare 免费版走美国节点（lax/sjc）的物理下限**。用户已明确**拒绝 frp 与公网 IP 方案**，接受当前延迟。
 - 数据库：NUC 使用 PostgreSQL；部署更新必须保留现有数据。
-- 版本口径：本轮已将累计工作区建立为干净 Git 基线；精确 revision 以候选包 `release-manifest.json` 为准。最新候选包为 `after-sales-warehouse-20261116-m10-profile-candidate.zip`；NUC 当前运行 `20261116-m10-profile-candidate` 已复核。
+- 版本口径：Git 基线、本地未提交工作区和 NUC release 分开记录；不得将三者混称为“当前版本”。
+
+## Rapid handoff
+
+这是接力开发 agent 的第一阅读区。当前系统是内部调试中的小型售后仓储 Web/PWA，核心闭环为“资产/耗材资料 → 申请 → 审批 → 预占 → 出入库/归还 → 生命周期与审计”；同时支持快速出入库、维修、盘点、采购、V3 Excel 导入导出、报表、站内通知和钉钉群/个人通知队列。
+
+### 公网入口（2026-11-17 已打通并验收）
+
+- 域名：`https://cloudwarehouse.dpdns.org`（DigitalPlat 免费二级域名，到期 2027-11-16，可免费续期）
+- 接入方式：**Cloudflare Named Tunnel**（隧道名 `warehouse-nuc`，Tunnel ID `6947d625-1521-4d94-bc82-8df00c8fc0f6`）
+- 服务器端：systemd 服务 `cloudflared.service`，`User=cloudflared`，token 存于 `/etc/cloudflared/tunnel-token`（`root:cloudflared 640`），开机自启已启用
+- 出口：**走公司 WiFi**（不是移动热点）。实测公司网 7844 和 443 均通，而移动热点封 7844
+- 路由：Cloudflare 面板 `Published application` → `cloudwarehouse.dpdns.org` → `http://localhost:80`
+- 验收：手机 4G 流量可正常打开登录页（用户实测确认）；`/login/` 200、`/health/` 返回数据库正常
+- **公司内网仍走原内网地址访问**，不需要绕公网
+
+> 关键坑（已踩过）：
+> 1. `Route added successfully` 但 DNS **不会**自动生成 CNAME；必须手工加，且子域 zone 的「名称」要填 `@`（填 `cloudwarehouse` 会变成 `cloudwarehouse.cloudwarehouse.dpdns.org`）
+> 2. `tunnel run` **不接受** `--edge-ip-version` 和 `--loglevel`，传入会打印帮助后以 0 退出，表现为服务无限重启
+> 3. `--no-autoupdate` 是全局 flag，必须在 `tunnel` 之前
+> 4. token 文件若为 `600 root:root`，`cloudflared` 用户读不到，服务起不来
+> 5. 用 token 启动的隧道使用**远程托管配置**，本地 `/etc/cloudflared/config.yml` 会被忽略（已改名为 `.unused-remote-config`）
+> 6. 服务器自身解析该域名会失败（公司内网 DNS 不解析），必须用 `--resolve` 绕过才能本地自测
+
+### Three version states
+
+- Git 已提交基线：`1901c85e446c7fa42d7083bdca2b68e2db51b0d4`，短 revision `1901c85`，最后提交为 `docs: correct deployed release record`。
+- 本地未提交工作区：**121 项**（91 已修改 + 30 未跟踪），覆盖账号治理、审计、工作流、搜索、PWA/移动端 UI、静态图标、打印客户端、Nginx、Cloudflare 部署文件、5 个迁移和 11 个测试文件。这些改动属于当前任务，不得回退或覆盖；尚未建立可追溯的 Git 提交。
+- NUC 实际运行 release：`20261117-152941-1901c85-dirty-10df922f6818`，source revision `1901c85`，`working_tree_dirty=true`，部署时间 `2026-11-17T15:29:47+08:00`。部署地址 `192.168.123.101`；服务器 PostgreSQL、Gunicorn、Nginx、Cloudflare Tunnel 和业务数据均未清理。
+
+> 版本读取注意：权威文件是 `/opt/after-sales-warehouse/current/release-info`（随 release 目录走）。同一目录下的 `/opt/after-sales-warehouse/current-release` 是 2026-11-06 遗留的陈旧文件（仍写着 `release_version=20261106-182713`、`source_revision=bbc187c`），读取它会得到错误版本，不要用它判断当前 release。
+
+### Previous release (已部署，本轮被替换)
+
+- `20261116-174612-1901c85-dirty-14517796e138`，source revision `1901c85`，部署时间 `2026-11-16T17:46:35+08:00`。已由本轮 `...-dirty-bb8da5de8be5` 替换，仍在 `--list` 回滚列表中。
+
+### 2026-11-17 handoff review
+
+- 本轮只完成复盘，没有部署当前工作区，也没有修改 NUC 数据库。此前候选包上传动作在 SSH 密码提示阶段中断，远程 `install.sh` 未开始；当前工作区不能据此声称已部署。
+- 此前用绝对可写临时目录执行的本机全量测试为 `452/452`、`OK`、跳过 8 项；该结果对应当时的较小改动集。其他 agent 随后又加入账号、迁移、打印 ZPL 位图、Cloudflare 等改动，因此不得把 `452/452` 作为当前工作区证据；必须重新专项和全量回归。
+- 当前工作区新增的 `deploy/ubuntu22/cloudflared-*`、`tunnel-*` 文件只属于待审查配置，尚未证明已安装到 NUC。`install.sh` 当前不会自动安装或启用 cloudflared；域名 `cloudwarehouse.dpdns.org` 只在工作区配置中出现，公网 DNS、Tunnel token、服务状态、`ALLOWED_HOSTS`/`CSRF_TRUSTED_ORIGINS` 均未在本轮复核。
+- 当前候选包构建脚本已排除 `backend/.test-tmp`、`.review-tmp`、`.test-run-temp` 和根目录 `.review-tmp`；新包仅为 dirty 候选，不是正式 release。
+
+### 2026-11-17 mini program and domain review
+
+- 微信开发者工具登记的 `request合法域名`、`uploadFile合法域名` 和 `downloadFile合法域名` 均为 `https://cloudwarehouse.dpdns.org`，这只证明开发者工具配置完成，不等于小程序代码已经使用该地址，也不等于公网接口从当前网络可达。
+- 当前 `miniprogram/` 没有未提交代码变更，Git 最近一次提交仍为 2026-10-08 初始版本；`miniprogram/miniprogram/utils/config.js` 仍将 API 基地址写为 `http://127.0.0.1:8000`，`project.config.json` 仍使用 `touristappid` 且 `urlCheck=false`。因此当前小程序不是可上传的最新正式版本，只能视为早期开发工具客户端。
+- 小程序现有功能范围为：Token 登录、资产搜索/扫码、资产详情与照片上传、单件资产借用/领用/归还申请、申请审批/驳回/出入库处理、通知查看。耗材、多资产申请、采购、盘点、维修、调拨、报表和管理配置仍仅在 Web/PWA 中提供；这属于当前客户端边界，不得宣传为完整系统。
+- 小程序代码的 API 路径与当前后端路由在静态层面基本匹配，JavaScript/JSON 语法检查通过；但当前后端工作区已有 43 个文件级别未提交改动，尚未重新执行全量 Django 回归和小程序运行时联调，不能据此宣布“程序没问题”。
+- 本轮从当前 Win11 DNS 查询该域名得到 `192.0.2.1`，HTTPS `/health/` 请求超时；与历史文档中“手机 4G 已验收”的记录不一致。该结果可能受 DNS/网络路径影响，必须用手机 4G 和微信开发者工具分别复核真实 HTTPS 响应，不能只看合法域名列表。
+- 微信小程序重新进入候选开发范围前，必须先登记一个独立里程碑：替换 API 地址、确认真实 AppID、打开合法域名校验、完成登录/扫码/申请/审批/上传的真机回归，再决定上传体验版。当前不上传。
+
+### 2026-11-17 M8 execution handoff
+
+- 用户确认使用域名 `https://cloudwarehouse.dpdns.org`，并提供真实 AppID `wx02c8193db5952f39`。
+- 手机已实测可访问 `https://cloudwarehouse.dpdns.org/health/`；这是域名入口可达证据，不等于小程序真机业务链路已验收。
+- 当前工作区后端以受控临时目录完成全量 Django 回归：**`540/540` 通过**、`8` 项按设计跳过；`manage.py check`、迁移漂移检查、`pip check`、`git diff --check` 均通过（2026-11-17 本轮实测）。
+- 首次全量测试在 Windows 默认 TEMP 不可用时出现 `42` 个环境性错误，切换到仓库内受控临时目录后全部通过；不得将首次失败误写为业务失败。
+- 小程序已于 2026-11-17 归档暂停；此前已完成真实 AppID 与 HTTPS 域名配置、开发者工具预览和体验版上传，但这些记录只证明当时状态。
+- 手机端完整业务链路：公网 `https://cloudwarehouse.dpdns.org/login/` 已实测 200，用户手机 4G 可打开登录页；**iPhone Safari 添加到主屏幕的真实体验仍未验收**（见 P2-01）。
+- 本轮后端工作区已部署到 NUC：部署前 PostgreSQL 快照为 `/srv/after-sales-warehouse/backups/pre-deploy-20261117_113812`；无待执行迁移；四项服务（业务、Nginx、PostgreSQL、Cloudflare Tunnel）均为 active；Nginx 通过 `Host: cloudwarehouse.dpdns.org` 的本机健康检查返回 200。
+- 部署后补登记 `cloudwarehouse.dpdns.org` 到服务器 `ALLOWED_HOSTS`、CSRF 来源和 Nginx `server_name`；域名接入配置未写入数据库。
+- 小程序当前仍只覆盖移动现场资产流程：登录、资产查询/扫码、详情、照片上传、借用/领用/归还申请、审批执行、通知；耗材、多资产申请、采购、盘点、维修、调拨、报表和基础资料维护继续由 Web 端提供。
+- admin 在小程序中当前看到的工作台、申请与审批、通知属于设计边界，不代表 admin 权限失效。小程序暂未提供 Web 端的资产维护、快速出入库、耗材、采购、盘点、维修、报表、导入导出和系统设置入口。
+- 后续若要增强 admin 移动端，应先单独规划“仓库管理员移动工作台”里程碑，按权限提供快速出入库、审批、库存异常和盘点等高频动作；不直接把 Web 后台全部搬到小程序。
+
+### 性能基线（2026-11-16 实测）
+
+| 指标 | 优化前 | 优化后 |
+|---|---|---|
+| 登录页传输 | 3130 B | 1433 B（gzip） |
+| zxing 库 | 395 KB | 103.7 KB（gzip） |
+| 站点 logo | 79.7 KB / 566×530 | 16.7 KB / 320×300 |
+| 通知轮询间隔 | 30 s（日志 2349 条中 931 条是它） | 120 s，且后台标签不轮询 |
+
+服务端本身不慢：`/login/` 15 ms、`/health/` 12 ms、静态资源 0.3 ms。慢的是**每页要下载的资源体积**。
+
+Nginx 已开 gzip（`deploy/ubuntu22/nginx-after-sales-warehouse.conf`）；Logo 在上传时自动缩到 320px + 128 色量化。原 logo 备份在 `/srv/after-sales-warehouse/media/branding/logo.png.bak-20261116`。
+
+### Latest deployed delta (M16 performance and login message)
+
+本轮改动已随 `20261116-181751-1901c85-dirty-bb8da5de8be5` 部署：
+
+- **Nginx 开启 gzip**：`gzip on` + `gzip_types` 覆盖 HTML/CSS/JS/JSON/SVG。登录页 3130→1433 字节，zxing 库 395 KB→103.7 KB。部署后需 `nginx -t && systemctl reload nginx`。
+- **Logo 上传自动压缩**：`settings_forms._shrink_logo()` 把图缩到最长边 320px，RGB 图量化到 128 色；实测 79.7 KB→16.7 KB（降 79%）。服务器上现存 logo 已按同法替换，原图备份为 `logo.png.bak-20261116`。
+- **通知轮询降频**：未读数轮询从 30 秒改为 120 秒，且 `document.hidden` 时跳过、切回前台立即补一次。此前访问日志 2349 条请求中 931 条是这一个接口。
+- **停用账号登录提示**：改为「该账号已停用，无法登录。如需恢复使用请联系系统管理员。」仅在"用户名+密码都对、账号被停用"时显示；密码错误仍统一提示，不泄露账号是否存在。
+- 模板 `login.html` 改为渲染表单实际错误而非硬编码文案；`RateLimitedAuthenticationForm.error_messages` 统一了 `invalid_login`/`inactive` 文案，保持枚举防护。
+- 新增测试 `test_disabled_login.py`（4 例）、`test_logo_shrink.py`（3 例）。全量 **`540/540`** 通过，跳过 8 个 PostgreSQL 专项。
+
+### M15 (账号治理，上一轮)
+
+本轮 M15 改动已随 `20261116-174612-1901c85-dirty-14517796e138` 部署到 NUC：
+
+- **账号可停用**：权限页新增「停用/启用」按钮。停用会立即作废该账号全部登录会话、写 `account_disabled` 审计，账号与全部历史引用保留。这是人员离职/调岗的正解，硬删除只适用于确实无任何记录的账号。
+- **删除失败文案修正**：原提示"已有受保护的业务记录"误导——实际常常只是一条改名字的审计记录。现改为明确指向「停用」。
+- **审计操作人快照**：`OperationAuditLog` 新增 `actor_username` / `actor_display_name`，由 `record_operation` 自动写入，用于展示与追溯。**`actor` 外键保持 PROTECT**：数据库触发器 `warehouse_immutable_audit` 禁止对审计表做任何 UPDATE/DELETE，改成 `SET_NULL` 会在删号时发 UPDATE 而被拒绝（首次部署已实测拦下）。
+- **工号改为选填**：`UserProfile.employee_no` 改为可空（公司暂无统一工号体系，外包同事可能没有），仍保留唯一约束用于将来对接 HR/钉钉；权限页输入框标注"选填"并去除必填星号。
+- **申请表单精简**：`AccountRequest` 移除工号与部门填写（申请人并不清楚系统内配置了哪些部门，填了也是错的；部门由管理员建号时从字典选）。去重键改为「姓名 + 电话」。
+- **中文名自动生成账号**：新增 `apps/accounts/username_services.py`，用 pypinyin 把「杨俊杰」转成 `yangjunjie`，重名追加 2/3/4……；权限页待办列表直接展示建议账号，管理员无需自己想英文名。
+- **账号治理补审计**：`account_created`（建号并记录权限）与 `account_permissions_updated`（提权/降权，含前后权限集合与 is_admin）现在都会留痕，此前完全没有。
+- **修复导入非法模板 500**：V3/V2 嗅探都不匹配时原本 `summary` 未定义 → 500；现在明确提示"无法识别该 Excel 模板"并返回 200。
+- **修复搜索解析器可打挂**：`inventory/search.py` 增加 `MAX_BOOLEAN_SEARCH_DEPTH=16`，并捕获 `RecursionError`；`'(' * 1200` 这类输入不再让 `/assets/lookup/`、`/warehouse/`、`/api/inventory/assets/search/` 返回 500。
+- **修复「编辑权限」按钮无反应**：`data-target` 与表单 `id` 前缀不一致，点击取不到元素；已修正并加回归测试断言两者必须匹配。
+- 新增迁移：`accounts/0006_employee_no_optional`、`accounts/0007_account_request_person_key`、`common/0015_audit_actor_snapshot`。
+- 新增测试：`test_account_lifecycle.py`（18 例）、`test_permission_markup.py`（3 例）、`test_label_printer_protection.py`（3 例）、`test_import_template_guard.py`（2 例）、`inventory/test_search_limits.py`（8 例）。全量 `522/522` 通过，跳过 8 个 PostgreSQL 专项。
+- 已部署候选包：`dist/after-sales-warehouse-20261116-174612-1901c85-dirty-14517796e138.zip`（SHA-256 `0cfb6805b41f4f7a94f8bc418749c82e2feb744bab0202572de925c0bd80ab87`，远端上传后复核一致）。部署后 `showmigrations` 确认 `accounts/0005`–`0007` 与 `common/0015` 均已应用；审计表触发器仍为 1 个，新字段 `actor_username`/`actor_display_name` 已存在。
+- 旧包 `...5218c11d2586`、`...1d0cba9e1619`、`...5a814624ed8f`、`...b8edaa14defb`、`...ae4d716aabc1` 仅用于追溯，禁止直接部署。
+
+### 上一轮 (M14)
+
+M14 已随 `20261116-163159-1901c85-dirty-5218c11d2586` 部署：
+
+- **人员显示**：新增 `apps/common/templatetags/person.py`（`person_label` 过滤器 + `person` 标签），14 个模板统一为「中文姓名（登录账号）」——申请创建、采购申请详情/列表、采购订单详情/列表、审批、盘点详情/列表、管理方式转换、Excel 导入、台账流水、审计日志、资产生命周期、资产检索、快速出入库。
+- **权限页重排**：`permission_management.html` 11 项权限改为可换行胶囊（`.permission-chip`，勾选即时变色）；角色列只显示权限项数量（如"11 项权限"），不再拼接全部权限名；表格 `table-layout: fixed` 并固定五列宽度。
+- **重置密码**：权限页每行新增「重置密码」，生成 12 位临时密码（`secrets`，去除 0/O/1/l/I），立即作废该账号全部会话，写 `account_password_reset` 审计；超级管理员不可在此重置。新增 `apps/common/utils.py::generate_temporary_password()`。
+- **申请开通账号**：登录页新增「没有账号？申请开通」入口 → `/login/request-account/`；新增 `AccountRequest` 模型（迁移 `accounts/0005`）与 `AccountRequestForm`；权限页新增「待开通申请」待办区，可标记已建号或驳回。不开放自助注册，提交申请不创建任何账号。
+- **审批池与职责分离**：`services.py` 新增 `_approver_users()`，通知范围从"全部仓库操作员"收窄为"具备审批权限的账号"；指定审批人下拉排除申请人自己；存在其他审批人时禁止自批，唯一审批人时放行并写 `request_self_approved` 审计 + 超管提醒。
+- **接收人选人**：`WorkflowRequest` 新增 `recipient` 外键与 `is_external_recipient` 标记（迁移 `workflow/0020`）；申请页改为下拉选人 + 「接收人不在系统内」勾选切换手工填写；兼容直接提交姓名的旧调用。
+- 新增测试：`test_account_request.py`（11 例）、`workflow/test_approval_separation.py`（6 例）；全量 `488/488` 通过，跳过 8 个 PostgreSQL 专项。
+- 已部署候选包：`dist/after-sales-warehouse-20261116-163159-1901c85-dirty-5218c11d2586.zip`（SHA-256 `b812e3aa187a575dfc8e524c69fd427419f16ba3476faf0c1c2616ef75d58d66`，远端上传后复核一致）。两个迁移均为纯新增（可空字段 + 新表），部署后在服务器 `showmigrations` 确认 `0005_accountrequest` 与 `0020_workflowrequest_recipient_and_external_flag` 均已应用。
+- 旧包 `...1d0cba9e1619`、`...5a814624ed8f`、`...b8edaa14defb`、`...ae4d716aabc1`、`...-dirty-dirty-291aa0ba2ff0` 仅用于追溯，禁止直接部署。
+
+### Test evidence boundary
+
+- M15 最终全量回归（2026-11-16）：`Found 522 test(s)` / `Ran 522 tests in 373.012s` / `OK (skipped=8)`。跳过项为按平台设计的 PostgreSQL 专项。
+- M15 专项：`test_account_lifecycle` `18/18`；`test_permission_markup` `3/3`；`test_label_printer_protection` `3/3`；`test_import_template_guard` `2/2`；`inventory.test_search_limits` `8/8`；`test_account_request` + `test_account_admin_edit` 合计 `21/21`；`manage.py check` 无问题；`makemigrations --check --dry-run` 输出 `No changes detected`；`git diff --check` 退出码 0。
+- M15 部署后核对（2026-11-16 17:46，`...-dirty-14517796e138`）：服务 active，`/health/` 正常，`/login/` 200，`/permissions/` 302；`showmigrations` 确认 `accounts/0005`–`0007`、`common/0015` 已应用；审计表触发器仍有 1 个且生效；业务计数资产 636、账号 4 未变。
+- **一次被正确拦下的部署**：首次尝试把 `actor` 改为 `SET_NULL` 并回填历史快照，部署在迁移阶段被 PostgreSQL 触发器 `warehouse_immutable_audit` 拒绝（`audit records are append-only`），`current` 指针未改变、旧版本继续服务。随后改为「外键保持 PROTECT + 只加快照字段 + 用停用代替删除」，重新部署成功。这说明数据库层的防篡改是真生效的。
+- M14 最终全量回归（2026-11-16）：`Found 488 test(s)` / `Ran 488 tests in 326.656s` / `OK (skipped=8)`。跳过项为按平台设计的 PostgreSQL 专项。
+- M14 专项：`test_account_request` `11/11`；`workflow.test_approval_separation` `6/6`；`DashboardAndAdminTests` `80/80`；`manage.py check` 无问题；`makemigrations --check --dry-run` 输出 `No changes detected`；`git diff --check` 退出码 0。
+- M14 部署后核对（2026-11-16 16:32，`...-dirty-5218c11d2586`）：`install.sh` 完成部署前 PostgreSQL 快照与迁移；Gunicorn/Nginx/PostgreSQL 三者 `active`；Gunicorn `/health/` 返回 `{"status":"ok","database":"ok"}`，`/login/` 200、`/login/request-account/` 200；服务器 `showmigrations` 确认 `accounts/0005_accountrequest` 与 `workflow/0020_workflowrequest_recipient_and_external_flag` 均已应用。
+- M14 部署前后业务计数：资产 636、耗材配件 31、账号 5、申请 0 完全一致，新增表 `accounts_accountrequest` 为 0 行。未清理、未覆盖、未重导服务器数据。
+- M12 最终全量回归（2026-11-16）：`Found 471 test(s)` / `Ran 471 tests in 286.811s` / `OK (skipped=8)`。跳过项为按平台设计的 PostgreSQL 专项。
+- M12 专项：`test_account_admin_edit` + `test_account_profile` 合计 `15/15`；`test_inventory_type_summary` `11/11`；`manage.py check` 无问题；`makemigrations --check --dry-run` 输出 `No changes detected`；`git diff --check` 退出码 0。
+- M12 部署后核对（2026-11-16 15:24，`...-dirty-1d0cba9e1619`）：`install.sh` 完成部署前 PostgreSQL 快照与静态文件同步，迁移无待执行；Gunicorn/Nginx/PostgreSQL 三者 `active`；Gunicorn `/health/` 返回 `{"status":"ok","database":"ok"}`，Nginx `/health/` 200、`/login/` 200；服务器上 `person_label` 命中 2 处、`permission_management.html` 的 `employee_no` 输入框命中 2 处、`purchase_draft_detail.html` 的 `load person` 命中 1 处，确认新代码已生效。
+- M12 部署前后业务计数：资产 636、耗材配件 31、导入批次 2、申请 0、库存流水 0、账号 5 完全一致。审计记录由 1055 变为 1056，经查为 15:02:37 的 `suppliers_updated`（“修改供应商资料 压测供应商（STRESS-SUP）”），发生在本轮部署（15:24）之前，属服务器上的压测操作，不是本次部署写入。未清理、未覆盖、未重导服务器数据。
+- 打印客户端自测 `11 passed, 3 subtests passed`；EXE 已重建。首次构建因 `set_exe_build_timestamp` 重试耗尽失败（疑似杀毒软件临时占用），重试后成功——构建脚本失败时应重试一次再判定。
+- 上一版 M11（2026-11-16 14:18，`...-dirty-b8edaa14defb`）：全量 `452/452` 通过、跳过 8；部署前快照 `pre-deploy-20261116_141756`；迁移无待执行；服务与健康检查通过；计数一致。
+- 本机临时目录告警：Windows 默认 `%TEMP%` 对 Python 不可写，会令 openpyxl 导出类用例批量报错并表现为 500；必须显式指定可写临时目录，否则会把环境故障误判为代码缺陷。
+- DS3678 中文输入法已现场确认正常；ZEBRA ZT610 60×40 mm 真机走纸按用户要求暂缓，未验收。
+
+### Runtime and data facts
+
+- 本机启动：项目根目录运行 `start_dev.bat`；它使用 `.venv`、`runtime-data/db.sqlite3` 和 `0.0.0.0:8000`。手工命令应从 `backend` 使用 `..\.venv\Scripts\python.exe`。
+- NUC 启动：Gunicorn 监听 `127.0.0.1:8000`，Nginx 对外提供 HTTP 入口，systemd 管理应用、备份、健康、一致性、通知和清理任务。
+- NUC PostgreSQL 只读计数（最近部署核对）：资产 636、耗材配件 31、导入批次 2、申请 0、库存流水 0。该计数只证明部署前后未变化，不代表源表业务正确性。
+- 资产规则：`AST-*` 是系统永久身份；`SC`/`DZSB` 是业务主资产编码，源表值原样保留；二维码正文为 `WMS2:A:{AST}`；终态资产不可直接校正恢复。
+- 账号规则：登录账号、工号、部门和权限由 admin 管理；个人资料只允许维护显示姓名；普通用户不能手工绑定钉钉 userid；公开注册和第三方 OAuth 尚未开放。
+
+### Current feature map
+
+- `accounts`：登录限流、组合权限、部门/工号档案、特权会话查看与撤销、个人显示姓名；账号由 admin 创建。
+- `inventory`：资产与耗材配件台账、SC/DZSB/AST 身份、二维码、状态和可用性、预占、生命周期、维修、交接、报废审批、附件、盘点、采购、V3 导入导出、标签打印作业。
+- `workflow`：申请单、审批节点、批量审批、申请预占、快速出入库、借用/领用/归还/调拨/维修/报损/出售/退供应商/报废、归还延期、离线待复核队列。
+- `notifications`：站内通知、钉钉群机器人、钉钉个人通知 outbox、低库存/归还提醒和一致性告警。
+- `common`：工作台、全局搜索、报表、审计日志、数据一致性、系统设置、健康检查、PWA service worker、发布状态。
+- 已保留但当前暂停：微信小程序、正式域名/HTTPS、公网入口、可信钉钉 OAuth、相机扫码增强、异机备份恢复、耗材批次效期 FIFO、仓间在途调拨和 RMA 深化。
+
+### Next actions in order
+
+1. ~~M11 全量回归、构建候选包、部署到 NUC~~ 已完成：`452/452` 通过，`...-dirty-b8edaa14defb` 已上线验证。
+2. ~~M12 台账清空按钮与个人资料只读展示~~ 已完成：全量 `461/461` 通过，`...-dirty-5a814624ed8f` 已上线验证（快照、迁移、服务、健康、计数、服务器模板命中）。
+3. **当前第一优先**：在真实浏览器验证 M12 交互——搜索框右侧「清空」在多条件组合下的行为、无筛选时禁用态、统计卡片保持筛选；个人资料页只读信息展示的观感。自动化只覆盖服务端渲染，不能替代浏览器验收。
+4. 继续 P1 现场项：DS3678 连续三次扫码/失败后继续（中文输入法已确认正常）；ZT610 60×40 mm 连续 10 张走纸按用户要求暂缓。
+5. 服务器恢复后执行隔离 PostgreSQL 完整业务回滚冒烟；不得在业务库留下测试记录。
+6. M13 钉钉身份登录：已写入 `DEVELOPMENT_PLAN.md` 作为未来规划，受 HTTPS 回调地址与建号准入策略阻塞；启动前需先确认 NUC 能否获得钉钉可回调的 HTTPS 入口。可先行步骤是“通讯录只读同步”（不需要回调地址）。
+7. 部署通道备忘：`robot@192.168.123.101` 用口令登录（公钥未授权）；候选包是 ZIP，远端用 `unzip` 解压（不是 `tar -xzf`）；打包脚本要求干净工作区，dirty 工作区必须显式加 `-AllowDirty`；应保留包内 `release-manifest.json` 原样，不要用 `tools-private/_deploy.py` 重写它（该脚本会把 `working_tree_dirty` 写成 `false` 并伪造 revision）。
+
+### Do not do
+
+- 不要清空、覆盖、重导服务器数据库，不要修改服务器网口优先级，不要关闭 eth 或 Wi-Fi。
+- 不要把钉钉客户端“能打开”实现成身份绑定，不要让用户手工输入 userid 自助冒充绑定。
+- 不要用 `item_type`、SN、状态、数量或备注猜测资产身份；不要硬删除有业务历史的资产。
+- 不要在未读权威文档、未写计划、未做测试和未记录状态的情况下扩展新功能。
 
 ## 2026-11-16 current turn
 
@@ -25,6 +236,8 @@
 - 候选包已构建并做内容检查：357 个文件，含 release manifest；未包含 `.env`、数据库、Excel、媒体、备份、EXE 或构建目录。候选包 SHA-256 以 `dist/*.sha256` 为准，重建后可能变化。
 - 2026-11-16 NUC 已恢复可达并完成候选包部署：当前 release 为 `20261116-m10-profile-candidate`，部署脚本使用 PostgreSQL 快照和离线依赖复用；迁移无待执行，Gunicorn/Nginx/PostgreSQL active，`/health/` 返回 200。部署前后未执行业务数据清理，当前只读计数为资产 636、耗材 31、导入批次 2、申请 0、库存流水 0。
 - M10 个人资料页已完成本机 `10/10` 专项和全量 `450/450` 回归，并随 `20261116-m10-profile-candidate` 部署到 NUC；未登录访问 `/account/profile/` 返回登录跳转，服务端数据库未新增迁移。
+- 本轮 M11 本地实现：资产台账类型汇总与单件资产使用独立的钻取返回上下文；从类型汇总进入单件资产后返回会清除钻取产生的类型条件，筛选面板清空仍停留在当前视图；个人资料页增加本机钉钉协议唤起入口，但不把客户端打开推断为身份绑定。相关专项 `7/7`、`manage.py check`、迁移漂移检查和 `git diff --check` 通过。
+- M11 已部署到 NUC `192.168.123.101`：release 为 `20261116-m11-view-profile-candidate-dirty-ae4d716aabc1`，source revision 为 `1901c85`，工作区标记为 dirty；部署前 PostgreSQL 快照成功，迁移无待执行，Gunicorn/Nginx/PostgreSQL active，`/health/` 返回数据库正常。上传包和临时解压目录已清理，未修改服务器业务数据库。筛选自动展开和钉钉协议唤起修复当前为本地未提交版本，待下一次候选包部署；钉钉真实绑定、客户端行为和现场浏览器交互仍待现场验证。
 
 ## 2026-11-10 current review
 

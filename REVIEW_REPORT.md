@@ -1,5 +1,278 @@
 # 全量代码审查与回归报告
 
+## 2026-11-17 收口复盘（最高优先级）
+
+> 本节优先于本文件其余所有章节。
+
+### 1. 版本三态（本轮实测）
+
+| 状态 | 值 |
+| --- | --- |
+| Git 已提交基线 | `1901c85` |
+| 本地未提交工作区 | **121 项**（91 修改 + 30 未跟踪） |
+| **NUC 实际运行** | **`20261117-152941-1901c85-dirty-10df922f6818`**（2026-11-17T15:30:45 部署） |
+
+### 2. 回归结果（全部本轮实测）
+
+| 层 | 结果 |
+| --- | --- |
+| Django 全量 | **540/540 通过**，跳过 8 项 PostgreSQL 专项 |
+| `manage.py check` | 无问题 |
+| 迁移漂移 | `No changes detected` |
+| `pip check` | 无破损 |
+| `git diff --check` | 退出码 0 |
+| **页面渲染冒烟** | **32 页面 × 7 角色 = 224 组合，零 5xx、零异常** |
+| 服务器服务 | 应用 / Nginx / PostgreSQL / cloudflared 全 active |
+| 服务器迁移 | 无待执行（`migrate --check` 退出 0） |
+| 定时任务 | 8 个 timer 正常 |
+| 磁盘 / 内存 | 225G 可用 / 50% 使用 |
+| PWA 静态资源 | 4 个 PNG 图标 + manifest 全部 200 |
+| 内网页面 | `/login/` 200、`/health/` 200、域名 Host 头 200 |
+| **公网端到端** | `/login/` 200、`/health/` 200、图标 200，健康检查返回数据库正常 |
+| 数据规模 | 资产 636、耗材 31、账号 4、申请 0、审计 1092 |
+
+### 3. 本轮清理（释放约 86 MB）
+
+| 对象 | 说明 |
+| --- | --- |
+| `dist/` 32 个历史包 | 仅保留当前版本 `10df922f6818`，服务器有 5 个可回滚 release，本地不必留全部 |
+| `release-20261106-*.tar.gz` ×2 | 11-06 遗留归档，共 71 MB |
+| `backend/.test-tmp` | 测试临时目录 1.2 MB |
+| `tmp3ebgh_4l` | 空临时文件 |
+
+> 操作失误记录：清理 `dist` 时 `Where-Object` 判断写错，把保留列表也删了；已重新构建当前版本包补回。服务器回滚能力不受影响。
+
+### 4. 本轮文档一致性修正
+
+| 问题 | 处理 |
+| --- | --- |
+| `PROJECT_STATUS.md` release 落后两个版本（`bcc703adf026`） | 更新为 `10df922f6818` |
+| 测试基线三处仍写 `536/536` | 全部更新为 `540/540` |
+| 未提交改动描述停在旧口径 | 更新为「121 项（91 修改 + 30 未跟踪）」并列出类别 |
+| `AGENTS.md` 当前优先级已过时 | 改为 PWA 收口 → 遗留 P1 → 邮件摘要 → 依赖锁 |
+
+### 5. 本轮已修复（承接前序）
+
+- 模板跨行 `{# #}` 注释渲染成正文（改用 `{% comment %}`，加测试锁定）
+- 日期输入框与筛选栏对不齐（改为固定两行网格 + Safari 日期控件归位）
+- 按钮文字折叠（补 `white-space: nowrap`）
+- 「我的申请/我的借用」按钮错位（移出 `page-heading` 为独立 `page-actions`）
+- 筛选栏样式从 2 个模板提取到 `web_base.html` 全局，9 个带日期筛选页面同时生效
+- 扫码重复刷屏（`existing`/`not_found` 不再追加行，去重窗口 3s）
+- iPhone PWA 图标与 iOS meta
+- 公网延迟 3.17s → 1.07~1.5s（强制 tunnel 走 IPv4 + 拔掉外接网卡）
+
+### 6. 仍未执行（明确声明）
+
+- PostgreSQL 并发专项 8 项（SQLite 无法验证行锁语义）
+- 真实 iPhone Safari 添加到主屏幕的视觉验收
+- DS3678 扫码枪、ZEBRA ZT610 60×40 mm 真机走纸
+- Cloudflare WAF / 速率限制
+
+### 7. 遗留问题（未修）
+
+| 级别 | 问题 | 位置 |
+| --- | --- | --- |
+| P1 | 导出公式注入（4 处） | v2/v3 导出、check_exports、CSV |
+| P1 | 盘点 `_resolve_asset` 未用 `normalize_scan_value` | `inventory` 服务层 |
+| P1 | `_resolve_stock` 名称/编码混查无歧义保护 | `inventory` 服务层 |
+| P2 | `/me` 权限谓词与实际接口权限不一致 | `accounts` API |
+| P2 | `warehouse_setup` 缺 `@login_required`，`next` 丢失 | `common/views.py:3602,3634` |
+| P2 | 无 `LOGGING` 配置、`CONN_MAX_AGE=0` | `settings.py` |
+| P2 | Service Worker 版本号硬编码 | `common/views.py` |
+| P2 | 前缀白名单不一致（SC\|DZSB vs ZSB\|QTZC） | `v2_import_services.py:475` / `code_services.py:232` |
+| P2 | 7 个页面仍有「按钮在 page-heading + 筛选栏」布局 | composite_unit、inventory_conversion 等 |
+
+---
+
+## 2026-11-17 本轮复盘：小程序归档 + 四层回归（历史）
+
+> 本节优先于本文件其余所有章节。历史章节保留追溯，其中的提交号、测试数量、部署状态、问题状态不得当作本轮结论。
+
+### 0. 必须先读的事实
+
+**我在本轮操作中误用 `write` 覆盖了 `REVIEW_REPORT.md`，导致其他 agent 于 2026-11-17 写入的约 96 行未提交内容（含 P1-01/P1-02 修复执行结果一节）丢失。** 已用 `git checkout` 恢复到 HEAD 版本（510 行），但**那 96 行未提交内容无法恢复**。这是本次协作的实际损失，记录在此以免后续误判。
+
+已知丢失内容的要点（来自我覆盖前读到的片段，仅作提示，不作为证据）：
+- P1-01 依赖漏洞、P1-02 私有附件直链已修复并部署
+- `WorkflowRequestLineSerializer.request` 已设只读
+- V2/V3 全量基准保护已加固
+- 专项 `27/27`、全量 `536/536`
+
+如需完整证据，须由原 agent 重新生成。
+
+### 1. 执行摘要
+
+按用户要求完成：小程序归档、全量功能盘点、本机/服务器/Web/移动端四层回归、文档同步。
+
+**战略决策：放弃微信小程序，专做 PWA。** 依据见 `docs/archive/README-小程序归档说明.md`。`miniprogram/` 已移入 `docs/archive/miniprogram-paused-20261117/`。用户确认：仓管员以 **iPhone 为主**、**离线本期不做**。
+
+| 维度 | 结果 |
+| --- | --- |
+| 本机全量测试 | **536/536 通过**，跳过 8 项 PostgreSQL 专项 |
+| 静态检查 | `check` / 迁移漂移 / `pip check` / `git diff --check` 全通过 |
+| 服务器服务 | 应用/Nginx/PostgreSQL/cloudflared 全部 active |
+| 服务器迁移 | 无待执行 |
+| Web 页面回归 | **31 页面 × 7 角色 = 217 组合，零 5xx、零异常** |
+| 公网访问 | `https://cloudwarehouse.dpdns.org` 登录页 200、健康检查正常 |
+| 数据库 | 资产 636、耗材 31、账号 4、申请 0、流水 0、盘点 0、审计 1090、通知 0 |
+
+**本轮新增问题**：P2-01（iPhone PWA 图标缺失）、P2-02（`warehouse_setup` 缺 `@login_required`）、P2-03（`check --deploy` 警告缺架构说明）。**无新增 P0/P1。**
+
+### 2. 版本三态
+
+| 状态 | 值 |
+| --- | --- |
+| Git 已提交基线 | `1901c85` |
+| 本地未提交工作区 | 76 项（52 修改 + 24 新增） |
+| **NUC 实际运行 release** | **`20261117-113500-1901c85-dirty-bcc703adf026`**（部署于 2026-11-17 11:38） |
+
+> 本轮开始时记录的 `20261116-181751-...-bb8da5de8be5` 已被其他 agent 新部署替换。以 `/opt/after-sales-warehouse/current/release-info` 为准。
+
+### 3. 规模盘点
+
+| 项 | 数量 |
+| --- | --- |
+| Web 页面路由 | 80 |
+| API 端点 | 193 |
+| Django admin 路由 | 398 |
+| 测试用例 | 536 |
+| 测试文件 | 40 |
+
+**测试分布**：`common` 241、`inventory` 188、`workflow` 76、`accounts` 8、`notifications` 14。
+
+**12 个关键域全覆盖**：登录限流、停用账号、权限校验、审计不可变、导入回滚、盘点、标签打印、搜索、并发锁、离线、导出、审批职责分离。
+
+### 4. 四层回归结果
+
+#### 4.1 本机
+
+| 检查 | 命令 | 结果 |
+| --- | --- | --- |
+| Django 全量 | `manage.py test --noinput` | **536/536**，跳过 8 |
+| 系统检查 | `manage.py check` | 无问题 |
+| 迁移漂移 | `makemigrations --check --dry-run` | `No changes detected` |
+| 依赖一致性 | `pip check` | 无破损 |
+| 差异格式 | `git diff --check` | 退出码 0 |
+
+#### 4.2 Web 页面 × 角色矩阵（217 组合，零 5xx）
+
+| 页面 | su | admin | operator | entry | approver | reports | plain |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `/`、`/assets/lookup/`、`/requests/`、`/notifications/` | 200 | 200 | 200 | 200 | 200 | 200 | 200 |
+| `/approvals/` | 200 | 200 | 200 | 302 | 200 | 302 | 302 |
+| `/warehouse/` | 200 | 200 | 200 | 200 | 200 | 200 | 302 |
+| `/warehouse/import/` | 200 | 200 | 302 | 302 | 302 | 302 | 302 |
+| `/inventory-checks/new/` | 200 | 200 | 302 | 302 | 302 | 302 | 302 |
+| `/reports/`、`/reports/stale-inventory/` | 200 | 200 | 302 | 302 | 302 | 200 | 302 |
+| `/system/*`、`/permissions/` | 200 | 200 | 302 | 302 | 302 | 302 | 302 |
+| `/warehouse/low-stock/` | 200 | 200 | 200 | — | — | — | 302 |
+| `/warehouse/conversions/`、`/warehouse/composite-units/` | 200 | 200 | 302 | — | — | — | 302 |
+
+> `/approvals/` 对 operator 返回 200 是**预期**：待执行任务也在此页。
+
+#### 4.3 服务器端
+
+| 检查 | 结果 |
+| --- | --- |
+| 服务 | 全部 active |
+| 迁移 | 无待执行 |
+| `/health/` | ok |
+| 一致性（在库无仓库） | 0 条 |
+| 定时任务 | 8 个 timer 正常调度 |
+| 磁盘/内存 | 225G 可用 / 23Gi 可用 |
+| 隧道 | active + enabled |
+
+#### 4.4 公网端到端
+
+| 检查 | 结果 |
+| --- | --- |
+| `/login/` | **200** |
+| `/health/` | `{"status":"ok","database":"ok"}` |
+| TLS | 1.3，Let's Encrypt，至 2027-02-15 |
+| HTTP 访问 | 200（未强制跳转，见 P2-03） |
+
+#### 4.5 未执行项（明确声明）
+
+- PostgreSQL 并发专项（8 项，需 PG 环境）
+- 真实 iPhone PWA 安装与离线行为
+- DS3678 扫码枪、ZEBRA ZT610 走纸
+- 浏览器视觉回归（无截图基线）
+- Cloudflare WAF/速率限制策略验证
+
+### 5. 本轮新增问题
+
+#### P2-01 iPhone PWA 缺 PNG 图标与 iOS 专用 meta
+
+- **位置**：`backend/apps/common/static/warehouse/manifest.webmanifest:11-18`、`backend/templates/web_base.html:6-8`
+- **触发条件**：iPhone Safari「添加到主屏幕」
+- **原因**：manifest 只提供 `icon.svg`。**iOS 不支持 SVG 格式 PWA 图标**，且缺 `<link rel="apple-touch-icon">` 与 `apple-mobile-web-app-*` meta
+- **影响**：iPhone 添加主屏幕后显示空白/截图图标；显示 Safari 地址栏；状态栏不可控。iPhone 为主用户群时体验明显受损
+- **证据**：manifest 仅 1 个 SVG icon；`web_base.html` 无 iOS 专用标签
+- **修复建议**：生成 180/192/512 PNG；manifest 增 PNG 条目；`<head>` 增 `apple-touch-icon`、`apple-mobile-web-app-capable`、`apple-mobile-web-app-status-bar-style`、`apple-mobile-web-app-title`
+- **验证方法**：iPhone Safari → 分享 → 添加到主屏幕 → 图标正确、点击无地址栏
+- **修复风险**：低，仅新增静态文件与 head 标签
+
+#### P2-02 `warehouse_setup` 系列未登录时重定向链绕行
+
+- **位置**：`backend/apps/common/views.py:3602`、`:3634`
+- **触发条件**：未登录访问 `/warehouse/setup/<section>/`
+- **原因**：仅内联 `_can_manage_setup_section` 判断，缺 `@login_required`。谓词 False → `redirect('warehouse_management')` → 该页有 `@role_required` → `/login?next=/warehouse/`
+- **影响**：无数据泄漏（实测 302→`/warehouse/`→登录页），但 `next` 参数丢失原始目标；与其余页面权限模型不一致
+- **证据**：实测四路径均 `302 → /warehouse/`（body 0B）；有 `@login_required` 的页面返回 `302 → /login/?next=...`
+- **修复建议**：两视图加 `@login_required`，保留内联细分判断
+- **验证方法**：未登录访问应 302 到 `/login/?next=%2Fwarehouse%2Fsetup%2Fwarehouses%2F`
+- **修复风险**：低
+
+#### P2-03 `check --deploy` 4 个 HTTPS 警告缺书面说明
+
+- **位置**：`backend/warehouse_backend/settings.py`（`SECURE_HSTS_SECONDS`、`SECURE_SSL_REDIRECT`、`SESSION_COOKIE_SECURE`、`CSRF_COOKIE_SECURE`）
+- **触发条件**：`manage.py check --deploy`
+- **原因**：`USE_HTTPS=0`。**TLS 在 Cloudflare 边缘终止，源站 Nginx 走 HTTP**，开启这些会导致 Cloudflare→源请求被拒或无限重定向
+- **影响**：警告是**架构正确的表现**，但无书面说明，后续维护者可能误改导致生产中断
+- **证据**：`app.env` 中 `USE_HTTPS=0`、`SECURE_HSTS_SECONDS=0`；公网 HTTPS 200、HTTP 也 200
+- **修复建议**：① 在 `PROGRAM_STANDARDS.md` 写明「Cloudflare 终止 TLS 是既定架构，禁止开源站 SSL 重定向/HSTS」；② Cloudflare 面板开 `Always Use HTTPS`（边缘 308，源站仍 HTTP）
+- **验证方法**：开 `Always Use HTTPS` 后 HTTP 应 308 到 HTTPS，登录流程正常
+- **修复风险**：边缘配置风险低；需回归 cookie 与登录
+
+### 6. PWA 移动端深挖
+
+| 能力 | 实现 | iPhone |
+| --- | --- | --- |
+| 响应式布局 | 内联 CSS + 多处 `@media (max-width: 760px)` | ✅ |
+| 添加到主屏幕 | `display: standalone` | ⚠️ 图标缺失（P2-01） |
+| 摄像头扫码 | `scanner.js` + zxing | ✅ 需 HTTPS（已满足） |
+| 扫码枪 | HID 全局监听 + composition | ✅ 已现场验收 |
+| 离线队列 | `offline.js` + IndexedDB | ✅ 本期不做 |
+| 后台推送 | 无 | ❌ 用轮询替代 |
+| SW 缓存 | `warehouse-static-v5` | ⚠️ iOS 配额小 |
+
+**Service Worker 策略**：install 预缓存 → activate 清旧版本 → fetch 静态 cache-first / 页面 network-first。`STATIC_CACHE` 版本号**硬编码在视图**，改前端资源需手工改，否则用户拿旧缓存。
+
+### 7. 改进优先级
+
+| 顺序 | 项 | 级别 | 理由 |
+| --- | --- | --- | --- |
+| 1 | iPhone PNG 图标 + iOS meta | P2 | iPhone 为主用户群，改动小收益大 |
+| 2 | Cloudflare 开 `Always Use HTTPS` + 补架构说明 | P2 | 安全 + 防误改 |
+| 3 | `warehouse_setup` 补 `@login_required` | P2 | 一致性与 `next` 正确性 |
+| 4 | 补 `LOGGING` 配置 | P2 | 钉钉失败目前无痕迹 |
+| 5 | SW 版本自动化 | P2 | 避免旧缓存 |
+| 6 | 移动端扫码入口常驻 | P2 | 现场效率 |
+| 7 | 统一三套权限写法 | P2 | 长期可维护性 |
+
+### 8. 需确认事项
+
+| 项 | 状态 |
+| --- | --- |
+| iPhone PWA 实机 | **未执行** |
+| PostgreSQL 并发 8 项 | **未执行**（需 PG） |
+| Cloudflare WAF/速率限制 | **未配置**，是否要做待定 |
+| 钉钉通知投递 | 生产 `DINGTALK_*` 是否完整未验证 |
+| DS3678 / ZT610 | 未执行 |
+
+---
+
 ## 2026-11-10 最新工作区复盘补充
 
 本节是当前结论；后文保留 2026-11-09 审查与修复历史，不应再单独引用为最新工作区状态。

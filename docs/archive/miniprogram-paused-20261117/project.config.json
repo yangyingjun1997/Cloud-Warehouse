@@ -4,7 +4,7 @@
     "ignore": []
   },
   "setting": {
-    "urlCheck": false,
+    "urlCheck": true,
     "es6": true,
     "enhance": true,
     "minified": false,
@@ -13,7 +13,7 @@
   },
   "compileType": "miniprogram",
   "libVersion": "3.8.6",
-  "appid": "touristappid",
+  "appid": "wx02c8193db5952f39",
   "projectname": "after-sales-warehouse",
   "miniprogramRoot": "miniprogram/",
   "condition": {}
