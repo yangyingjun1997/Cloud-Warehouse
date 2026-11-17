@@ -4,25 +4,8 @@
 {% block crumb %}我的审批{% endblock %}
 
 {% block content %}
+  {# 筛选栏样式已统一到 web_base.html 的 .filter-compact 全局规则，此处不再重复 #}
   <style>
-    .filter-compact .management-filter-form {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
-      gap: 6px 8px;
-      align-items: end;
-    }
-    .filter-compact .management-filter-form .form-field { min-width: 0; }
-    .filter-compact .management-filter-form label { font-size: 11px; color: var(--muted); }
-    .filter-compact .management-filter-form input,
-    .filter-compact .management-filter-form select {
-      height: 32px;
-      padding: 4px 8px;
-      font-size: 12px;
-    }
-    .filter-compact .management-filter-form .button { height: 32px; padding: 0 12px; }
-    @media (max-width: 900px) {
-      .filter-compact .management-filter-form { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    }
     /* 批量审批样式 */
     .batch-toolbar {
       display: flex;

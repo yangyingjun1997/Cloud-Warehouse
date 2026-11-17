@@ -1,5 +1,5 @@
 {% extends "web_base.html" %}
-{% load static %}
+{% load static person %}
 
 {% block title %}{% if draft %}编辑申请草稿{% else %}新建申请{% endif %} - 售后仓库管理系统{% endblock %}
 {% block crumb %}我的申请 / {% if draft %}编辑草稿{% else %}新建申请{% endif %}{% endblock %}
@@ -27,7 +27,7 @@
         {% if query %}
           {% for asset in assets %}
             <button class="candidate-row candidate-add" type="button" data-kind="asset" data-id="{{ asset.id }}" data-name="{{ asset.name }}" data-code="{{ asset.asset_code|default:'待赋码' }}" data-meta="{{ asset.item_type.name }}{% if asset.manufacturer or asset.model %} · {{ asset.manufacturer }} {{ asset.model }}{% endif %}{% if asset.serial_number %} · SN {{ asset.serial_number }}{% endif %}" data-status-label="{{ asset.request_status_label }}" data-allowed-types="{{ asset.allowed_request_types }}">
-              <span class="candidate-main"><strong>{{ asset.name }}</strong><small>{{ asset.item_type.name }}{% if asset.manufacturer or asset.model %} · {{ asset.manufacturer }} {{ asset.model }}{% endif %}</small><small class="candidate-identifiers">{% if asset.asset_code %}资产编码 {{ asset.asset_code }}{% else %}暂未赋码{% endif %}{% if asset.serial_number %} · 生产厂家 SN {{ asset.serial_number }}{% endif %}</small>{% if user_is_operator %}<small>{{ asset.warehouse.name|default:'未分配仓库' }} / {{ asset.location.code|default:'未分配库位' }} · {{ asset.get_status_display }}{% if asset.current_holder %} · 持有人 {{ asset.current_holder.username }}{% elif asset.external_holder_name %} · 持有人 {{ asset.external_holder_name }}{% endif %}</small>{% endif %}</span>
+              <span class="candidate-main"><strong>{{ asset.name }}</strong><small>{{ asset.item_type.name }}{% if asset.manufacturer or asset.model %} · {{ asset.manufacturer }} {{ asset.model }}{% endif %}</small><small class="candidate-identifiers">{% if asset.asset_code %}资产编码 {{ asset.asset_code }}{% else %}暂未赋码{% endif %}{% if asset.serial_number %} · 生产厂家 SN {{ asset.serial_number }}{% endif %}</small>{% if user_is_operator %}<small>{{ asset.warehouse.name|default:'未分配仓库' }} / {{ asset.location.code|default:'未分配库位' }} · {{ asset.get_status_display }}{% if asset.current_holder %} · 持有人 {{ asset.current_holder|person_label }}{% elif asset.external_holder_name %} · 持有人 {{ asset.external_holder_name }}{% endif %}</small>{% endif %}</span>
               <span class="availability {% if not asset.allowed_request_types %}unavailable{% endif %}">{% if asset.is_reserved %}已预约{% elif asset.status == 'in_stock' %}可申请{% elif asset.current_holder_id == request.user.id %}可归还{% else %}当前不可办理{% endif %}</span>
             </button>
           {% endfor %}
@@ -73,7 +73,8 @@
       <div id="selection-warning" class="selection-warning" hidden>红色物品可以保存草稿，但提交前必须移除，或切换为可办理的申请类型。</div>
 
       <div class="form-grid request-form-grid">
-        <div class="form-field" data-types="borrow,issue" data-required-types="borrow,issue"><label for="recipient_name">实际使用人/接收人 <span class="required">*</span></label><input id="recipient_name" name="recipient_name" value="{{ form_values.recipient_name }}" maxlength="120"></div>
+        <div class="form-field" data-types="borrow,issue" data-required-types="borrow,issue"><label for="recipient_select">实际使用人/接收人 <span class="required">*</span></label><select id="recipient_select" name="recipient_id"><option value="">请选择系统内账号</option>{% for person in recipient_choices %}<option value="{{ person.id }}" {% if form_values.recipient_id == person.id|stringformat:'s' %}selected{% endif %}>{{ person|person_label }}</option>{% endfor %}</select><label class="checkbox-inline"><input type="checkbox" id="recipient_external" name="is_external_recipient" value="1" {% if form_values.is_external_recipient %}checked{% endif %}> 接收人不在系统内（手工填写姓名）</label></div>
+        <div class="form-field" data-types="borrow,issue" data-required-types="borrow,issue" id="recipient-name-field" hidden><label for="recipient_name">接收人姓名 <span class="required">*</span></label><input id="recipient_name" name="recipient_name" value="{{ form_values.recipient_name }}" maxlength="120"></div>
         <div class="form-field" data-types="borrow,issue" data-required-types="borrow,issue"><label for="recipient_phone">联系电话 <span class="required">*</span></label><input id="recipient_phone" name="recipient_phone" type="tel" value="{{ form_values.recipient_phone }}" maxlength="32"></div>
         <div class="form-field" data-types="borrow,issue"><label for="customer_ref">客户资料</label><select id="customer_ref" name="customer_ref"><option value="">未选择客户资料</option>{% for customer in customers %}<option value="{{ customer.id }}" data-name="{{ customer.name }}" {% if form_values.customer_ref == customer.id|stringformat:'s' %}selected{% endif %}>{{ customer.name }}（{{ customer.code }}）</option>{% endfor %}</select></div>
         <div class="form-field" data-types="borrow,issue"><label for="recipient_company">使用部门/单位</label><input id="recipient_company" name="recipient_company" value="{{ form_values.recipient_company }}" maxlength="120" placeholder="未建档时可手工填写"></div>
@@ -84,7 +85,7 @@
         <div class="form-field"><label for="work_order_no">工单编号</label><input id="work_order_no" name="work_order_no" value="{{ form_values.work_order_no }}" maxlength="80" placeholder="未建档时可手工填写"></div>
         <div class="form-field"><label for="application_date">申请日期 <span class="required">*</span></label><input id="application_date" name="application_date" type="date" value="{{ default_application_date }}" required></div>
         <div class="form-field" data-types="borrow" data-required-types="borrow"><label for="expected_return_date">预计归还日期 <span class="required">*</span></label><input id="expected_return_date" name="expected_return_date" type="date" value="{{ default_expected_return_date }}"></div>
-        <div class="form-field"><label for="designated_approver">指定审批人</label><select id="designated_approver" name="designated_approver"><option value="">由审批任务池处理</option>{% for approver in approver_choices %}<option value="{{ approver.id }}" {% if form_values.designated_approver == approver.id|stringformat:'s' %}selected{% endif %}>{{ approver.username }}</option>{% endfor %}</select></div>
+        <div class="form-field"><label for="designated_approver">指定审批人</label><select id="designated_approver" name="designated_approver"><option value="">由审批任务池处理（通知所有审批人）</option>{% for approver in approver_choices %}<option value="{{ approver.id }}" {% if form_values.designated_approver == approver.id|stringformat:'s' %}selected{% endif %}>{{ approver|person_label }}</option>{% endfor %}</select>{% if not has_other_approver %}<small class="field-help">当前没有其他具备审批权限的账号，您的申请可能需要由本人审批，并会记录自批痕迹。</small>{% endif %}</div>
         <div class="form-field full"><label for="reason"><span data-reason-label>申请原因</span> <span class="required">*</span></label><textarea id="reason" name="reason" placeholder="例如：现场故障排查、项目交付、测试验证">{{ form_values.reason }}</textarea></div>
       </div>
       <div class="template-save-row"><input name="template_name" maxlength="80" placeholder="模板名称"><button class="button button-secondary" name="action" value="save_template" type="submit" formnovalidate>保存为常用模板</button></div>
@@ -390,4 +391,28 @@
       refresh();
     })();
   </script>
+<script>
+  // 接收人：默认从系统账号里选；只有勾选"不在系统内"才切换为手工填写姓名。
+  (() => {
+    const select = document.getElementById('recipient_select');
+    const external = document.getElementById('recipient_external');
+    const nameField = document.getElementById('recipient-name-field');
+    const nameInput = document.getElementById('recipient_name');
+    if (!select || !external || !nameField) return;
+    const sync = () => {
+      const isExternal = external.checked;
+      nameField.hidden = !isExternal;
+      select.disabled = isExternal;
+      select.required = !isExternal;
+      if (nameInput) nameInput.required = isExternal;
+      if (isExternal) {
+        if (nameInput) nameInput.focus();
+      } else if (nameInput) {
+        nameInput.value = '';
+      }
+    };
+    external.addEventListener('change', sync);
+    sync();
+  })();
+</script>
 {% endblock %}

@@ -1,5 +1,5 @@
 {% extends "web_base.html" %}
-{% load static %}
+{% load static person %}
 
 {% block title %}快速出入库 - 售后仓库管理系统{% endblock %}
 {% block crumb %}仓库管理 / 快速出入库{% endblock %}
@@ -23,7 +23,7 @@
         {% if query %}
           {% for asset in assets %}
             <button class="candidate-row candidate-add" type="button" data-kind="asset" data-id="{{ asset.id }}" data-name="{{ asset.name }}" data-code="{{ asset.asset_code|default:'待赋码' }}" data-meta="{{ asset.item_type.name }}{% if asset.manufacturer or asset.model %} · {{ asset.manufacturer }} {{ asset.model }}{% endif %}{% if asset.serial_number %} · SN {{ asset.serial_number }}{% endif %}" data-status-label="{{ asset.request_status_label }}" data-allowed-types="{{ asset.allowed_request_types }}">
-              <span class="candidate-main"><strong>{{ asset.name }}</strong><small>{{ asset.item_type.name }}{% if asset.manufacturer or asset.model %} · {{ asset.manufacturer }} {{ asset.model }}{% endif %}</small><small class="candidate-identifiers">{% if asset.asset_code %}资产编码 {{ asset.asset_code }}{% else %}暂未赋码{% endif %}{% if asset.serial_number %} · 生产厂家 SN {{ asset.serial_number }}{% endif %}</small><small>{{ asset.warehouse.name|default:'未分配仓库' }} / {{ asset.location.code|default:'未分配库位' }} · {{ asset.get_status_display }}{% if asset.current_holder %} · 持有人 {{ asset.current_holder.username }}{% elif asset.external_holder_name %} · 持有人 {{ asset.external_holder_name }}{% endif %}</small></span>
+              <span class="candidate-main"><strong>{{ asset.name }}</strong><small>{{ asset.item_type.name }}{% if asset.manufacturer or asset.model %} · {{ asset.manufacturer }} {{ asset.model }}{% endif %}</small><small class="candidate-identifiers">{% if asset.asset_code %}资产编码 {{ asset.asset_code }}{% else %}暂未赋码{% endif %}{% if asset.serial_number %} · 生产厂家 SN {{ asset.serial_number }}{% endif %}</small><small>{{ asset.warehouse.name|default:'未分配仓库' }} / {{ asset.location.code|default:'未分配库位' }} · {{ asset.get_status_display }}{% if asset.current_holder %} · 持有人 {{ asset.current_holder|person_label }}{% elif asset.external_holder_name %} · 持有人 {{ asset.external_holder_name }}{% endif %}</small></span>
               <span class="availability {% if not asset.allowed_request_types %}unavailable{% endif %}">{% if asset.is_reserved %}已预约{% else %}加入{% endif %}</span>
             </button>
           {% endfor %}
@@ -312,16 +312,18 @@
             onStatus: (message) => { cameraStatus.textContent = message; },
             onResult: async (value) => {
               const now = Date.now();
-              if (value === lastScannedValue && now - lastScannedAt <= 1500) return;
+              // 去重窗口从 1500ms 放宽到 3000ms：摄像头保持在同一个码上时会持续解码，
+              // 窗口太短会导致同一件物品被反复处理并刷屏。
+              if (value === lastScannedValue && now - lastScannedAt <= 3000) return;
               lastScannedValue = value;
               lastScannedAt = now;
               const outcome = await enqueueScan(value);
               scanResults.record(value, outcome);
               if (outcome.state === 'added') await WarehouseScanner.feedback();
               cameraStatus.textContent = outcome.state === 'added'
-                ? `已加入：${outcome.item.name}`
-                : outcome.state === 'invalid' ? `已加入待修正：${outcome.item.name}`
-                  : outcome.state === 'existing' ? `已存在：${outcome.item.name}` : `未加入：${value}`;
+                ? `已加入：${outcome.item.name}，请移开换下一个`
+                : outcome.state === 'invalid' ? `已加入待修正：${outcome.item.name}，请移开换下一个`
+                  : outcome.state === 'existing' ? `已在清单中：${outcome.item.name}` : `未识别：${value}`;
             },
           });
           torchButton.hidden = !scannerController.torchSupported;

@@ -1,5 +1,5 @@
 {% extends "web_base.html" %}
-
+{% load person %}
 {% block title %}盘点任务 - 售后仓库管理系统{% endblock %}
 {% block crumb %}盘点任务{% endblock %}
 
@@ -23,7 +23,7 @@
     <td>{{ task.warehouse.name }}{% if task.location %}<div class="queue-meta">{{ task.location.code }}</div>{% else %}<div class="queue-meta">全仓库</div>{% endif %}</td>
     <td>{{ task.line_counted }} / {{ task.line_total }} 条{% if task.line_differences %}<div class="queue-meta danger-text">{{ task.line_differences }} 项差异</div>{% endif %}</td>
     <td><span class="tag {{ task.status }}">{{ task.get_status_display }}</span></td>
-    <td>{{ task.created_by.username|default:'-' }}<div class="queue-meta">{{ task.created_at|date:'Y-m-d H:i' }}</div></td>
+    <td>{{ task.created_by|person_label|default:'-' }}<div class="queue-meta">{{ task.created_at|date:'Y-m-d H:i' }}</div></td>
     <td><a class="table-action" href="{% url 'inventory_check_detail' task.id %}?next={{ check_return_query|urlencode }}">查看任务</a></td>
   </tr>{% empty %}<tr><td colspan="7"><div class="empty-state">暂无盘点任务</div></td></tr>{% endfor %}
   </tbody></table></div>

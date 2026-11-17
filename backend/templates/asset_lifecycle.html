@@ -1,4 +1,5 @@
 {% extends 'web_base.html' %}
+{% load person %}
 {% block title %}{{ asset.name }} · 生命周期与维修{% endblock %}
 {% block crumb %}仓库管理 / 资产生命周期{% endblock %}
 {% block content %}
@@ -31,7 +32,7 @@
           {% for event in timeline %}
             <article class="timeline-row">
               <time>{{ event.at|date:'Y-m-d H:i' }}</time><span class="timeline-dot"></span>
-              <div><small>{{ event.kind }}{% if event.actor %} · {{ event.actor.get_username }}{% endif %}</small><h3>{% if event.url %}<a href="{{ event.url }}">{{ event.title }}</a>{% else %}{{ event.title }}{% endif %}</h3>{% if event.description %}<p>{{ event.description }}</p>{% endif %}</div>
+              <div><small>{{ event.kind }}{% if event.actor %} · {{ event.actor|person_label }}{% endif %}</small><h3>{% if event.url %}<a href="{{ event.url }}">{{ event.title }}</a>{% else %}{{ event.title }}{% endif %}</h3>{% if event.description %}<p>{{ event.description }}</p>{% endif %}</div>
             </article>
           {% empty %}<div class="empty-state">该资产暂无生命周期记录。</div>{% endfor %}
         </div>
@@ -84,7 +85,7 @@
     </div>
   {% elif tab == 'attachments' %}
     <div class="lifecycle-layout">
-      <section class="panel lifecycle-scroll"><div class="panel-head"><h2>归档资料</h2><span>{{ attachments|length }} 个附件</span></div><div class="attachment-list">{% for attachment in attachments %}<a class="attachment-row" href="{% url 'asset_attachment_download' attachment.id %}"><div><strong>{{ attachment.display_name }}</strong><small>{{ attachment.get_category_display }} · {{ attachment.created_at|date:'Y-m-d H:i' }}{% if attachment.uploaded_by %} · {{ attachment.uploaded_by.get_username }}{% endif %}</small></div><span>下载</span></a>{% empty %}<div class="empty-state">该资产暂无归档附件。</div>{% endfor %}</div></section>
+      <section class="panel lifecycle-scroll"><div class="panel-head"><h2>归档资料</h2><span>{{ attachments|length }} 个附件</span></div><div class="attachment-list">{% for attachment in attachments %}<a class="attachment-row" href="{% url 'asset_attachment_download' attachment.id %}"><div><strong>{{ attachment.display_name }}</strong><small>{{ attachment.get_category_display }} · {{ attachment.created_at|date:'Y-m-d H:i' }}{% if attachment.uploaded_by %} · {{ attachment.uploaded_by|person_label }}{% endif %}</small></div><span>下载</span></a>{% empty %}<div class="empty-state">该资产暂无归档附件。</div>{% endfor %}</div></section>
       <section class="panel lifecycle-scroll form-panel"><div class="panel-head"><h2>上传并归档</h2><span>单个文件最大 20 MB</span></div>{% if can_manage_lifecycle %}<form method="post" enctype="multipart/form-data">{% csrf_token %}<input type="hidden" name="action" value="archive_attachment"><div class="lifecycle-form-grid">{% for field in attachment_form %}<div class="form-field {% if field.name == 'note' %}full{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <b>*</b>{% endif %}</label>{{ field }}{% if field.help_text %}<small class="field-help">{{ field.help_text }}</small>{% endif %}{% for error in field.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>{% endfor %}</div><div class="form-actions"><button class="button button-primary" type="submit">上传并归档</button></div></form>{% else %}<div class="empty-state">当前账号没有附件归档权限。</div>{% endif %}</section>
     </div>
   {% else %}
@@ -94,7 +95,7 @@
         <div class="record-list">
           {% for correction in corrections %}
             <article class="handover-row">
-              <div><strong>{{ correction.get_from_status_display }} → {{ correction.get_to_status_display }}</strong><small>{{ correction.created_at|date:'Y-m-d H:i' }} · {{ correction.actor.get_username }}</small><p>{{ correction.reason }}</p></div>
+              <div><strong>{{ correction.get_from_status_display }} → {{ correction.get_to_status_display }}</strong><small>{{ correction.created_at|date:'Y-m-d H:i' }} · {{ correction.actor|person_label }}</small><p>{{ correction.reason }}</p></div>
               <div><span class="status-badge">{{ correction.target_warehouse }} / {{ correction.target_location }}</span><small>{{ correction.get_source_display }}</small></div>
             </article>
           {% empty %}<div class="empty-state">该资产暂无台账校正记录。</div>{% endfor %}

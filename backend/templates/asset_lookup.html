@@ -1,5 +1,5 @@
 {% extends "web_base.html" %}
-{% load static %}
+{% load static person %}
 
 {% block title %}资产检索 - 售后仓库管理系统{% endblock %}
 {% block crumb %}资产检索{% endblock %}
@@ -32,7 +32,7 @@
           <a class="lookup-result" href="{% url 'workflow_detail' workflow_request.id %}" style="text-decoration:none;color:inherit">
             <div>
               <div class="code">{{ workflow_request.request_no }}</div>
-              <div class="result-name">{{ workflow_request.get_request_type_display }} · {{ workflow_request.applicant.get_username }}</div>
+              <div class="result-name">{{ workflow_request.get_request_type_display }} · {{ workflow_request.applicant|person_label }}</div>
               <div class="result-meta"><span>申请日期：{{ workflow_request.application_date|date:'Y-m-d' }}</span><span>部门：{{ workflow_request.department.name|default:'—' }}</span><span>原因：{{ workflow_request.reason|truncatechars:40 }}</span></div>
             </div>
             <div class="availability">{{ workflow_request.get_status_display }}</div>
@@ -69,7 +69,7 @@
                   {% if user_is_operator %}
                     <span>状态：{{ asset.get_status_display }}</span>
                     <span>仓库 / 库位：{{ asset.warehouse.name|default:'未分配仓库' }} / {{ asset.location.code|default:'未分配库位' }}</span>
-                    <span>持有人：{{ asset.current_holder.username|default:'无' }}</span>
+                    <span>持有人：{{ asset.current_holder|person_label|default:'无' }}</span>
                     <span class="lookup-result-actions"><a href="{% url 'warehouse_asset_edit' asset.id %}">查看资产详情</a><a href="{% url 'asset_lifecycle' asset.id %}">查看全生命周期</a></span>
                   {% endif %}
                 </div>

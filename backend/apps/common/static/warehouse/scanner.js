@@ -71,6 +71,13 @@
     }
 
     function record(value, outcome) {
+      // 「已存在」「未加入」不追加新行。
+      // 摄像头每帧都在解码，同一个码保持不动会被反复识别；若每次都追加一行，
+      // 列表会被同一件物品刷屏，用户会误以为重复加了多次。这两类结果只更新计数。
+      if (outcome.state === 'existing' || outcome.state === 'not_found') {
+        updateCounter();
+        return;
+      }
       empty.hidden = true;
       if (outcome.state === 'added' || outcome.state === 'invalid') addedCount += 1;
       const row = document.createElement('div');

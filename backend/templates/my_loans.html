@@ -6,8 +6,8 @@
 {% block content %}
   <div class="page-heading">
     <div><h1>我的借用</h1><p class="page-copy">查看本人已经领走且尚未归还的单件资产和耗材配件。</p></div>
-    <a class="button button-primary" href="{% url 'request_create' %}?request_type=return">发起归还</a>
   </div>
+  <div class="page-actions" style="margin-top:14px"><a class="button button-primary" href="{% url 'request_create' %}?request_type=return">发起归还</a></div>
 
   <section class="panel" style="margin-top:20px">
     <div class="panel-head"><h2>单件资产</h2><span>{{ asset_loans|length }} 件未归还</span></div>

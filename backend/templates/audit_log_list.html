@@ -1,4 +1,5 @@
 {% extends "web_base.html" %}
+{% load person %}
 {% block title %}审计日志 - 售后仓库管理系统{% endblock %}
 {% block crumb %}系统设置 / 审计日志{% endblock %}
 {% block content %}
@@ -25,7 +26,7 @@
   <div class="table-scroll"><table class="data-table"><thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>业务对象</th><th>对象编号</th><th>摘要</th><th>详情</th></tr></thead><tbody>
     {% for log in audit_logs %}
       <tr>
-        <td>{{ log.created_at|date:'Y-m-d H:i:s' }}</td><td>{{ log.actor.username|default:'系统' }}</td><td><span class="tag neutral">{{ log.action }}</span></td><td>{{ log.target_model }}</td><td class="code">{{ log.target_id|default:'-' }}</td><td>{{ log.summary|default:'-' }}</td>
+        <td>{{ log.created_at|date:'Y-m-d H:i:s' }}</td><td>{{ log.actor|person_label|default:'系统' }}</td><td><span class="tag neutral">{{ log.action }}</span></td><td>{{ log.target_model }}</td><td class="code">{{ log.target_id|default:'-' }}</td><td>{{ log.summary|default:'-' }}</td>
         <td><details><summary>查看变更</summary><div class="audit-detail"><strong>变更前</strong><pre>{{ log.before_json }}</pre><strong>变更后</strong><pre>{{ log.after_json }}</pre></div></details></td>
       </tr>
     {% empty %}<tr><td colspan="7"><div class="empty-state">没有匹配的审计记录。</div></td></tr>{% endfor %}
