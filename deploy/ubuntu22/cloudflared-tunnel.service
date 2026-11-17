@@ -1,0 +1,50 @@
+[Unit]
+Description=Cloudflare Tunnel (仓库系统公网入口，走移动热点)
+Documentation=https://developers.cloudflare.com/cloudflare-one/connections/connect-apps
+After=network-online.target
+Wants=network-online.target
+# 热点网卡就绪后再启动
+After=NetworkManager-wait-online.service
+
+[Service]
+Type=simple
+# 专用低权限账号；路由隔离靠 uid 匹配，不依赖 netns
+User=cloudflared
+Group=cloudflared
+
+# 隧道配置：优先用 named tunnel 的 token/config，缺失时回退 quick tunnel
+Environment=TUNNEL_ORIGIN=http://127.0.0.1:80
+Environment=HOME=/var/lib/cloudflared
+
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate \
+    --url ${TUNNEL_ORIGIN} \
+    --http-host-header 127.0.0.1 \
+    --edge-ip-version 4 \
+    --loglevel info
+
+Restart=always
+RestartSec=5
+# 热点断开时不要疯狂重启
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# 允许创建 socket、绑定端口；不需要额外 capability
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/cloudflared
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cloudflared-tunnel
+
+[Install]
+WantedBy=multi-user.target

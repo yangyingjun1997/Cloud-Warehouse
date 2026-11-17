@@ -1,0 +1,45 @@
+[Unit]
+Description=Cloudflare Tunnel for 售后仓库 (public entry)
+Documentation=https://developers.cloudflare.com/cloudflare-one/connections/connect-apps
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 专用低权限账号；token 通过 --token-file 读取，不出现在 ps 输出中
+User=cloudflared
+Group=cloudflared
+Environment=HOME=/var/lib/cloudflared
+
+# 参数作用域很关键：
+#   --no-autoupdate  是全局 flag，必须在 tunnel 之前
+#   --token-file     是 tunnel run 的 subcommand 选项，在 run 之后
+#   --loglevel 和 --edge-ip-version 都不被 tunnel run 接受，
+#   传入会让 cloudflared 打印帮助后以 0 退出（表现为服务反复重启）。
+# ingress 规则在 /etc/cloudflared/config.yml，通过默认配置路径自动加载。
+ExecStart=/usr/local/bin/cloudflared --no-autoupdate tunnel run \
+    --token-file /etc/cloudflared/tunnel-token
+
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/cloudflared
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cloudflared
+
+[Install]
+WantedBy=multi-user.target

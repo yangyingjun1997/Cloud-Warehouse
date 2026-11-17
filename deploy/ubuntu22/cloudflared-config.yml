@@ -1,0 +1,14 @@
+# Cloudflare Tunnel ingress 配置
+#
+# 隧道把公网请求转给本机 Nginx（80），Nginx 再按 server_name 分流到 Django。
+# httpHostHeader 必须保留真实域名：Django 的 ALLOWED_HOSTS 校验依赖它，
+# 若被改写成 localhost，请求会 400。
+ingress:
+  - hostname: cloudwarehouse.dpdns.org
+    service: http://localhost:80
+    originRequest:
+      httpHostHeader: cloudwarehouse.dpdns.org
+      connectTimeout: 30s
+      noTLSVerify: true
+  # 兜底规则：其它 Host 一律 404，避免隧道被当成通用代理
+  - service: http_status:404
