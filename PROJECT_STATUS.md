@@ -74,9 +74,9 @@
 
 ### Three version states
 
-- Git 已提交基线：`1901c85e446c7fa42d7083bdca2b68e2db51b0d4`，短 revision `1901c85`，最后提交为 `docs: correct deployed release record`。
-- 本地未提交工作区：**121 项**（91 已修改 + 30 未跟踪），覆盖账号治理、审计、工作流、搜索、PWA/移动端 UI、静态图标、打印客户端、Nginx、Cloudflare 部署文件、5 个迁移和 11 个测试文件。这些改动属于当前任务，不得回退或覆盖；尚未建立可追溯的 Git 提交。
-- NUC 实际运行 release：`20261117-152941-1901c85-dirty-10df922f6818`，source revision `1901c85`，`working_tree_dirty=true`，部署时间 `2026-11-17T15:29:47+08:00`。部署地址 `192.168.123.101`；服务器 PostgreSQL、Gunicorn、Nginx、Cloudflare Tunnel 和业务数据均未清理。
+- Git 已提交基线：`e3307fea202a6a482542bf2e4762df78058bac13`，短 revision `e3307fe`，最后提交为 `docs: 归档小程序，同步 PWA 收口进展与版本一致性`。此前基线 `1901c85` 之后的全部改动已分批落为 10 个本地提交（**未 push**）：chore 忽略临时目录 → accounts 账号治理 → common 审计与权限 → workflow 审批分离 → inventory 搜索/导入 → 打印 ZPL 位图 → PWA 图标与移动端 → 测试补充 → deploy 隧道与 Nginx → docs 归档。
+- 本地未提交工作区：**干净**（提交后 `git status --short` 为空）。提交前后各跑一次全量测试，均 `540/540` 通过，确认提交内容无遗漏、无 CRLF 转换导致的内容漂移。
+- NUC 实际运行 release：`20261117-152941-1901c85-dirty-10df922f6818`，source revision `1901c85`，`working_tree_dirty=true`，部署时间 `2026-11-17T15:29:47+08:00`。**注意：线上 release 仍标记 source revision `1901c85` 且 dirty，但代码内容与本地 `e3307fe` 一致**（部署包在提交前构建，工作区内容未变）。下次部署会生成以 `e3307fe` 为 source revision 的干净 release。部署地址 `192.168.123.101`；服务器 PostgreSQL、Gunicorn、Nginx、Cloudflare Tunnel 和业务数据均未清理。
 
 > 版本读取注意：权威文件是 `/opt/after-sales-warehouse/current/release-info`（随 release 目录走）。同一目录下的 `/opt/after-sales-warehouse/current-release` 是 2026-11-06 遗留的陈旧文件（仍写着 `release_version=20261106-182713`、`source_revision=bbc187c`），读取它会得到错误版本，不要用它判断当前 release。
 
