@@ -5,6 +5,33 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 
+# ---------------------------------------------------------------- CSV 导出安全
+#
+# CSV/Excel 公式注入：以 = + - @ 开头（以及 TAB、CR 开头）的单元格，Excel 和
+# WPS 打开时会当作公式执行。若资产名称或备注被写成 `=cmd|'/c calc'!A1`，导出后
+# 在同事机器上打开就会触发。这里按 OWASP 建议在最前面加单引号前缀，使其变成文本。
+#
+# 注意：只处理字符串；int/Decimal/date 等由 csv 模块正常序列化。
+_CSV_FORMULA_PREFIXES = ('=', '+', '-', '@', '\t', '\r')
+
+
+def sanitize_csv_cell(value):
+    """把可能被 Excel/WPS 解释为公式的单元格转成纯文本。"""
+    if value is None:
+        return ''
+    if not isinstance(value, str):
+        return value
+    if value.startswith(_CSV_FORMULA_PREFIXES):
+        # 前置单引号：Excel 显示原文，且不再当公式执行
+        return "'" + value
+    return value
+
+
+def sanitize_csv_row(values):
+    """对一个可迭代的单元格序列逐列做公式注入防护。"""
+    return [sanitize_csv_cell(v) for v in values]
+
+
 def build_code(prefix: str) -> str:
     stamp = datetime.now().strftime('%Y%m%d%H%M%S')
     tail = uuid4().hex[:6].upper()

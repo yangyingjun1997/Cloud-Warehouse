@@ -62,6 +62,7 @@ from apps.common.permissions import (
 )
 from apps.common.security_audit import record_login_event
 from apps.common.utils import generate_temporary_password as _generate_temporary_password
+from apps.common.utils import sanitize_csv_row as _csv_safe
 from apps.accounts.models import AccountRequest, AccountSession, Department, UserProfile
 from apps.accounts.username_services import suggest_username
 from apps.accounts.session_services import (
@@ -1565,10 +1566,10 @@ def consistency_check_export(request):
     writer = csv.writer(response)
     writer.writerow(['级别', '问题代码', '对象类型', '对象', '问题说明', '处理建议', '详情链接'])
     for item in issues:
-        writer.writerow([
+        writer.writerow(_csv_safe([
             '错误' if item['severity'] == 'error' else '警告',
             item['code'], item['object_type'], item['target'], item['message'], item['suggestion'], item['url'],
-        ])
+        ]))
     return response
 
 
@@ -1660,7 +1661,7 @@ def warehouse_asset_export(request):
         ]
         if show_financials:
             row.append(asset.purchase_amount if asset.purchase_amount is not None else '')
-        writer.writerow(row)
+        writer.writerow(_csv_safe(row))
     return response
 
 
@@ -2096,11 +2097,11 @@ def replenishment_suggestions(request):
         writer = csv.writer(response)
         writer.writerow(['管理方式', '物品名称', '编码', '当前可用量', '最低库存提醒值', '建议补货量', '单位', '供应商', '仓库/库位', '参考补货金额（元）', '说明'])
         for row in rows:
-            writer.writerow([
+            writer.writerow(_csv_safe([
                 row['kind'], row['name'], row['code'], row['current'], row['safety_stock'],
                 row['suggested_quantity'], row['unit'], row['supplier'], '；'.join(row['locations']),
                 row['reference_cost'] if row['reference_cost'] is not None else '', row['reference_cost_label'],
-            ])
+            ]))
         return response
 
     return render(request, 'replenishment_suggestions.html', {
@@ -2464,11 +2465,11 @@ def supplier_price_history_export(request):
     writer = csv.writer(response)
     writer.writerow(['供应商', '物品名称', '物品编码', '采购订单', '下单日期', '单价（元）', '订购数量', '单位'])
     for line in lines:
-        writer.writerow([
+        writer.writerow(_csv_safe([
             line.supplier_snapshot or '未填写', line.name_snapshot, line.code_snapshot or '',
             line.order.order_no, line.order.order_date.isoformat(),
             line.unit_cost, line.ordered_quantity, line.unit,
-        ])
+        ]))
     return response
 
 
@@ -2589,12 +2590,12 @@ def supplier_reconciliation_export(request):
     for line, period_received_quantity, report_dates in lines:
         ordered_amount = (line.unit_cost * line.ordered_quantity) if line.unit_cost is not None else ''
         received_amount = (line.unit_cost * period_received_quantity) if line.unit_cost is not None else ''
-        writer.writerow([
+        writer.writerow(_csv_safe([
             line.supplier_snapshot or '未填写', line.order.order_no, line.order.order_date.isoformat(),
             '、'.join(value.isoformat() for value in report_dates),
             line.name_snapshot, line.code_snapshot or '', line.unit_cost if line.unit_cost is not None else '',
             line.ordered_quantity, period_received_quantity, ordered_amount, received_amount,
-        ])
+        ]))
     return response
 
 
@@ -4322,7 +4323,7 @@ def stale_inventory_export(request):
         ]
         if show_financials:
             values.append(row['cost_value'])
-        writer.writerow(values)
+        writer.writerow(_csv_safe(values))
     return response
 
 
@@ -4366,7 +4367,7 @@ def transaction_export(request):
     if request.GET.get('work_order_no'): transactions = transactions.filter(work_order_no__icontains=request.GET['work_order_no'])
     action_labels = dict(WorkflowRequest.RequestType.choices)
     for item in transactions.iterator():
-        writer.writerow([
+        writer.writerow(_csv_safe([
             item.request.inventory_no or '', item.request.request_no, item.request.application_date.isoformat(), item.business_date.isoformat(),
             timezone.localtime(item.created_at).strftime('%Y-%m-%d %H:%M:%S'),
             action_labels.get(item.action, item.action), item.asset.asset_code if item.asset else item.stock_item.code,
@@ -4376,7 +4377,7 @@ def transaction_export(request):
             f'{item.stock_quantity_before} -> {item.stock_quantity_after}' if item.stock_item else '',
             item.source_warehouse.name if item.source_warehouse else '', item.target_warehouse.name if item.target_warehouse else '',
             item.holder_name, item.holder_company, item.actor.username if item.actor else '', item.comment,
-        ])
+        ]))
     return response
 
 

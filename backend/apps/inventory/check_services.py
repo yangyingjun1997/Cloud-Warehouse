@@ -181,16 +181,23 @@ def start_check_task(task, actor):
 
 
 def _resolve_asset(value):
-    normalized = value.strip().upper()
+    # 必须走 normalize_scan_value：盘点现场常用中文输入法，冒号会变全角
+    # （`WMS2：A：AST-00000238`），扫码枪偶尔带尾随换行；直接 strip().upper()
+    # 会让这些「肉眼看起来一样」的输入查不到资产，用户误以为资产不存在。
+    from .search import normalize_scan_value
+
+    normalized = normalize_scan_value(value)
+    if not normalized:
+        return None
     asset_ids = set(AssetIdentifier.objects.filter(
-        normalized_value=normalized,
+        normalized_value__iexact=normalized,
     ).values_list('asset_id', flat=True))
     asset_ids.update(Asset.objects.filter(
-        Q(system_asset_no__iexact=value)
-        | Q(asset_code__iexact=value)
-        | Q(qr_value__iexact=value)
-        | Q(serial_number__iexact=value)
-        | Q(manufacturer_barcode__iexact=value)
+        Q(system_asset_no__iexact=normalized)
+        | Q(asset_code__iexact=normalized)
+        | Q(qr_value__iexact=normalized)
+        | Q(serial_number__iexact=normalized)
+        | Q(manufacturer_barcode__iexact=normalized)
     ).values_list('id', flat=True))
     if len(asset_ids) > 1:
         raise InventoryCheckError('该标识匹配到多件资产，请改用系统永久编号或主资产编码。')
@@ -200,16 +207,42 @@ def _resolve_asset(value):
 
 
 def _resolve_stock(value):
-    return StockItem.objects.select_related('item_type', 'warehouse', 'location').filter(
-        Q(code__iexact=value) | Q(name__iexact=value)
-    ).first()
+    """按编码优先、名称次之解析耗材。
+
+    原实现用 `Q(code) | Q(name)` 后直接 `.first()`：一旦某个耗材的**名称**
+    恰好等于另一个耗材的**编码**，就会静默返回错误的那个，盘点数量记到别的物料上。
+    这里改为编码精确命中优先；名称命中时若有多条，明确报错而不是猜一个。
+    """
+    from .search import normalize_scan_value
+
+    normalized = normalize_scan_value(value)
+    if not normalized:
+        return None
+    queryset = StockItem.objects.select_related('item_type', 'warehouse', 'location')
+
+    # 1) 编码精确匹配优先——编码是唯一业务标识，不参与歧义判断
+    by_code = list(queryset.filter(code__iexact=normalized)[:2])
+    if len(by_code) == 1:
+        return by_code[0]
+    if len(by_code) > 1:
+        raise InventoryCheckError('该编码匹配到多条耗材记录，请先在基础资料中修正重复编码。')
+
+    # 2) 退回到名称精确匹配；多条时必须让用户改用编码
+    by_name = list(queryset.filter(name__iexact=normalized)[:2])
+    if len(by_name) == 1:
+        return by_name[0]
+    if len(by_name) > 1:
+        raise InventoryCheckError('该名称匹配到多条耗材，请改用耗材编码录入。')
+    return None
 
 
 @transaction.atomic
 def scan_check_value(task, actor, value, quantity=1, note=''):
     _require_counter(actor)
     task = InventoryCheckTask.objects.select_for_update().get(pk=task.pk)
-    value = value.strip()
+    from .search import normalize_scan_value
+
+    value = normalize_scan_value(value)
     if task.status != InventoryCheckTask.Status.IN_PROGRESS:
         raise InventoryCheckError('只有盘点中的任务可以扫码或录入编码。')
     if not value:
