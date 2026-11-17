@@ -4,6 +4,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.common.permissions import is_warehouse_operator
+
 from apps.common.permissions import IsSystemAdministrator
 
 from .models import Department, UserProfile
@@ -16,18 +18,17 @@ User = get_user_model()
 @permission_classes([IsAuthenticated])
 def me(request):
     profile = getattr(request.user, 'profile', None)
-    is_warehouse_operator = (
-        request.user.is_staff
-        or request.user.is_superuser
-        or request.user.groups.filter(name__in=['warehouse_staff', 'warehouse_admin']).exists()
-    )
+    # 与接口实际权限保持一致：过去这里只认 warehouse_staff/warehouse_admin，
+    # 导致只持有细分权限（如 warehouse_outbound）的账号 /me 报 False，
+    # 但调用资产、审批、盘点接口却返回 200，前端按 /me 判断会误判。
+    is_warehouse_operator_flag = is_warehouse_operator(request.user)
     return Response({
         'id': str(request.user.id),
         'username': request.user.username,
         'full_name': request.user.get_full_name(),
         'is_staff': request.user.is_staff,
         'is_superuser': request.user.is_superuser,
-        'is_warehouse_operator': is_warehouse_operator,
+        'is_warehouse_operator': is_warehouse_operator_flag,
         'employee_no': profile.employee_no if profile else '',
         'department': str(profile.department_id) if profile and profile.department_id else None,
         'department_name': profile.department.name if profile and profile.department else '',

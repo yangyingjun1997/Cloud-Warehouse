@@ -57,6 +57,7 @@ from apps.common.permissions import (
     PERMISSION_GROUPS, can_approve_workflow, can_change_asset_domain, can_execute_inventory,
     can_import_inventory, can_manage_admin_code, can_manage_code_master, can_manage_inventory,
     can_print_asset_labels, can_correct_asset_state, can_view_financials,
+    can_review_accounts,
     can_view_reports,
     is_system_administrator, is_warehouse_operator,
 )
@@ -399,9 +400,28 @@ def list_preference_save(request):
     return JsonResponse({'ok': True, 'saved': updates})
 
 
+def _static_cache_version():
+    """按静态资源最后修改时间生成缓存版本，避免手工改版本号漏掉。
+
+    过去 STATIC_CACHE 是硬编码的 'warehouse-static-v5'，前端脚本改了但版本号没改时，
+    用户会继续拿到旧缓存。这里取本目录静态文件的最大 mtime，任何资源更新都会自动换版本。
+    取不到时退回固定值，保证 service worker 仍可注册。
+    """
+    static_dir = Path(__file__).resolve().parent / 'static' / 'warehouse'
+    try:
+        latest = max(
+            (path.stat().st_mtime for path in static_dir.rglob('*') if path.is_file()),
+            default=0,
+        )
+    except OSError:
+        latest = 0
+    return str(int(latest)) if latest else 'v5'
+
+
 def service_worker(request):
+    cache_version = _static_cache_version()
     response = HttpResponse(
-        """const STATIC_CACHE = 'warehouse-static-v5';
+        """const STATIC_CACHE = 'warehouse-static-__CACHE_VERSION__';
 const STATIC_ASSETS = [
   '/static/warehouse/manifest.webmanifest',
   '/static/warehouse/icon.svg',
@@ -455,7 +475,7 @@ self.addEventListener('fetch', event => {
     return;
   }
 });
-""",
+""".replace('__CACHE_VERSION__', cache_version),
         content_type='application/javascript',
     )
     response['Cache-Control'] = 'no-cache'
@@ -1144,8 +1164,11 @@ def system_settings(request):
     })
 
 
-@role_required(is_system_administrator, message='当前账号没有系统设置权限。')
+@role_required(can_review_accounts, message='当前账号没有账号开通与建号权限。')
 def permission_management(request):
+    # 敏感操作的二次授权：拥有「账号开通与建号」权限可以审批申请、建号、重置密码，
+    # 但删除账号和修改他人权限仍限定系统管理员，避免权限被静默放大。
+    can_manage_roles = is_system_administrator(request.user)
     group_names = [*PERMISSION_GROUPS, 'warehouse_admin']
     groups = {}
     for group_name in group_names:
@@ -1279,6 +1302,9 @@ def permission_management(request):
                 messages.success(request, f'已将 {account_request.real_name} 的开通申请标记为已建号。')
             return redirect('permission_management')
         if request.POST.get('action') == 'delete_user':
+            if not can_manage_roles:
+                messages.error(request, '删除账号需要系统管理员权限。')
+                return redirect('permission_management')
             target = User.objects.filter(pk=request.POST.get('user_id')).first()
             if not target:
                 messages.error(request, '未找到要删除的账号。')
@@ -1340,6 +1366,11 @@ def permission_management(request):
                     f'已为 {target.username} 生成临时密码：{temporary}　'
                     f'请当面或通过可靠渠道转交，用户登录后应立即修改；同时已作废 {revoked} 个旧登录会话。',
                 )
+            return redirect('permission_management')
+        if not can_manage_roles:
+            # 只有「账号开通与建号」权限的账号不能改他人权限，
+            # 否则可以给自己加管理员，等于权限提升。
+            messages.error(request, '修改账号权限需要系统管理员权限。')
             return redirect('permission_management')
         target = User.objects.filter(pk=request.POST.get('user_id')).first()
         permissions = set(request.POST.getlist('permissions'))
@@ -1432,6 +1463,8 @@ def permission_management(request):
     return render(request, 'permission_management.html', {
         'user_rows': rows,
         'permission_choices': PERMISSION_GROUPS,
+        # 只有系统管理员能改他人权限/删号；仅有「账号开通与建号」权限时隐藏这些按钮
+        'can_manage_roles': can_manage_roles,
         'departments': Department.objects.filter(is_active=True).order_by('name'),
         'dingtalk_status': dingtalk_configuration_status(),
         'pending_account_requests': [
@@ -1887,7 +1920,7 @@ def warehouse_management(request):
         'asset_view': asset_view,
         'asset_type_groups': asset_type_groups,
         'warehouses': Warehouse.objects.filter(is_active=True).order_by('name'),
-        'locations': Location.objects.select_related('warehouse').order_by('warehouse__name', 'code'),
+        'locations': Location.objects.filter(is_active=True).select_related('warehouse').order_by('warehouse__name', 'code'),
         'item_types': ItemType.objects.order_by('name'),
         'status_choices': Asset.Status.choices,
         'location_state_choices': Asset.LocationState.choices,
@@ -2288,7 +2321,7 @@ def purchase_order_detail(request, order_id):
         'pending_profile_assets': pending_assets,
         'can_edit_profiles': can_manage_inventory(request.user),
         'warehouses': Warehouse.objects.filter(is_active=True).order_by('name'),
-        'locations': Location.objects.select_related('warehouse').order_by('warehouse__name', 'code'),
+        'locations': Location.objects.filter(is_active=True).select_related('warehouse').order_by('warehouse__name', 'code'),
         'can_place': can_manage_inventory(request.user) and order.status == PurchaseOrder.Status.DRAFT,
         'can_cancel': can_manage_inventory(request.user) and order.status in {PurchaseOrder.Status.DRAFT, PurchaseOrder.Status.ORDERED},
         'can_receive': can_execute_inventory(request.user) and order.status in {PurchaseOrder.Status.ORDERED, PurchaseOrder.Status.PARTIAL_RECEIVED},
@@ -3035,7 +3068,7 @@ def inventory_check_create(request):
             messages.error(request, str(exc))
     return render(request, 'inventory_check_create.html', {
         'warehouses': Warehouse.objects.filter(is_active=True).prefetch_related('locations').order_by('name'),
-        'locations': Location.objects.select_related('warehouse').order_by('warehouse__name', 'code'),
+        'locations': Location.objects.filter(is_active=True).select_related('warehouse').order_by('warehouse__name', 'code'),
         'user_can_use_admin': True,
         'user_is_operator': True,
         'user_is_system_admin': True,
@@ -3601,6 +3634,7 @@ def warehouse_stock_item_edit(request, stock_item_id=None):
     })
 
 
+@login_required
 def warehouse_setup(request, section):
     if not _can_manage_setup_section(request.user, section):
         messages.error(request, '当前账号没有基础资料维护权限。')
@@ -3633,6 +3667,7 @@ def warehouse_setup(request, section):
     })
 
 
+@login_required
 def warehouse_setup_edit(request, section, object_id=None):
     if not _can_manage_setup_section(request.user, section):
         messages.error(request, '当前账号没有基础资料维护权限。')
@@ -4071,7 +4106,7 @@ def quick_inventory_process(request):
         'default_expected_return_date': request.POST.get('expected_return_date') or timezone.localdate().isoformat(),
         'request_types': [choice for choice in WorkflowRequest.RequestType.choices if choice[0] != WorkflowRequest.RequestType.PURCHASE_RECEIPT],
         'warehouses': Warehouse.objects.filter(is_active=True).order_by('name'),
-        'locations': Location.objects.select_related('warehouse').order_by('warehouse__name', 'code'),
+        'locations': Location.objects.filter(is_active=True).select_related('warehouse').order_by('warehouse__name', 'code'),
         'customers': Customer.objects.filter(is_active=True).order_by('name'),
         'projects': Project.objects.filter(is_active=True).select_related('customer').order_by('name'),
         'work_orders': WorkOrder.objects.filter(is_active=True).select_related('project').order_by('name'),

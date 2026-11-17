@@ -12,6 +12,10 @@ PERMISSION_GROUPS = {
     'warehouse_label_print': '资产标签打印',
     'warehouse_state_correction': '资产台账校正',
     'warehouse_finance': '采购金额等财务信息',
+    # 账号治理：让库管不必等管理员上线就能处理开通申请与建号。
+    # 拥有此权限即可进入账号与权限页、审批开通申请、创建账号、重置密码；
+    # 但「删除账号」和「修改他人权限」仍只对系统管理员开放（见视图内二次判断）。
+    'warehouse_account_review': '账号开通与建号',
 }
 ADMIN_GROUP = 'warehouse_admin'
 LEGACY_GROUP = 'warehouse_staff'
@@ -71,6 +75,18 @@ def can_print_asset_labels(user) -> bool:
 
 def can_correct_asset_state(user) -> bool:
     return has_warehouse_permission(user, 'warehouse_state_correction')
+
+
+def can_review_accounts(user) -> bool:
+    """账号开通与建号：可处理开通申请、创建账号、重置密码。
+
+    刻意**不**继承 warehouse_staff 的宽泛兜底：账号治理是敏感操作，
+    必须显式授权，避免历史遗留的全权限组自动获得建号能力。
+    """
+    return bool(user and user.is_authenticated and (
+        user.is_superuser
+        or user.groups.filter(name__in=[ADMIN_GROUP, 'warehouse_account_review']).exists()
+    ))
 
 
 def can_view_financials(user) -> bool:

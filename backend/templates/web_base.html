@@ -831,6 +831,11 @@
     .low-stock-mobile-details span { color: var(--muted); font-size: 9px; }
     .low-stock-mobile-details strong { margin-top: 4px; font-size: 11px; }
     .mobile-action-grid { display: none; }
+    /* 移动端折叠容器：桌面端用 display:contents 让 <details> 完全透明化，
+       不参与布局、不显示折叠标题，子元素按原版式排布；
+       这样同一份模板在桌面是普通区块、在手机是可折叠区块。 */
+    .mobile-collapse { display: contents; }
+    .mobile-collapse > summary { display: none; }
     @media (min-width: 1101px) { .content:has(.request-workspace), .content:has(.reservation-page) { padding-bottom: 10px; } }
     @media (max-width: 1100px) { .sidebar { width: 198px; } .main { width: calc(100% - 198px); margin-left: 198px; } .topbar, .content, .module-tabs { padding-left: 24px; padding-right: 24px; } .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .request-workspace, .lifecycle-layout, .lifecycle-layout.timeline-layout { grid-template-columns: 1fr; } .request-candidates, .request-form, .lifecycle-scroll { height: auto; min-height: auto; overflow: visible; } .request-candidates { display: block; } .candidate-list { max-height: 330px; } .asset-lifecycle-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
     @media (max-width: 760px) {
@@ -861,8 +866,37 @@
       .notification-bell { width: 34px; height: 34px; font-size: 17px; }
       .content { padding: 18px 14px 28px; }
       .workspace-hero { align-items: flex-start; flex-direction: column; gap: 12px; }
-      .hero-actions { width: 100%; justify-content: stretch; }
-      .hero-actions .button { flex: 1; }
+      /* ── 移动端精简 ─────────────────────────────────────────────────
+         手机屏幕窄，首页同时存在 hero 按钮和 mobile-action-grid 两套入口、
+         5 个指标卡和两组面板，一屏装不下反而找不到重点。
+         这里做减法而不是删功能：
+         1. hero 大标题压小、说明文字隐藏，省出一屏高度；
+         2. hero 按钮在手机端隐藏——下方 mobile-action-grid 已有同样入口且更大更好点；
+         3. 指标卡收紧内边距，让 4 个卡能在两行内放下；
+         4. 次要面板（库存状态分布、待办说明）默认折叠，需要时再展开。 */
+      .workspace-hero .eyebrow { margin-bottom: 4px; font-size: 10px; }
+      .workspace-hero .page-copy { display: none; }
+      .workspace-hero h1 { font-size: 19px; }
+      .hero-actions { display: none; }
+      .metric-grid { margin-top: 12px; gap: 8px; }
+      .metric { min-height: 78px; padding: 11px 12px; }
+      .metric-label { font-size: 10px; line-height: 1.3; }
+      .metric-value { margin-top: 7px; font-size: 21px; }
+      .metric-note { margin-top: 5px; font-size: 9px; line-height: 1.3; }
+      /* 次要面板折叠：<details> 只在移动端生效，桌面端两种标签都展开 */
+      .mobile-collapse { display: block; }
+      .mobile-collapse > summary {
+        display: flex; align-items: center; justify-content: space-between;
+        min-height: 42px; padding: 0 2px; color: var(--ink);
+        font-size: 13px; font-weight: 650; cursor: pointer; list-style: none;
+      }
+      .mobile-collapse > summary::-webkit-details-marker { display: none; }
+      .mobile-collapse > summary::after { content: "▾"; color: var(--muted); font-size: 11px; }
+      .mobile-collapse[open] > summary::after { content: "▴"; }
+      /* 折叠区域内部的面板去掉顶部间距，避免展开后出现空档 */
+      .mobile-collapse > .panel-grid { margin-top: 4px; }
+      .mobile-collapse > .panel-grid .panel { padding: 13px; }
+      .mobile-collapse > .panel-grid .panel-head { margin-bottom: 9px; }
       .page-heading { align-items: flex-start; gap: 12px; }
       .page-heading .button { flex: 0 0 auto; min-height: 34px; padding: 0 9px; }
       h1 { font-size: 21px; }

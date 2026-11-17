@@ -293,10 +293,10 @@ class WarehouseManagementForm(VersionedModelForm):
 class LocationManagementForm(VersionedModelForm):
     class Meta:
         model = Location
-        fields = ['warehouse', 'name', 'code', 'description']
+        fields = ['warehouse', 'name', 'code', 'description', 'is_active']
         labels = {
             'warehouse': '所属仓库', 'name': '库位名称', 'code': '库位编码',
-            'description': '库位说明',
+            'description': '库位说明', 'is_active': '是否启用',
         }
         widgets = {'description': forms.Textarea(attrs={'rows': 3})}
 

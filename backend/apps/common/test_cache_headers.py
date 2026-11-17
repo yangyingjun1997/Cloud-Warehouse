@@ -86,7 +86,10 @@ class HtmlNoStoreTests(WarehouseTestFixture, TestCase):
     def test_service_worker_fetches_changing_scripts_network_first(self):
         worker = self.client.get('/sw.js')
 
-        self.assertContains(worker, 'warehouse-static-v5')
+        # 缓存版本改为按静态资源 mtime 自动生成（避免手工改版本号漏更新），
+        # 只断言前缀，具体版本号随资源变化。
+        self.assertContains(worker, "const STATIC_CACHE = 'warehouse-static-")
+        self.assertNotContains(worker, '__CACHE_VERSION__')
         self.assertContains(worker, 'FRESH_STATIC_PATHS')
         self.assertContains(worker, "fetch(request, {cache: 'no-store'})")
         self.assertNotContains(worker, "'/static/warehouse/scanner.js',\n  '/static/warehouse/offline.js',\n  '/static/warehouse/vendor")

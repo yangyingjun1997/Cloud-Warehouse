@@ -130,6 +130,9 @@ class Location(UUIDModel, TimeStampedModel):
     name = models.CharField(max_length=120)
     code = models.CharField(max_length=50)
     description = models.CharField(max_length=255, blank=True, default='')
+    # 与仓库保持一致：库位废弃后应停用而不是硬删，
+    # 因为历史资产和出入库流水仍然引用它，删掉会破坏台账追溯。
+    is_active = models.BooleanField('启用', default=True)
 
     class Meta:
         unique_together = ('warehouse', 'code')

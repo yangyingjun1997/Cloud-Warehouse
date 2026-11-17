@@ -1,12 +1,17 @@
 """登录页面的安全增强视图。"""
 
+import logging
+
 from django import forms
 from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth import views as auth_views
 from django.db import transaction
 
+from apps.accounts.account_notifications import notify_account_request_submitted
 from apps.accounts.session_services import register_account_session
+
+logger = logging.getLogger(__name__)
 
 from .auth_throttle import (
     clear_account_failures,
@@ -161,14 +166,21 @@ def account_request_create(request):
             if already_pending:
                 messages.info(request, '您已有待处理的开通申请，管理员会尽快处理，无需重复提交。')
                 return redirect('login')
-            AccountRequest.objects.create(
+            account_request = AccountRequest.objects.create(
                 real_name=real_name,
                 phone=phone,
                 reason=form.cleaned_data.get('reason', '').strip(),
             )
+            # 过去提交后只写库不发通知，管理员不登录就不知道有人申请。
+            try:
+                notify_account_request_submitted(account_request)
+            except Exception:
+                # 通知失败不能让申请人看到报错：申请本身已经落库，
+                # 审批人下次打开账号页仍能看到待办。
+                logger.exception('账号开通申请通知发送失败 request_id=%s', account_request.id)
             messages.success(
                 request,
-                '申请已提交，请等待系统管理员核对后开通账号。管理员会通过您留下的电话联系。',
+                '申请已提交，请等待管理员核对后开通账号。管理员会通过您留下的电话联系。',
             )
             return redirect('login')
     else:
