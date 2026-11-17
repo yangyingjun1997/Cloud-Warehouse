@@ -114,6 +114,36 @@ def _operator_users():
     ).distinct()
 
 
+def _approver_users():
+    """只返回真正能审批的账号。
+
+    原先通知发给全部仓库操作员，其中录入、报表、财务权限的人点进去也无法审批，
+    造成待办噪音和"任务池"语义误导。
+    """
+    return User.objects.filter(
+        Q(is_superuser=True)
+        | Q(groups__name__in=[
+            'warehouse_staff', 'warehouse_admin', 'warehouse_approval',
+        ]),
+        is_active=True,
+    ).distinct()
+
+
+def _person_display(user) -> str:
+    """通知文案里的人员显示，与页面保持一致：中文姓名（登录账号）。"""
+    if not user:
+        return '已删除账号'
+    username = (user.get_username() or '').strip()
+    display_name = ''
+    try:
+        display_name = (user.get_full_name() or '').strip()
+    except AttributeError:
+        display_name = ''
+    if display_name and username and display_name != username:
+        return f'{display_name}（{username}）'
+    return display_name or username
+
+
 OUTBOUND_REQUEST_TYPES = {WorkflowRequest.RequestType.BORROW, WorkflowRequest.RequestType.ISSUE, WorkflowRequest.RequestType.SALE}
 STOCK_REQUEST_TYPES = OUTBOUND_REQUEST_TYPES | {WorkflowRequest.RequestType.RETURN, WorkflowRequest.RequestType.TRANSFER}
 TERMINAL_ASSET_STATUSES = {Asset.Status.SOLD, Asset.Status.RETURNED_TO_VENDOR, Asset.Status.SCRAPPED}
@@ -460,8 +490,8 @@ def submit_request(request_obj: WorkflowRequest, actor, comment=''):
         defaults={'assigned_to': request_obj.designated_approver},
     )
     _log(request_obj, actor, 'submit', request_obj.reason)
-    recipients = [request_obj.designated_approver] if request_obj.designated_approver else _operator_users().exclude(pk=actor.pk)
-    _notify_users(recipients, '新的仓库申请待处理', f'{request_obj.applicant.get_username()} 提交了申请 {request_obj.request_no}，请及时审核。', request=request_obj)
+    recipients = [request_obj.designated_approver] if request_obj.designated_approver else _approver_users().exclude(pk=actor.pk)
+    _notify_users(recipients, '新的仓库申请待处理', f'{_person_display(request_obj.applicant)} 提交了申请 {request_obj.request_no}，请及时审核。', request=request_obj)
     return request_obj
 
 
@@ -477,6 +507,11 @@ def approve_request(request_obj: WorkflowRequest, actor, comment=''):
         raise WorkflowError('申请没有待处理的审核任务。')
     if task.assigned_to_id and task.assigned_to_id != actor.id:
         raise WorkflowError('该申请已指定其他审批人处理。')
+    # 职责分离：只要有其他可用审批人，就不允许审批自己的申请。
+    # 系统里只剩这一位审批人时放行，但记录自批事实并通知超管，避免业务被完全堵死。
+    self_approved = request_obj.applicant_id == actor.id
+    if self_approved and _approver_users().exclude(pk=actor.pk).exists():
+        raise WorkflowError('不能审批自己提交的申请，请由其他具备审批权限的同事处理。')
     task.approver, task.status, task.comment, task.acted_at = actor, ApprovalTask.Status.APPROVED, comment, timezone.now()
     task.save(update_fields=['approver', 'status', 'comment', 'acted_at', 'updated_at'])
     request_obj.status = WorkflowRequest.Status.WAITING_WAREHOUSE
@@ -486,6 +521,21 @@ def approve_request(request_obj: WorkflowRequest, actor, comment=''):
         status=InventoryReservation.Status.ACTIVE,
     ).update(expires_at=approved_reservation_expiry_time(), updated_at=timezone.now())
     _log(request_obj, actor, 'approve', comment)
+    if self_approved:
+        # 自批是例外而非正常路径，必须留下可检索的痕迹并提醒超管。
+        record_operation(
+            actor, 'request_self_approved', request_obj,
+            summary=f'自批申请 {request_obj.request_no}（系统中没有其他可用审批人）',
+            after={'comment': comment, 'self_approved': True},
+        )
+        _notify_users(
+            User.objects.filter(is_superuser=True, is_active=True),
+            '自批提醒',
+            f'{_person_display(actor)} 审批了自己提交的申请 {request_obj.request_no}；'
+            f'当前系统没有其他具备审批权限的活跃账号。',
+            level='warning',
+            request=request_obj,
+        )
     _notify_users([request_obj.applicant], '仓库申请审核通过', f'申请 {request_obj.request_no} 已通过审核，等待仓库处理。', level='success', request=request_obj)
     return request_obj
 

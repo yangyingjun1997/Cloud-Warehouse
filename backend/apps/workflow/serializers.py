@@ -8,6 +8,8 @@ from .services import is_operator
 
 
 class WorkflowRequestLineSerializer(serializers.ModelSerializer):
+    # 明细只能通过所属申请单的嵌套创建绑定，不能由客户端指定另一张申请单。
+    request = serializers.PrimaryKeyRelatedField(read_only=True)
     asset_code = serializers.CharField(source='asset.asset_code', read_only=True)
     asset_name = serializers.CharField(source='asset.name', read_only=True)
     stock_item_name = serializers.CharField(source='stock_item.name', read_only=True)
@@ -33,7 +35,6 @@ class WorkflowRequestLineSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
-        extra_kwargs = {'request': {'required': False}}
 
     def _is_operator(self):
         request = self.context.get('request')
@@ -173,6 +174,10 @@ class WorkflowRequestSerializer(serializers.ModelSerializer):
         return request_obj
 
     def validate(self, attrs):
+        if self.instance is not None and 'lines' in attrs:
+            raise serializers.ValidationError({
+                'lines': '申请单明细不能通过申请单 PUT/PATCH 修改，请使用明细专用接口或重新编辑草稿。',
+            })
         request_type = attrs.get('request_type', getattr(self.instance, 'request_type', None))
         target_warehouse = attrs.get('target_warehouse', getattr(self.instance, 'target_warehouse', None))
         target_location = attrs.get('target_location', getattr(self.instance, 'target_location', None))

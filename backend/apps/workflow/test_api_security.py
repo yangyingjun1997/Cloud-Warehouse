@@ -73,3 +73,45 @@ class WorkflowRequestCreationAtomicityTests(WarehouseTestFixture, TestCase):
 
         self.assertFalse(WorkflowRequest.objects.filter(applicant=applicant).exists())
         self.assertFalse(WorkflowRequestLine.objects.filter(asset=asset).exists())
+
+    def test_client_cannot_override_nested_line_request(self):
+        applicant = self.make_user('nested-request-applicant')
+        other_request = WorkflowRequest.objects.create(
+            applicant=applicant,
+            request_type=WorkflowRequest.RequestType.BORROW,
+        )
+        asset = self.make_asset(asset_code='NESTED-REQUEST-ASSET-001')
+        serializer = WorkflowRequestSerializer(data={
+            'request_type': WorkflowRequest.RequestType.BORROW,
+            'reason': '禁止客户端改写所属申请单',
+            'lines': [{
+                'request': str(other_request.id),
+                'asset': str(asset.id),
+                'quantity': 1,
+            }],
+        })
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        created = serializer.save(applicant=applicant)
+
+        line = created.lines.get()
+        self.assertEqual(line.request_id, created.id)
+        self.assertNotEqual(line.request_id, other_request.id)
+
+    def test_nested_lines_update_is_rejected_until_explicitly_supported(self):
+        applicant = self.make_user('nested-update-applicant')
+        request_obj = WorkflowRequest.objects.create(
+            applicant=applicant,
+            request_type=WorkflowRequest.RequestType.BORROW,
+        )
+        asset = self.make_asset(asset_code='NESTED-UPDATE-ASSET-001')
+        WorkflowRequestLine.objects.create(request=request_obj, asset=asset)
+
+        serializer = WorkflowRequestSerializer(
+            instance=request_obj,
+            data={'lines': [{'asset': str(asset.id), 'quantity': 1}]},
+            partial=True,
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('lines', serializer.errors)

@@ -60,6 +60,19 @@ class WorkflowRequest(UUIDModel, TimeStampedModel):
     target_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='incoming_requests')
     target_location = models.ForeignKey(Location, on_delete=models.SET_NULL, null=True, blank=True, related_name='incoming_requests')
     recipient_name = models.CharField(max_length=120, blank=True, default='')
+    # 接收人若是系统内账号，用外键关联以便追溯；外部人员只填 recipient_name 并打标记。
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='received_workflow_requests',
+        verbose_name='接收人账号',
+    )
+    is_external_recipient = models.BooleanField(
+        '接收人为非系统用户', default=False,
+        help_text='勾选后接收人只记录姓名，不关联系统账号，需要现场核对身份。',
+    )
     recipient_company = models.CharField(max_length=120, blank=True, default='')
     recipient_phone = models.CharField(max_length=32, blank=True, default='')
     usage_location = models.CharField(max_length=160, blank=True, default='')
