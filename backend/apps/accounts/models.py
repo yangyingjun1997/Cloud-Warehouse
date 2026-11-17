@@ -23,7 +23,9 @@ class Department(UUIDModel, TimeStampedModel):
 class UserProfile(UUIDModel, TimeStampedModel):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='profile')
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True)
-    employee_no = models.CharField(max_length=50, unique=True)
+    # 公司目前没有统一工号体系，外包同事可能完全没有工号：
+    # 这里放开为可空，但保留唯一性（用于对接 HR/钉钉时的匹配键）。
+    employee_no = models.CharField(max_length=50, unique=True, null=True, blank=True)
     phone = models.CharField(max_length=32, blank=True, default='')
     title = models.CharField(max_length=100, blank=True, default='')
     wx_union_id = models.CharField(max_length=128, blank=True, default='')
@@ -69,3 +71,52 @@ class AccountSession(UUIDModel, TimeStampedModel):
 
     def __str__(self) -> str:
         return f'{self.user.get_username()} - {self.device_label or "未知设备"}'
+
+
+class AccountRequest(UUIDModel, TimeStampedModel):
+    """登录页提交的「申请开通账号」。
+
+    系统不开放自助注册：这里只收集申请信息，由管理员在权限页核对后建号。
+    这样既避免管理员逐个口头收集信息，也不会让陌生人凭内网地址直接拿到账号。
+    """
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', '待处理'
+        CREATED = 'created', '已建号'
+        REJECTED = 'rejected', '已驳回'
+
+    real_name = models.CharField('姓名', max_length=50)
+    # 公司没有统一工号体系，申请人可能完全没有工号：改为可空，
+    # 建号时由管理员按需补充。去重改用"姓名+电话"。
+    employee_no = models.CharField('员工工号', max_length=50, blank=True, default='')
+    department_text = models.CharField('部门', max_length=100, blank=True, default='')
+    phone = models.CharField('联系电话', max_length=32)
+    reason = models.TextField('申请说明', blank=True, default='')
+    status = models.CharField(
+        '处理状态', max_length=16, choices=Status.choices, default=Status.PENDING,
+    )
+    handled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='handled_account_requests', verbose_name='处理人',
+    )
+    handled_at = models.DateTimeField('处理时间', null=True, blank=True)
+    handle_note = models.CharField('处理说明', max_length=255, blank=True, default='')
+    created_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='created_from_account_requests', verbose_name='建号结果',
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = '账号开通申请'
+        verbose_name_plural = '账号开通申请'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['real_name', 'phone'],
+                condition=models.Q(status='pending'),
+                name='unique_pending_account_request_per_person',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f'{self.real_name}（{self.employee_no}）{self.get_status_display()}'
