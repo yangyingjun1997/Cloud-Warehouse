@@ -1,3 +1,4 @@
+import re
 import unittest
 
 from PIL import ImageChops
@@ -161,8 +162,36 @@ class LabelRenderingTests(unittest.TestCase):
         zpl = render_zpl_sheet(labels, config, 300)
         self.assertIn('^PW709', zpl)
         self.assertIn('^LL472', zpl)
-        self.assertEqual(zpl.count('^BQN'), 4)
+        # 中文必须由位图承载：ZT610 内置字体没有中文字形，
+        # 一旦回退到 ^A0N/^FD 写文本，中文就会被打印机静默丢弃。
+        self.assertIn('^GFA', zpl)
+        self.assertNotIn('^A0N', zpl)
+        self.assertNotIn('^BQN', zpl)
         self.assertEqual(zpl.count('^XZ'), 1)
+
+    def test_zpl_bitmap_contains_chinese_glyph_pixels(self):
+        """回归：中文必须真的画到位图里，不能只是命令里有个字段。"""
+        config = {**DEFAULT_CONFIG, 'dpi': 203, 'columns': 1, 'rows': 1}
+        label = build_test_labels(1)[0]
+        label['logo_text'] = ''
+        label['qr_image'] = None
+        label['qr_payload'] = ''
+        label['title'] = '激光雷达'
+        label['primary_code'] = ''
+        label['manufacture_sn'] = ''
+        page = next(iter(render_sheet([label], config, 203)))
+        black = sum(1 for value in page.convert('L').getdata() if value < 128)
+        self.assertGreater(black, 50, '中文字形没有渲染出来')
+
+    def test_zpl_payload_size_matches_declared_bitmap(self):
+        config = {**DEFAULT_CONFIG, 'dpi': 203, 'columns': 2, 'rows': 2}
+        zpl = render_zpl_sheet(build_test_labels(1), config, 203)
+        match = re.search(r'\^GFA,(\d+),\d+,(\d+),([0-9A-F]+)\^FS', zpl)
+        self.assertIsNotNone(match)
+        total, row_bytes, data = int(match.group(1)), int(match.group(2)), match.group(3)
+        self.assertEqual(len(data), total * 2)
+        self.assertEqual(len(bytes.fromhex(data)), total)
+        self.assertEqual(total % row_bytes, 0)
 
 
 if __name__ == '__main__':

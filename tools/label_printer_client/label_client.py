@@ -623,61 +623,59 @@ def _zpl_hex(value: object) -> str:
     return ''.join(f'_{byte:02X}' for byte in str(value or '').encode('utf-8'))
 
 
-def render_zpl_sheet(labels: list[dict], config: dict, dpi: int | None = None) -> str:
-    """生成一张固定 60×40 mm 的 ZPL 版面。
+def _image_to_zpl_gfa(image: Image.Image) -> str:
+    """把整页位图转成 ZPL ^GFA 图形字段。
 
-    ZPL 直接告诉 ZT610 纸张宽度和长度，避免 Windows GDI 根据驱动可打印区
-    拉伸位图或把底部溢出内容当成额外走纸。每张物理标签按列/行切成固定格。
+    ZT610 固件的内置字体（^A0N 等）没有中文字形，直接用 ^FD 输出中文会被
+    打印机静默丢弃，表现为"中文全没了、数字还在"。中文必须由位图承载。
+    因此这里把整页渲染结果压成单色位图交给打印机，同时仍用 ^PW/^LL 固定
+    纸张尺寸，兼顾"中文正常"和"不越界多走纸"。
+
+    ZPL 位图按 1 = 黑点、0 = 白点，每字节高位在前；^GFA 的字节数按整行
+    （含补足到 8 的倍数的位数）计算。
+    """
+    # 纯黑白：标签是单色热敏，灰度会被抖动成噪点。
+    mono = image.convert('L').point(lambda v: 0 if v < 128 else 255, 'L').convert('1')
+    width, height = mono.size
+    row_bytes = (width + 7) // 8
+    total_bytes = row_bytes * height
+    pixels = mono.load()
+
+    chunks = []
+    for y in range(height):
+        row = bytearray(row_bytes)
+        for x in range(width):
+            # Image 模式 '1' 下 0 为黑；转成 ZPL 的 1 = 黑
+            if pixels[x, y] == 0:
+                row[x >> 3] |= 0x80 >> (x & 7)
+        chunks.append(row.hex().upper())
+    data = ''.join(chunks)
+    return f'^GFA,{total_bytes},{total_bytes},{row_bytes},{data}'
+
+
+def render_zpl_sheet(labels: list[dict], config: dict, dpi: int | None = None) -> str:
+    """生成一张固定 60×40 mm 的 ZPL 版面，内容以**位图**嵌入。
+
+    早期版本用 ^A0N/^FD 直接写文本，纸张尺寸正确但中文全丢：ZT610 内置字体
+    没有中文字形。纯 GDI 位图版本中文正常，却会因驱动可打印区拉伸而多走纸。
+    这里取两者之长：版面仍由本函数按 60×40 mm 渲染成位图（中文来自系统字体），
+    再整页压成 ^GFA 交给打印机，纸张边界由 ^PW/^LL 锁定。
     """
     dpi = int(dpi or config.get('dpi') or 300)
     sheet_w = mm_to_px(float(config.get('sheet_width_mm') or 60), dpi)
     sheet_h = mm_to_px(float(config.get('sheet_height_mm') or 40), dpi)
-    columns = max(1, int(config.get('columns') or 2))
-    rows = max(1, int(config.get('rows') or 2))
-    gap = mm_to_px(float(config.get('gap_mm') or 0), dpi)
-    margin = mm_to_px(float(config.get('margin_mm') or 0), dpi)
-    offset_x = mm_to_px(float(config.get('offset_x_mm') or 0), dpi)
-    offset_y = mm_to_px(float(config.get('offset_y_mm') or 0), dpi)
-    cell_w = (sheet_w - margin * 2 - gap * (columns - 1)) // columns
-    cell_h = (sheet_h - margin * 2 - gap * (rows - 1)) // rows
-    qr_mag = max(2, min(8, round(mm_to_px(6, dpi) / 30)))
-    per_sheet = columns * rows
+
+    # 复用位图版式：与预览、GDI 通道完全一致，避免两套排版各画一遍。
+    page = next(iter(render_sheet(labels, config, dpi)), None)
+    if page is None:
+        page = Image.new('L', (sheet_w, sheet_h), 255)
 
     commands = [
         '^XA', '^CI28', f'^PW{sheet_w}', f'^LL{sheet_h}',
         '^LH0,0', '^LT0', '^LS0', '^MNY',
+        '^FO0,0', _image_to_zpl_gfa(page), '^FS',
+        '^XZ',
     ]
-    for index, label in enumerate(labels[:per_sheet]):
-        slot = index % per_sheet
-        row, column = divmod(slot, columns)
-        x = offset_x + margin + column * (cell_w + gap)
-        y = offset_y + margin + row * (cell_h + gap)
-        pad = max(4, mm_to_px(0.7, dpi))
-        text_w = max(mm_to_px(11, dpi), cell_w - pad * 2 - mm_to_px(8, dpi))
-        line = max(mm_to_px(1.1, dpi), int(dpi * 0.95 / 25.4))
-        value_line = max(mm_to_px(1.5, dpi), int(dpi * 1.25 / 25.4))
-        qr_x = x + cell_w - pad - mm_to_px(6.5, dpi)
-        qr_y = y + pad
-
-        def text_field(px, py, value, height=line, width=text_w):
-            commands.extend([
-                f'^FO{px},{py}', f'^A0N,{height},{height}',
-                f'^FB{max(width, 1)},1,0,L,0', '^FH', f'^FD{_zpl_hex(value)}^FS',
-            ])
-
-        text_field(x + pad, y + pad, label.get('logo_text') or '仓')
-        text_field(x + pad, y + pad + line + 3, label.get('title') or '', value_line, text_w)
-        text_field(x + pad, y + pad + (line + 3) * 2, f'资产编码：{label.get("primary_code") or ""}', value_line, text_w)
-        serial = str(label.get('manufacture_sn') or '')
-        if serial:
-            text_field(x + pad, y + pad + (line + 3) * 3, f'序列号：{serial}', value_line, text_w)
-
-        qr_payload = label.get('qr_payload') or label.get('primary_code') or ''
-        commands.extend([
-            f'^FO{qr_x},{qr_y}', f'^BQN,2,{qr_mag}', '^FH',
-            f'^FDLA,{_zpl_hex(qr_payload)}^FS',
-        ])
-    commands.append('^XZ')
     return ''.join(commands)
 
 
