@@ -36,9 +36,43 @@ class AccountProfilePageTests(TestCase):
             actor=self.user,
         ).exists())
 
+        profile_page = self.client.get('/account/profile/')
+        self.assertNotContains(profile_page, 'name="dingtalk_user_id"')
+        # 钉钉客户端协议链接无法在 PC 端打开，已移除；绑定状态仍只读展示。
+        self.assertNotContains(profile_page, 'dingtalk://')
+        self.assertContains(profile_page, '钉钉绑定')
+
         page = self.client.get('/')
         self.assertContains(page, '张三')
         self.assertContains(page, '个人资料')
+
+    def test_account_fields_are_read_only_and_not_submittable(self):
+        """账号、工号、部门、钉钉状态不可由本人提交修改。"""
+        response = self.client.post('/account/profile/', {
+            'display_name': '李四',
+            'username': 'hacked-account',
+            'employee_no': 'HACKED-001',
+            'department': '',
+            'dingtalk_user_id': 'forged-userid',
+        })
+
+        self.assertRedirects(response, '/account/profile/')
+        self.user.refresh_from_db()
+        profile = UserProfile.objects.get(user=self.user)
+        self.assertEqual(self.user.username, 'profile-user')
+        self.assertEqual(profile.employee_no, 'EMP-PROFILE')
+        self.assertEqual(profile.dingtalk_user_id, '')
+        self.assertFalse(profile.is_dingtalk_bound)
+        self.assertEqual(self.user.get_full_name(), '李四')
+
+    def test_readonly_fields_render_as_text_not_inputs(self):
+        page = self.client.get('/account/profile/')
+        self.assertNotContains(page, 'name="username"')
+        self.assertNotContains(page, 'name="employee_no"')
+        self.assertNotContains(page, 'name="department"')
+        # 只读信息以展示列表呈现，不再用看起来可编辑的灰框。
+        self.assertContains(page, 'detail-list')
+        self.assertContains(page, 'EMP-PROFILE')
 
     def test_empty_name_falls_back_to_username_and_xss_is_escaped(self):
         self.client.post('/account/profile/', {'display_name': '<script>alert(1)</script>'})

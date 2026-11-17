@@ -59,7 +59,7 @@ class LoginThrottleTests(TestCase):
                 'username': 'throttle-user',
                 'password': 'correct-password',
             }),
-            '用户名或密码不正确，请重新输入。',
+            '登录失败次数过多，请稍后再试。',
         )
         state = LoginThrottleState.objects.get(key__startswith='account:')
         self.assertEqual(state.failure_count, 3)
