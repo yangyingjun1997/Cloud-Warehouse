@@ -61,7 +61,9 @@ from apps.common.permissions import (
     is_system_administrator, is_warehouse_operator,
 )
 from apps.common.security_audit import record_login_event
-from apps.accounts.models import AccountSession, Department, UserProfile
+from apps.common.utils import generate_temporary_password as _generate_temporary_password
+from apps.accounts.models import AccountRequest, AccountSession, Department, UserProfile
+from apps.accounts.username_services import suggest_username
 from apps.accounts.session_services import (
     active_account_sessions,
     is_privileged_session_user,
@@ -1157,15 +1159,15 @@ def permission_management(request):
             department = Department.objects.filter(pk=department_id).first()
             phone = request.POST.get('phone', '').strip()
             dingtalk_user_id = request.POST.get('dingtalk_user_id', '').strip()
-            if not username or not password or not employee_no:
-                messages.error(request, '请填写登录账号、初始密码和员工工号。')
+            if not username or not password:
+                messages.error(request, '请填写登录账号和初始密码。')
             elif len(password) < 8:
                 messages.error(request, '初始密码至少需要 8 个字符。')
             elif not permissions.issubset(PERMISSION_GROUPS):
                 messages.error(request, '请选择有效的业务权限。')
             elif User.objects.filter(username=username).exists():
                 messages.error(request, '该登录账号已存在。')
-            elif UserProfile.objects.filter(employee_no=employee_no).exists():
+            elif employee_no and UserProfile.objects.filter(employee_no=employee_no).exists():
                 messages.error(request, '该员工工号已存在。')
             else:
                 try:
@@ -1178,17 +1180,101 @@ def permission_management(request):
                             target.save(update_fields=['is_staff'])
                         UserProfile.objects.create(
                             user=target,
-                            employee_no=employee_no,
+                            employee_no=employee_no or None,
                             department=department,
                             phone=phone,
                             dingtalk_user_id=dingtalk_user_id,
                             is_dingtalk_bound=bool(dingtalk_user_id),
                             dingtalk_bound_at=timezone.now() if dingtalk_user_id else None,
                         )
+                        # 建号是最高危操作之一，必须留痕：谁、何时、给了什么权限。
+                        record_operation(
+                            request.user, 'account_created', target,
+                            summary=f'创建账号 {username} 并分配权限',
+                            after={
+                                'username': username,
+                                'permissions': sorted(permissions),
+                                'is_admin': is_admin,
+                                'employee_no': employee_no or '',
+                                'department': department.name if department else '',
+                                'phone': phone,
+                            },
+                        )
                 except IntegrityError:
                     messages.error(request, '账号或员工工号已存在，请刷新页面后重新检查。')
                 else:
                     messages.success(request, f'已创建账号 {username} 并分配所选权限。')
+            return redirect('permission_management')
+        if request.POST.get('action') == 'toggle_active':
+            # 离职、调岗的首选处理方式：停用保留全部历史引用，比删除安全。
+            target = User.objects.filter(pk=request.POST.get('user_id')).first()
+            if not target:
+                messages.error(request, '未找到要停用的账号。')
+            elif target.pk == request.user.pk:
+                messages.error(request, '不能停用当前登录账号。')
+            elif target.is_superuser:
+                messages.error(request, '服务器超级管理员账号不能在此停用。')
+            else:
+                was_active = target.is_active
+                with transaction.atomic():
+                    target.is_active = not was_active
+                    target.save(update_fields=['is_active'])
+                    if was_active:
+                        target.account_sessions.filter(revoked_at__isnull=True).update(
+                            revoked_at=timezone.now(),
+                            revoked_reason='账号被停用',
+                        )
+                    record_operation(
+                        request.user,
+                        'account_enabled' if not was_active else 'account_disabled',
+                        target,
+                        summary=('启用' if not was_active else '停用') + f'账号 {target.username}',
+                        before={'is_active': was_active},
+                        after={'is_active': not was_active},
+                    )
+                messages.success(request, f'已{"启用" if not was_active else "停用"}账号 {target.username}。')
+            return redirect('permission_management')
+        if request.POST.get('action') == 'reject_account_request':
+            account_request = AccountRequest.objects.filter(
+                pk=request.POST.get('request_id'),
+                status=AccountRequest.Status.PENDING,
+            ).first()
+            if not account_request:
+                messages.error(request, '未找到待处理的账号开通申请。')
+            else:
+                note = request.POST.get('handle_note', '').strip()
+                with transaction.atomic():
+                    account_request.status = AccountRequest.Status.REJECTED
+                    account_request.handled_by = request.user
+                    account_request.handled_at = timezone.now()
+                    account_request.handle_note = note[:255]
+                    account_request.save(update_fields=[
+                        'status', 'handled_by', 'handled_at', 'handle_note', 'updated_at',
+                    ])
+                    record_operation(
+                        request.user, 'account_request_rejected', account_request,
+                        summary=f'驳回账号开通申请 {account_request.real_name}（{account_request.phone}）',
+                        after={'handle_note': note[:255]},
+                    )
+                messages.success(request, '已驳回该开通申请。')
+            return redirect('permission_management')
+        if request.POST.get('action') == 'resolve_account_request':
+            # 建号成功后把申请标记为已处理，避免待办列表长期堆积。
+            account_request = AccountRequest.objects.filter(
+                pk=request.POST.get('request_id'),
+                status=AccountRequest.Status.PENDING,
+            ).first()
+            if not account_request:
+                messages.error(request, '未找到待处理的账号开通申请。')
+            else:
+                account_request.status = AccountRequest.Status.CREATED
+                account_request.handled_by = request.user
+                account_request.handled_at = timezone.now()
+                account_request.handle_note = request.POST.get('handle_note', '').strip()[:255]
+                account_request.save(update_fields=[
+                    'status', 'handled_by', 'handled_at', 'handle_note', 'updated_at',
+                ])
+                messages.success(request, f'已将 {account_request.real_name} 的开通申请标记为已建号。')
             return redirect('permission_management')
         if request.POST.get('action') == 'delete_user':
             target = User.objects.filter(pk=request.POST.get('user_id')).first()
@@ -1198,6 +1284,14 @@ def permission_management(request):
                 messages.error(request, '不能删除当前登录账号。')
             elif target.is_superuser:
                 messages.error(request, '服务器超级管理员账号不能在此页面删除。')
+            elif target.groups.filter(name='warehouse_label_print').exists() and target.username == 'label-printer':
+                # 打印客户端的专用 API 账号：删掉后所有打印机立刻全部失败，
+                # 且失败原因不够直观，这里直接禁止误删。
+                messages.error(
+                    request,
+                    'label-printer 是标签打印客户端的专用接口账号，删除会导致所有打印机停止工作，'
+                    '不允许在此页面删除。如确需更换，请先在打印客户端改用其他账号。',
+                )
             else:
                 try:
                     with transaction.atomic():
@@ -1210,18 +1304,58 @@ def permission_management(request):
                         )
                         target.delete()
                 except ProtectedError:
-                    messages.error(request, '该账号已有受保护的业务记录，不能删除；请保留账号以维持历史追溯。')
+                    messages.error(
+                        request,
+                        '该账号仍被其他记录引用，不能删除。若只是人员离职或调岗，'
+                        '请改用「停用」：账号不能再登录，但历史单据和审计仍然完整可查。',
+                    )
                 else:
                     messages.success(request, f'已删除账号 {target.username}。')
+            return redirect('permission_management')
+        if request.POST.get('action') == 'reset_password':
+            target = User.objects.filter(pk=request.POST.get('user_id')).first()
+            if not target:
+                messages.error(request, '未找到要重置密码的账号。')
+            elif target.is_superuser:
+                messages.error(request, '服务器超级管理员密码只能通过服务器运维方式重置。')
+            else:
+                temporary = _generate_temporary_password()
+                with transaction.atomic():
+                    target.set_password(temporary)
+                    target.save(update_fields=['password'])
+                    # 重置后立刻作废该账号的其他登录会话，避免旧会话继续可用。
+                    revoked = target.account_sessions.filter(revoked_at__isnull=True).update(
+                        revoked_at=timezone.now(),
+                        revoked_reason='管理员重置密码后自动作废',
+                    )
+                    record_operation(
+                        request.user, 'account_password_reset', target,
+                        summary=f'管理员为账号 {target.username} 重置了临时密码',
+                        after={'temporary_password_issued': True, 'revoked_sessions': revoked},
+                    )
+                messages.success(
+                    request,
+                    f'已为 {target.username} 生成临时密码：{temporary}　'
+                    f'请当面或通过可靠渠道转交，用户登录后应立即修改；同时已作废 {revoked} 个旧登录会话。',
+                )
             return redirect('permission_management')
         target = User.objects.filter(pk=request.POST.get('user_id')).first()
         permissions = set(request.POST.getlist('permissions'))
         is_admin = request.POST.get('is_admin') == '1'
+        employee_no = request.POST.get('employee_no', '').strip()
+        department_id = request.POST.get('department_id') or None
+        department = Department.objects.filter(pk=department_id).first() if department_id else None
         if not target or not permissions.issubset(PERMISSION_GROUPS):
             messages.error(request, '请选择有效的账号和权限。')
         elif target.is_superuser:
             messages.error(request, '超级管理员角色只能通过服务器运维账号管理，不能在此页面降级。')
+        elif employee_no and UserProfile.objects.filter(employee_no=employee_no).exclude(user=target).exists():
+            messages.error(request, '该员工工号已被其他账号占用。')
         else:
+            before_permissions = sorted(
+                target.groups.filter(name__in=PERMISSION_GROUPS).values_list('name', flat=True)
+            )
+            was_admin = target.groups.filter(name='warehouse_admin').exists()
             target.groups.remove(*groups.values())
             legacy_group = Group.objects.filter(name='warehouse_staff').first()
             if legacy_group:
@@ -1234,23 +1368,80 @@ def permission_management(request):
             dingtalk_user_id = request.POST.get('dingtalk_user_id', '').strip()
             profile = UserProfile.objects.filter(user=target).first()
             if profile:
+                before_profile = {
+                    'employee_no': profile.employee_no,
+                    'department': profile.department.name if profile.department_id else '',
+                    'dingtalk_user_id': profile.dingtalk_user_id,
+                }
                 profile.dingtalk_user_id = dingtalk_user_id
                 profile.is_dingtalk_bound = bool(dingtalk_user_id)
                 profile.dingtalk_bound_at = timezone.now() if dingtalk_user_id else None
+                profile.employee_no = employee_no or None
+                profile.department = department
                 profile.save(update_fields=[
-                    'dingtalk_user_id', 'is_dingtalk_bound', 'dingtalk_bound_at', 'updated_at',
+                    'dingtalk_user_id', 'is_dingtalk_bound', 'dingtalk_bound_at',
+                    'employee_no', 'department', 'updated_at',
                 ])
-            messages.success(request, f'已更新 {target.username} 的业务权限。')
+                after_profile = {
+                    'employee_no': employee_no,
+                    'department': department.name if department else '',
+                    'dingtalk_user_id': dingtalk_user_id,
+                }
+                if before_profile != after_profile:
+                    record_operation(
+                        request.user, 'account_profile_updated', target,
+                        summary=f'更新账号 {target.username} 的工号、部门或钉钉绑定',
+                        before=before_profile, after=after_profile,
+                    )
+            after_permissions = sorted(permissions)
+            now_admin = bool(is_admin)
+            # 提权和降权是最高危操作：即使其它字段没变也要单独留痕。
+            if before_permissions != after_permissions or was_admin != now_admin:
+                record_operation(
+                    request.user, 'account_permissions_updated', target,
+                    summary=f'变更账号 {target.username} 的业务权限',
+                    before={'permissions': before_permissions, 'is_admin': was_admin},
+                    after={'permissions': after_permissions, 'is_admin': now_admin},
+                )
+            messages.success(request, f'已更新 {target.username} 的账号信息与业务权限。')
         return redirect('permission_management')
     rows = []
     for user in User.objects.prefetch_related('groups').order_by('username'):
         names = {group.name for group in user.groups.all()}
-        rows.append({'user': user, 'profile': UserProfile.objects.filter(user=user).first(), 'permissions': names & set(PERMISSION_GROUPS), 'is_admin': 'warehouse_admin' in names, 'role_label': '超级管理员' if user.is_superuser else '仓库管理员' if 'warehouse_admin' in names else '、'.join(PERMISSION_GROUPS[name] for name in names if name in PERMISSION_GROUPS) or '普通员工'})
+        granted = names & set(PERMISSION_GROUPS)
+        if user.is_superuser:
+            role_label = '超级管理员'
+        elif 'warehouse_admin' in names:
+            role_label = '仓库管理员'
+        elif granted:
+            # 权限项名称拼在表格里会把整行拉变形，这里只给数量，明细看右侧胶囊。
+            role_label = f'{len(granted)} 项权限'
+        else:
+            role_label = '普通员工'
+        rows.append({
+            'user': user,
+            'profile': UserProfile.objects.filter(user=user).first(),
+            'permissions': granted,
+            'is_admin': 'warehouse_admin' in names,
+            'display_name': user.get_full_name().strip(),
+            'role_label': role_label,
+            'permission_count': len(granted),
+        })
     return render(request, 'permission_management.html', {
         'user_rows': rows,
         'permission_choices': PERMISSION_GROUPS,
         'departments': Department.objects.filter(is_active=True).order_by('name'),
         'dingtalk_status': dingtalk_configuration_status(),
+        'pending_account_requests': [
+            {
+                'record': record,
+                # 管理员建号时不需要自己想英文名，这里按中文名预生成拼音账号。
+                'suggested_username': suggest_username(record.real_name),
+            }
+            for record in AccountRequest.objects.filter(
+                status=AccountRequest.Status.PENDING,
+            ).order_by('created_at')
+        ],
         'user_can_use_admin': True,
         'user_is_operator': is_warehouse_operator(request.user),
         'user_is_system_admin': True,
@@ -1491,6 +1682,9 @@ def warehouse_management(request):
     asset_view = request.GET.get('view', 'assets').strip()
     if asset_view not in {'assets', 'types'}:
         asset_view = 'assets'
+    # 类型汇总 -> 单件资产是一次性的钻取上下文。
+    # 返回汇总页时清掉该上下文带来的 item_type，避免把明细筛选误留在汇总页。
+    from_type_drilldown = request.GET.get('from_type') == '1'
     selected_statuses = [value for value in status.split(',') if value]
     # 资产过滤逻辑与 CSV 导出共用 _warehouse_filtered_assets，保证口径一致。
     assets = _warehouse_filtered_assets(request)
@@ -1637,6 +1831,11 @@ def warehouse_management(request):
         'dir': direction if sort else '',
     }
     filter_params = {key: value for key, value in filter_params.items() if value not in ('', None)}
+    type_filter_params = dict(filter_params)
+    if from_type_drilldown:
+        type_filter_params.pop('item_type', None)
+    type_filter_params.pop('sort', None)
+    type_filter_params.pop('dir', None)
     # 检索框常驻，其余筛选条件收进面板；这里统计面板里有几项生效。
     advanced_count = sum(1 for value in (
         status, location_state, availability_state, quality_state,
@@ -1656,6 +1855,18 @@ def warehouse_management(request):
         asset_sort_links[key] = urlencode(params)
     # 「还原初始顺序」：丢掉 sort/dir，回到默认的按更新时间倒序。
     asset_reset_sort_url = urlencode({**base_params, 'tab': 'assets'})
+    # 搜索框旁的「清空」：清掉搜索词与全部筛选条件，但保留当前标签页和视图，
+    # 避免用户点清空后跳到另一个视图。每页条数属于显示偏好，不随筛选一起重置。
+    current_tab = tab if tab in {'assets', 'stock'} else 'assets'
+    reset_params = {'tab': current_tab}
+    if current_tab == 'assets':
+        reset_params['view'] = asset_view
+    asset_reset_filter_query = urlencode(reset_params)
+    # page_size 与排序不是"筛选条件"，判断是否可清空时要排除，否则按钮永远是可点状态。
+    has_active_filters = bool({
+        key: value for key, value in filter_params.items()
+        if key not in {'page_size', 'sort', 'dir'}
+    })
     return render(request, 'warehouse_management.html', {
         'assets': asset_page,
         'stock_items': stock_page,
@@ -1682,6 +1893,9 @@ def warehouse_management(request):
         'quality_state_choices': Asset.QualityState.choices,
         'disposition_state_choices': Asset.DispositionState.choices,
         'asset_filter_query': urlencode({**filter_params, 'tab': 'assets'}),
+        'asset_type_filter_query': urlencode({**type_filter_params, 'tab': 'assets', 'view': 'types'}),
+        'asset_reset_filter_query': asset_reset_filter_query,
+        'has_active_filters': has_active_filters,
         'stock_filter_query': urlencode({**filter_params, 'tab': 'stock'}),
         'asset_count': assets.count(),
         'stock_item_count': stock_items.count(),
@@ -2676,6 +2890,13 @@ def inventory_import(request):
                     records = parse_asset_v2_workbook(content)
                     issues = validate_asset_v2_records(records)
                     summary = {'valid_row_count': len(records), 'asset_count': len(records), 'stock_item_count': 0, 'template_version': 2}
+                else:
+                    # 两个模板嗅探都不匹配时必须明确拒绝，否则 summary/records 未定义，
+                    # 直接掉进下面的引用会变成 500，用户只看到"服务器错误"。
+                    raise InventoryV3ImportError(
+                        '无法识别该 Excel 模板。请下载最新的“库存 V3”模板'
+                        '（需包含「单件资产」和「耗材配件」两个工作表）后重新导入。'
+                    )
                 summary = {
                     **summary,
                     'error_count': sum(issue['severity'] == 'error' for issue in issues),
@@ -4206,6 +4427,19 @@ def request_create(request, request_id=None):
         request_type = request.POST.get('request_type', '')
         reason = request.POST.get('reason', '').strip()
         recipient_name = request.POST.get('recipient_name', '').strip()
+        is_external_recipient = request.POST.get('is_external_recipient') == '1'
+        # 接收人二选一：系统内账号走外键，外部人员只留姓名并打标记。
+        recipient_user = None
+        if not is_external_recipient:
+            recipient_user = User.objects.filter(
+                pk=request.POST.get('recipient_id') or None, is_active=True,
+            ).first()
+            if recipient_user:
+                # 姓名以账号为准，避免 recipient_name 里存成拼音或与账号脱节。
+                recipient_name = recipient_user.get_full_name().strip() or recipient_user.get_username()
+            elif recipient_name:
+                # 兼容直接填写姓名的调用（含历史表单与 API）：视为非系统用户。
+                is_external_recipient = True
         recipient_company = request.POST.get('recipient_company', '').strip()
         recipient_phone = request.POST.get('recipient_phone', '').strip()
         usage_location = request.POST.get('usage_location', '').strip()
@@ -4237,6 +4471,12 @@ def request_create(request, request_id=None):
                 expected_return_date = date.fromisoformat(expected_return_text)
             if len(asset_ids) != len(selected_assets) or len(stock_item_ids) != len(selected_stock_items):
                 raise WorkflowError('部分已选物品不存在，请移除后重新选择。')
+            if request_type in {
+                WorkflowRequest.RequestType.BORROW,
+                WorkflowRequest.RequestType.ISSUE,
+            } and action == 'submit' and not recipient_user and not recipient_name:
+                # 允许直接填写姓名（视为非系统用户），但提交时二者至少要有其一。
+                raise WorkflowError('请填写实际使用人或接收人。')
             _attach_request_candidate_state(selected_assets, selected_stock_items, request.user)
             stock_quantities = {
                 str(item.id): _stock_quantity_from_post(request, item.id)
@@ -4314,6 +4554,12 @@ def request_create(request, request_id=None):
                 workflow_request.reason = reason
                 workflow_request.designated_approver = designated_approver
                 workflow_request.recipient_name = recipient_name if request_type != WorkflowRequest.RequestType.RETURN else ''
+                workflow_request.recipient = recipient_user if request_type != WorkflowRequest.RequestType.RETURN else None
+                workflow_request.is_external_recipient = bool(
+                    is_external_recipient
+                    and request_type != WorkflowRequest.RequestType.RETURN
+                    and recipient_name
+                )
                 workflow_request.recipient_company = recipient_company if request_type != WorkflowRequest.RequestType.RETURN else ''
                 workflow_request.recipient_phone = recipient_phone if request_type != WorkflowRequest.RequestType.RETURN else ''
                 workflow_request.usage_location = usage_location if request_type != WorkflowRequest.RequestType.RETURN else ''
@@ -4390,7 +4636,11 @@ def request_create(request, request_id=None):
         initial_application_date = draft.application_date
         initial_expected_return_date = draft.expected_return_date or timezone.localdate()
     form_values = {
-        'recipient_name': getattr(initial_source, 'recipient_name', '') or request.user.get_username(),
+        # 默认把当前登录账号作为接收人，但只填外键；姓名由模型/视图从账号派生，
+        # 避免把拼音账号当成人名写进 recipient_name。
+        'recipient_id': str(getattr(initial_source, 'recipient_id', '') or request.user.pk),
+        'is_external_recipient': bool(getattr(initial_source, 'is_external_recipient', False)),
+        'recipient_name': getattr(initial_source, 'recipient_name', ''),
         'recipient_company': getattr(initial_source, 'recipient_company', '') or getattr(
             getattr(getattr(request.user, 'profile', None), 'department', None), 'name', ''
         ),
@@ -4430,10 +4680,17 @@ def request_create(request, request_id=None):
             (WorkflowRequest.RequestType.RETURN, '归还'),
             (WorkflowRequest.RequestType.ISSUE, '领用'),
         ],
+        # 审批人候选只列真正具备审批权限的账号，并排除申请人自己：
+        # 自己审批自己等于审批环节失效，除非系统里没有其他审批人（下方单独处理）。
         'approver_choices': User.objects.filter(
             is_active=True,
             groups__name__in=['warehouse_approval', 'warehouse_staff', 'warehouse_admin'],
-        ).distinct().order_by('username'),
+        ).exclude(pk=request.user.pk).distinct().order_by('username'),
+        'has_other_approver': User.objects.filter(
+            is_active=True,
+            groups__name__in=['warehouse_approval', 'warehouse_staff', 'warehouse_admin'],
+        ).exclude(pk=request.user.pk).exists(),
+        'recipient_choices': User.objects.filter(is_active=True).order_by('first_name', 'username'),
         'customers': Customer.objects.filter(is_active=True).order_by('name'),
         'projects': Project.objects.filter(is_active=True).select_related('customer').order_by('name'),
         'work_orders': WorkOrder.objects.filter(is_active=True).select_related('project').order_by('name'),

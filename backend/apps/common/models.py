@@ -81,10 +81,19 @@ class OperationAuditLog(ImmutableAuditMixin, UUIDModel, TimeStampedModel):
 
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        # 保持 PROTECT：数据库触发器禁止 UPDATE 审计表，SET_NULL 会在删号时
+        # 发出 UPDATE 而被拒绝。有审计记录的账号不允许硬删，离职改用「停用」。
         on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name='operation_audit_logs',
+    )
+    # 冗余快照：用于展示，以及在将来需要松绑外键时仍能追溯操作人。
+    actor_username = models.CharField(
+        '操作人账号快照', max_length=150, blank=True, default='',
+    )
+    actor_display_name = models.CharField(
+        '操作人姓名快照', max_length=150, blank=True, default='',
     )
     action = models.CharField(max_length=80)
     target_model = models.CharField(max_length=120)

@@ -35,8 +35,20 @@ def form_change_data(form) -> tuple[dict, dict]:
 
 
 def record_operation(actor, action: str, target, *, summary: str = '', before=None, after=None):
+    real_actor = actor if getattr(actor, 'is_authenticated', False) else None
+    # 冗余保存操作人身份：账号被删除后审计行仍然可读（actor 会变成 NULL）。
+    username = ''
+    display_name = ''
+    if real_actor is not None:
+        username = (real_actor.get_username() or '')[:150]
+        try:
+            display_name = (real_actor.get_full_name() or '').strip()[:150]
+        except AttributeError:
+            display_name = ''
     return OperationAuditLog.objects.create(
-        actor=actor if getattr(actor, 'is_authenticated', False) else None,
+        actor=real_actor,
+        actor_username=username,
+        actor_display_name=display_name,
         action=action,
         target_model=target._meta.label_lower,
         target_id=target.pk,

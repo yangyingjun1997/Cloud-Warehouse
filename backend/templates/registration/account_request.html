@@ -1,0 +1,17 @@
+{% extends "registration/login_base.html" %}
+{% block title %}申请开通账号 - 售后仓库管理系统{% endblock %}
+{% block body %}
+<main>
+  <div class="brand"><span class="mark">仓</span><div><h1>申请开通账号</h1><p>提交后由系统管理员核对并开通</p></div></div>
+  {% if messages %}{% for message in messages %}<div class="notice {{ message.tags }}">{{ message }}</div>{% endfor %}{% endif %}
+  <form method="post">
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="error">{{ form.non_field_errors|join:'；' }}</div>{% endif %}
+    <label>姓名 <span class="required">*</span>{{ form.real_name }}{% if form.real_name.errors %}<span class="field-error">{{ form.real_name.errors|join:'；' }}</span>{% endif %}</label>
+    <label>联系电话 <span class="required">*</span>{{ form.phone }}{% if form.phone.errors %}<span class="field-error">{{ form.phone.errors|join:'；' }}</span>{% endif %}</label>
+    <label>申请说明{{ form.reason }}</label>
+    <button type="submit">提交申请</button>
+  </form>
+  <div class="foot"><a href="{% url 'login' %}">返回登录</a></div>
+</main>
+{% endblock %}

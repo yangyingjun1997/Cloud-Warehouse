@@ -2,12 +2,17 @@ from django.contrib.auth import views as auth_views
 from django.urls import path
 
 from . import views
-from .auth_views import RateLimitedLoginView, RestrictedPasswordChangeView
+from .auth_views import (
+    RateLimitedLoginView,
+    RestrictedPasswordChangeView,
+    account_request_create,
+)
 from apps.workflow import web_views as workflow_web_views
 
 urlpatterns = [
     path('', views.home, name='home'),
     path('login/', RateLimitedLoginView.as_view(redirect_authenticated_user=True), name='login'),
+    path('login/request-account/', account_request_create, name='account_request'),
     path('logout/', views.logout_view, name='logout'),
     path('account/profile/', views.account_profile, name='account_profile'),
     path('account/sessions/', views.account_session_list, name='account_session_list'),
