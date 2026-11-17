@@ -22,12 +22,13 @@ def outbox_key(*parts) -> str:
     return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
 
-def enqueue_users_or_group(users, title: str, content: str, *, idempotency_key: str):
+def enqueue_users_or_group(users, title: str, content: str, *, idempotency_key: str, channel: str = 'default'):
     user_ids = sorted({str(user.pk) for user in users if user and user.is_active})
     return DingTalkOutbox.objects.get_or_create(
         idempotency_key=idempotency_key,
         defaults={
             'delivery_mode': DingTalkOutbox.DeliveryMode.USERS_OR_GROUP,
+            'channel': channel,
             'recipient_user_ids': user_ids,
             'title': title,
             'content': content,
@@ -50,11 +51,12 @@ def enqueue_personal(users, title: str, content: str, *, idempotency_key: str):
     )
 
 
-def enqueue_group(title: str, content: str, *, idempotency_key: str):
+def enqueue_group(title: str, content: str, *, idempotency_key: str, channel: str = 'default'):
     return DingTalkOutbox.objects.get_or_create(
         idempotency_key=idempotency_key,
         defaults={
             'delivery_mode': DingTalkOutbox.DeliveryMode.GROUP,
+            'channel': channel,
             'title': title,
             'content': content,
             'next_attempt_at': timezone.now(),
@@ -92,8 +94,9 @@ def _claim_due(limit: int, *, now, lock_timeout: timedelta):
 
 
 def _deliver(row: DingTalkOutbox) -> tuple[bool, str]:
+    channel = getattr(row, 'channel', '') or 'default'
     if row.delivery_mode == DingTalkOutbox.DeliveryMode.GROUP:
-        delivered = send_group_message(row.title, row.content)
+        delivered = send_group_message(row.title, row.content, channel=channel)
         return delivered, '' if delivered else '群机器人未配置或发送失败'
 
     users = list(User.objects.filter(pk__in=row.recipient_user_ids, is_active=True))
@@ -103,7 +106,7 @@ def _deliver(row: DingTalkOutbox) -> tuple[bool, str]:
         reasons = sorted({result.reason for result in results if not result.delivered and result.reason})
         return delivered, '；'.join(reasons) or ('未找到可送达的接收人' if not delivered else '')
 
-    results = send_users_or_group(users, row.title, row.content)
+    results = send_users_or_group(users, row.title, row.content, channel=channel)
     group_delivered = any(result.channel == 'dingtalk_group' and result.delivered for result in results)
     personal_results = [result for result in results if result.channel == 'dingtalk_personal']
     delivered = group_delivered or bool(personal_results and all(result.delivered for result in personal_results))

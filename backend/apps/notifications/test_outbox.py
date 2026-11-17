@@ -51,7 +51,8 @@ class DingTalkOutboxTests(WarehouseTestFixture, TestCase):
         self.assertEqual(row.status, DingTalkOutbox.Status.DELIVERED)
         self.assertEqual(row.attempt_count, 1)
         self.assertIsNotNone(row.delivered_at)
-        sender.assert_called_once_with('测试送达', '消息内容')
+        # 渠道化为多群预留后，worker 会显式传 channel 参数（默认 'default'）
+        sender.assert_called_once_with('测试送达', '消息内容', channel='default')
 
     @patch('apps.notifications.outbox.send_group_message', return_value=False)
     def test_worker_retries_then_marks_terminal_failure(self, sender):

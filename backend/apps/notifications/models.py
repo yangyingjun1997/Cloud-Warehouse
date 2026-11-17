@@ -77,6 +77,10 @@ class DingTalkOutbox(UUIDModel, TimeStampedModel):
         default=DeliveryMode.USERS_OR_GROUP,
     )
     recipient_user_ids = models.JSONField(default=list, blank=True)
+    # 通知渠道：当前只有 default（全部进同一个群）。
+    # 保留该字段是为将来把运维告警拆到独立群时无需改表结构——
+    # 配上 DINGTALK_WEBHOOK_OPS 后，运维类消息用 'ops' 渠道即可。
+    channel = models.CharField('通知渠道', max_length=24, default='default', blank=True)
     title = models.CharField(max_length=160)
     content = models.TextField()
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
