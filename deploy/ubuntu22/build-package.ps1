@@ -70,6 +70,10 @@ $excludedRelativeDirs = @(
     "backend\backups",
     "backend\media",
     "backend\staticfiles",
+    "backend\.test-tmp",
+    "backend\.review-tmp",
+    ".test-run-temp",
+    ".review-tmp",
     "tools\label_printer_client\build",
     "tools\label_printer_client\dist"
 )

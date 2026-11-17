@@ -33,6 +33,7 @@ release-*.tar.gz
 
 # ---- 本地测试临时目录 ----
 backend/.test-tmp/
+.test-run-temp/
 
 # ---- 工具运行产物 ----
 artifacts/
