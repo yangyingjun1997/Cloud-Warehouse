@@ -47,6 +47,22 @@ class LocationActiveFlagTests(TestCase):
         saved = form.save()
         self.assertFalse(saved.is_active)
 
+    def test_location_list_shows_status_column_like_warehouse(self):
+        """库位列表必须和仓库一样展示启用/停用状态，否则用户看不出哪些已停用。"""
+        admin = User.objects.create_user(username='loc_col_admin', password='Pw#2026aa')
+        admin.is_staff = True
+        admin.groups.add(_group('warehouse_admin'))
+
+        Location.objects.create(warehouse=self.warehouse, code='L-ON', name='启用库位', is_active=True)
+        Location.objects.create(warehouse=self.warehouse, code='L-OFF', name='停用库位', is_active=False)
+
+        self.client.force_login(admin)
+        html = self.client.get('/warehouse/setup/locations/').content.decode('utf-8')
+
+        self.assertIn('<th>状态</th>', html)
+        self.assertIn('>启用<', html)
+        self.assertIn('>停用<', html)
+
 
 class AccountReviewPermissionTests(TestCase):
     """账号开通与建号：显式授权，不继承 warehouse_staff 的宽泛兜底。"""
