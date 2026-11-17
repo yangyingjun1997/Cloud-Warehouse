@@ -11,8 +11,8 @@ from apps.common.audit import record_operation
 from apps.common.utils import build_code
 
 from .models import (
-    Asset, ImportBatch, ImportIssue, ImportMutation, ItemType, Location, StockItem, Supplier,
-    Warehouse,
+    Asset, ImportBatch, ImportIssue, ImportMutation, ItemType, Location, StockItem,
+    StockItemHolding, Supplier, Warehouse,
 )
 from .import_recovery_services import record_import_mutation, snapshot_instance
 from .v2_import_services import (
@@ -37,6 +37,39 @@ STOCK_HEADERS = [
 
 class InventoryV3ImportError(ValueError):
     pass
+
+
+def validate_stock_baseline_safety(*, warehouse_ids, imported_ids):
+    """Reject omission of stock that still has reservations or outstanding loans."""
+    from apps.workflow.models import InventoryReservation, StockItemLoan
+
+    missing = StockItem.objects.select_for_update().filter(
+        warehouse_id__in=warehouse_ids, quantity__gt=0,
+    ).exclude(id__in=imported_ids)
+    blocked = []
+    for stock_item in missing:
+        blockers = []
+        if InventoryReservation.objects.filter(
+            stock_item=stock_item, status=InventoryReservation.Status.ACTIVE,
+        ).exists():
+            blockers.append('存在库存预占')
+        if StockItemHolding.objects.filter(stock_item=stock_item, quantity__gt=0).exists():
+            blockers.append('存在个人借用余额')
+        if StockItemLoan.objects.filter(
+            stock_item=stock_item,
+            status=StockItemLoan.Status.ACTIVE,
+            outstanding_quantity__gt=0,
+        ).exists():
+            blockers.append('存在未归还借用')
+        if blockers:
+            blocked.append(f'{stock_item.code}（{"、".join(blockers)}）')
+    if blocked:
+        preview = '；'.join(blocked[:5])
+        suffix = f'；另有 {len(blocked) - 5} 条' if len(blocked) > 5 else ''
+        raise InventoryV3ImportError(
+            f'全量基准导入将归零仍有业务关系的耗材配件，已阻断写入：{preview}{suffix}。'
+            '请补入源表或先完成对应借用/预占。'
+        )
 
 
 def _text(value) -> str:
@@ -370,6 +403,28 @@ def apply_inventory_v3_import(*, actor, batch, records, warning_reason=''):
         warehouse = Warehouse.objects.filter(code__iexact=record['warehouse_code']).first()
         if warehouse:
             represented_warehouse_ids.add(warehouse.id)
+
+    if batch.mode == ImportBatch.Mode.BASELINE:
+        stock_warehouse_codes = {
+            record['warehouse_code'] for record in records['stocks'] if record.get('warehouse_code')
+        }
+        stock_warehouse_ids = set(
+            Warehouse.objects.filter(code__in=stock_warehouse_codes)
+            .values_list('id', flat=True)
+        )
+        stock_codes = {
+            record['stock_code'] for record in records['stocks'] if record.get('stock_code')
+        }
+        stock_imported_ids = set(
+            StockItem.objects.filter(code__in=stock_codes).values_list('id', flat=True)
+        )
+        if stock_warehouse_ids:
+            # 在任何资产或耗材写入前检查，保证整批导入失败时没有部分副作用。
+            validate_stock_baseline_safety(
+                warehouse_ids=stock_warehouse_ids,
+                imported_ids=stock_imported_ids,
+            )
+
     baseline_asset_before = {
         asset.id: snapshot_instance(asset)
         for asset in Asset.objects.select_for_update().filter(

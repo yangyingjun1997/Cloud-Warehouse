@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
 from django.db import transaction
+from django.db.models import Q
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 
@@ -18,7 +19,8 @@ from .code_services import (
 )
 from .models import (
     Asset, AssetAssemblyLink, AssetIdentifier, AssetTypeCode, ImportBatch, InventoryDomain,
-    ItemType, Location, Manufacturer, ProductModelCode, Project, Supplier, Warehouse, WorkOrder,
+    ItemType, Location, MaintenanceRecord, Manufacturer, ProductModelCode, Project, Supplier,
+    Warehouse, WorkOrder,
 )
 
 
@@ -64,6 +66,39 @@ IMPORTABLE_ASSET_STATUSES = [
 _STATUS_ALIASES = {label: value for value, label in Asset.Status.choices}
 _STATUS_ALIASES.update({value: value for value, label in Asset.Status.choices})
 _DEFAULT_IMPORT_STATUS = Asset.Status.IN_STOCK
+
+
+def _baseline_asset_blockers(asset):
+    """Return active relationships that make baseline omission unsafe."""
+    blockers = []
+    if asset.status not in {Asset.Status.IN_STOCK, Asset.Status.DISABLED}:
+        blockers.append(f'当前状态为{asset.get_status_display()}')
+    if asset.reservations.filter(status='active').exists():
+        blockers.append('存在库存预占')
+    if MaintenanceRecord.objects.filter(asset=asset).exclude(
+        status__in=[MaintenanceRecord.Status.COMPLETED, MaintenanceRecord.Status.CANCELED],
+    ).exists():
+        blockers.append('存在未完成维修记录')
+    return blockers
+
+
+def validate_asset_baseline_safety(*, warehouse_ids, imported_ids):
+    """Raise before any write when a baseline would disable an active asset."""
+    missing = Asset.objects.select_for_update().filter(
+        warehouse_id__in=warehouse_ids,
+    ).exclude(id__in=imported_ids).exclude(status=Asset.Status.DISABLED)
+    blocked = []
+    for asset in missing:
+        blockers = _baseline_asset_blockers(asset)
+        if blockers:
+            blocked.append(f'{asset.system_asset_no or asset.asset_code or asset.name}（{"、".join(blockers)}）')
+    if blocked:
+        preview = '；'.join(blocked[:5])
+        suffix = f'；另有 {len(blocked) - 5} 件' if len(blocked) > 5 else ''
+        raise AssetV2ImportError(
+            f'全量基准导入将停用仍有业务关系的资产，已阻断写入：{preview}{suffix}。'
+            '请补入源表或先完成对应业务闭环。'
+        )
 
 
 def parse_asset_status(raw: str) -> str:
@@ -595,6 +630,27 @@ def apply_asset_v2_import(
     asset_type_codes_map = {t.code: t for t in AssetTypeCode.objects.filter(code__in=asset_type_codes)}
     projects = {p.code: p for p in Project.objects.filter(code__in=project_codes)}
     work_orders = {w.code: w for w in WorkOrder.objects.filter(code__in=work_order_codes)}
+
+    represented_warehouse_ids = {
+        warehouses[record['warehouse_code']].id
+        for record in records
+        if record.get('warehouse_code') in warehouses
+    }
+    if batch.mode == ImportBatch.Mode.BASELINE and represented_warehouse_ids:
+        imported_system_numbers = {record['system_asset_no'] for record in records if record.get('system_asset_no')}
+        imported_asset_codes = {record['asset_code'] for record in records if record.get('asset_code')}
+        imported_ids = set(
+            Asset.objects.filter(
+                Q(system_asset_no__in=imported_system_numbers)
+                | Q(asset_code__in=imported_asset_codes),
+            )
+            .values_list('id', flat=True)
+        )
+        validate_asset_baseline_safety(
+            warehouse_ids=represented_warehouse_ids,
+            imported_ids=imported_ids,
+        )
+    represented_warehouses = set(represented_warehouse_ids)
 
     # 预加载 Location（依赖 warehouse）
     location_keys = {(r['warehouse_code'], r['location_code']) for r in records if r.get('location_code')}

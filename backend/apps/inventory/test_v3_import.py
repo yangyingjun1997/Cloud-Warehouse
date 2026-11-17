@@ -298,6 +298,161 @@ class InventoryV3ImportTests(TestCase):
         missing.refresh_from_db()
         self.assertEqual(missing.quantity, 9)
 
+    def test_baseline_blocks_missing_asset_with_active_status_before_any_write(self):
+        missing = Asset.objects.create(
+            name='基准缺失借出资产', item_type=self.asset_type,
+            warehouse=self.warehouse, location=self.location,
+            status=Asset.Status.BORROWED,
+        )
+        included = Asset.objects.create(
+            name='基准保留资产', item_type=self.asset_type,
+            warehouse=self.warehouse, location=self.location,
+        )
+        content = self._content(asset_rows=[self._asset_row(
+            导入动作='更新', 系统永久编号=included.system_asset_no,
+            资产名称='不应被部分更新',
+        )])
+        records, issues, batch = self._preview(content)
+        self.assertFalse([issue for issue in issues if issue['severity'] == 'error'])
+        batch.mode = ImportBatch.Mode.BASELINE
+        batch.save(update_fields=['mode', 'updated_at'])
+
+        with self.assertRaisesMessage(InventoryV3ImportError, '仍有业务关系'):
+            apply_inventory_v3_import(actor=self.admin, batch=batch, records=records)
+
+        missing.refresh_from_db()
+        included.refresh_from_db()
+        batch.refresh_from_db()
+        self.assertEqual(missing.status, Asset.Status.BORROWED)
+        self.assertEqual(included.name, '基准保留资产')
+        self.assertEqual(batch.status, ImportBatch.Status.PREVIEWED)
+
+    def test_baseline_blocks_missing_asset_with_active_reservation(self):
+        from apps.workflow.models import InventoryReservation, WorkflowRequest, WorkflowRequestLine
+
+        missing = Asset.objects.create(
+            name='基准缺失预占资产', item_type=self.asset_type,
+            warehouse=self.warehouse, location=self.location,
+        )
+        included = Asset.objects.create(
+            name='基准保留资产二', item_type=self.asset_type,
+            warehouse=self.warehouse, location=self.location,
+        )
+        request_obj = WorkflowRequest.objects.create(
+            applicant=self.admin, request_type=WorkflowRequest.RequestType.BORROW,
+        )
+        line = WorkflowRequestLine.objects.create(request=request_obj, asset=missing)
+        InventoryReservation.objects.create(
+            request_line=line, asset=missing, quantity=1,
+        )
+        content = self._content(asset_rows=[self._asset_row(
+            导入动作='更新', 系统永久编号=included.system_asset_no,
+        )])
+        records, issues, batch = self._preview(content)
+        self.assertFalse([issue for issue in issues if issue['severity'] == 'error'])
+        batch.mode = ImportBatch.Mode.BASELINE
+        batch.save(update_fields=['mode', 'updated_at'])
+
+        with self.assertRaisesMessage(InventoryV3ImportError, '库存预占'):
+            apply_inventory_v3_import(actor=self.admin, batch=batch, records=records)
+
+        self.assertEqual(batch.mutations.count(), 0)
+        self.assertEqual(batch.status, ImportBatch.Status.PREVIEWED)
+
+    def test_baseline_blocks_missing_asset_with_open_maintenance_record(self):
+        from apps.inventory.models import MaintenanceRecord
+
+        missing = Asset.objects.create(
+            name='基准缺失维修资产', item_type=self.asset_type,
+            warehouse=self.warehouse, location=self.location,
+        )
+        included = Asset.objects.create(
+            name='基准保留资产三', item_type=self.asset_type,
+            warehouse=self.warehouse, location=self.location,
+        )
+        MaintenanceRecord.objects.create(
+            asset=missing, fault_description='待处理故障',
+            status=MaintenanceRecord.Status.OPEN,
+        )
+        content = self._content(asset_rows=[self._asset_row(
+            导入动作='更新', 系统永久编号=included.system_asset_no,
+        )])
+        records, issues, batch = self._preview(content)
+        self.assertFalse([issue for issue in issues if issue['severity'] == 'error'])
+        batch.mode = ImportBatch.Mode.BASELINE
+        batch.save(update_fields=['mode', 'updated_at'])
+
+        with self.assertRaisesMessage(InventoryV3ImportError, '未完成维修记录'):
+            apply_inventory_v3_import(actor=self.admin, batch=batch, records=records)
+
+        self.assertEqual(batch.status, ImportBatch.Status.PREVIEWED)
+
+    def test_baseline_blocks_missing_stock_with_holding_before_asset_write(self):
+        from apps.inventory.models import StockItemHolding
+
+        missing = StockItem.objects.create(
+            name='基准缺失借用耗材', code='V3-BASELINE-HOLDING', item_type=self.stock_type,
+            warehouse=self.warehouse, location=self.location, quantity=9, unit='件',
+        )
+        included = StockItem.objects.create(
+            name='基准保留耗材二', code='V3-BASELINE-HOLDING-KEEP', item_type=self.stock_type,
+            warehouse=self.warehouse, location=self.location, quantity=5, unit='件',
+        )
+        StockItemHolding.objects.create(stock_item=missing, holder=self.admin, quantity=2)
+        content = self._content(stock_rows=[self._stock_row(
+            导入动作='更新', 耗材配件编码=included.code, 物品名称='不应被部分更新',
+        )])
+        records, issues, batch = self._preview(content)
+        self.assertFalse([issue for issue in issues if issue['severity'] == 'error'])
+        batch.mode = ImportBatch.Mode.BASELINE
+        batch.save(update_fields=['mode', 'updated_at'])
+
+        with self.assertRaisesMessage(InventoryV3ImportError, '个人借用余额'):
+            apply_inventory_v3_import(actor=self.admin, batch=batch, records=records)
+
+        missing.refresh_from_db()
+        included.refresh_from_db()
+        self.assertEqual(missing.quantity, 9)
+        self.assertEqual(included.name, '基准保留耗材二')
+        self.assertEqual(batch.status, ImportBatch.Status.PREVIEWED)
+
+    def test_baseline_blocks_missing_stock_with_active_loan(self):
+        from datetime import date
+
+        from apps.workflow.models import StockItemLoan, WorkflowRequest, WorkflowRequestLine
+
+        missing = StockItem.objects.create(
+            name='基准缺失未归还耗材', code='V3-BASELINE-LOAN', item_type=self.stock_type,
+            warehouse=self.warehouse, location=self.location, quantity=9, unit='件',
+        )
+        included = StockItem.objects.create(
+            name='基准保留耗材三', code='V3-BASELINE-LOAN-KEEP', item_type=self.stock_type,
+            warehouse=self.warehouse, location=self.location, quantity=5, unit='件',
+        )
+        request_obj = WorkflowRequest.objects.create(
+            applicant=self.admin, request_type=WorkflowRequest.RequestType.BORROW,
+        )
+        line = WorkflowRequestLine.objects.create(
+            request=request_obj, stock_item=missing, quantity=2,
+        )
+        StockItemLoan.objects.create(
+            borrower=self.admin, stock_item=missing, source_line=line,
+            original_quantity=2, outstanding_quantity=2,
+            expected_return_date=date.today(),
+        )
+        content = self._content(stock_rows=[self._stock_row(
+            导入动作='更新', 耗材配件编码=included.code,
+        )])
+        records, issues, batch = self._preview(content)
+        self.assertFalse([issue for issue in issues if issue['severity'] == 'error'])
+        batch.mode = ImportBatch.Mode.BASELINE
+        batch.save(update_fields=['mode', 'updated_at'])
+
+        with self.assertRaisesMessage(InventoryV3ImportError, '未归还借用'):
+            apply_inventory_v3_import(actor=self.admin, batch=batch, records=records)
+
+        self.assertEqual(batch.status, ImportBatch.Status.PREVIEWED)
+
     def test_rollback_is_blocked_after_business_history(self):
         from apps.workflow.models import WorkflowRequest, WorkflowRequestLine
 

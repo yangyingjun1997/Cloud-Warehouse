@@ -3,8 +3,11 @@ import unicodedata
 from django.db.models import Q
 
 
+
 MAX_SEARCH_QUERY_LENGTH = 256
 MAX_BOOLEAN_SEARCH_TOKENS = 32
+# 递归下降解析的嵌套上限：`'(' * 1200` 这类输入会 RecursionError 打成 500。
+MAX_BOOLEAN_SEARCH_DEPTH = 16
 
 
 def normalize_scan_value(value: str) -> str:
@@ -85,6 +88,7 @@ def _tokenize(expression: str) -> list:
 
 def _parse_boolean(tokens: list) -> Q:
     position = 0
+    depth = 0
 
     def peek():
         return tokens[position] if position < len(tokens) else None
@@ -111,22 +115,28 @@ def _parse_boolean(tokens: list) -> Q:
                 return query
 
     def parse_unary() -> Q:
-        nonlocal position
-        token = peek()
-        if token == '!':
-            position += 1
-            return _negated_q(parse_unary())
-        if token == '(':
-            position += 1
-            query = parse_or()
-            if peek() != ')':
-                raise ValueError('missing closing parenthesis')
-            position += 1
-            return query
-        if isinstance(token, tuple) and token[0] == 'term' and token[1]:
-            position += 1
-            return _term_q(token[1])
-        raise ValueError('unexpected token')
+        nonlocal position, depth
+        depth += 1
+        if depth > MAX_BOOLEAN_SEARCH_DEPTH:
+            raise ValueError('expression too deep')
+        try:
+            token = peek()
+            if token == '!':
+                position += 1
+                return _negated_q(parse_unary())
+            if token == '(':
+                position += 1
+                query = parse_or()
+                if peek() != ')':
+                    raise ValueError('missing closing parenthesis')
+                position += 1
+                return query
+            if isinstance(token, tuple) and token[0] == 'term' and token[1]:
+                position += 1
+                return _term_q(token[1])
+            raise ValueError('unexpected token')
+        finally:
+            depth -= 1
 
     query = parse_or()
     if position != len(tokens):
@@ -158,7 +168,8 @@ def asset_search_query(value: str) -> Q:
         if len(tokens) > MAX_BOOLEAN_SEARCH_TOKENS:
             return _literal_q(value)
         query = _parse_boolean(tokens)
-    except ValueError:
-        # 表达式不完整时退回普通包含搜索，避免用户看到服务器错误。
+    except (ValueError, RecursionError):
+        # 表达式不完整、过深或 token 过多时退回普通包含搜索，
+        # 避免用户看到服务器错误（递归过深会抛 RecursionError 而非 ValueError）。
         return _literal_q(value)
     return query
