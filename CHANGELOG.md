@@ -6,6 +6,7 @@
 
 ### 2026-11-18
 
+- **待解决问题推进**。①布局：审计确认实际只有 3 个页面（composite_unit / inventory_conversion / transaction_list）的按钮还在 `page-heading` 内，已改为独立 `page-actions` 行；其余 9 个带筛选栏页面此前已规范。②依赖：用 OSV API 逐个查询 16 个锁定依赖，**0 个已知漏洞**，生产版本 Django 5.2.19 / DRF 3.18.3 / Pillow 13.0.0 均已是安全版本，`REVIEW_REPORT.md` 中该条记录已过时。③异机备份：新增 `offsite-backup.sh` + 每日 03:30 timer，支持 rsync / 本地挂载盘 / S3；未配置 `offsite.env` 时静默跳过（实测确认），启用只需建该文件。④CI：新增 `check-all.sh` 一键检查（check、迁移漂移、pip check、diff --check、全量测试），`--fast` 可跳过测试。
 - **首次完成备份恢复演练**。此前只验证过 `pg_restore --list`（能读目录），从未真恢复。本轮从最近备份恢复到独立临时库 `warehouse_restore_drill`：哈希校验通过、`pg_restore` exit=0、资产 636 / 用户 4 / 审计 1096 / 物品类型 78 / 库位 25 全部到位、真实读到 `AST-00000022` 与 `asset_identity_applied`、外键 193 个、索引 402 个、**审计只增不改的 10 个触发器随备份恢复**；演练库用完即删，生产库未受影响。结论：备份可用。
 - 新增 `PROJECT_REVIEW_20261118.md` 项目完整复盘：项目定位、已具备功能、待推进、待解决、远期规划、近期改动、验证记录、下一步建议。
 - releases 保留数 5 → 3（省 270 MB）。每个版本约 130 MB（代码 + venv），2 个回滚点足够覆盖常见回退。

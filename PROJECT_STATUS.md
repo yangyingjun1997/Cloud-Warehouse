@@ -100,6 +100,18 @@
 
 见 **`PROJECT_REVIEW_20261118.md`**：项目定位、已具备功能、待推进功能、待解决问题、远期规划、近期改动全清单。该文档面向交接与决策，权威进度仍以本文件为准。
 
+### 2026-11-18 待解决问题推进结果
+
+| 原问题 | 结论 |
+| --- | --- |
+| 7 个页面「按钮在 page-heading + 筛选栏」布局 | **审计后实际只有 3 个**（composite_unit / inventory_conversion / transaction_list），已全部改为独立 `page-actions` 行。其余 9 个带筛选栏的页面此前已规范。 |
+| 依赖有公开漏洞 | **已不存在**。用 OSV API 逐个查询 16 个锁定依赖，**0 个已知漏洞**；生产实际版本 Django 5.2.19 / DRF 3.18.3 / Pillow 13.0.0 均已是当前安全版本。`REVIEW_REPORT.md` 中该条记录已过时。 |
+| 异机备份缺失 | **机制已建好**。新增 `offsite-backup.sh` + 每日 03:30 timer，支持 rsync / 本地挂载盘 / S3 三种模式。**未配置 `/srv/after-sales-warehouse/offsite.env` 时静默跳过**（实测确认），不阻断主备份。启用只需按脚本头部注释创建该文件，不需要改代码。 |
+| 无 CI | **已补一键检查**。新增 `deploy/ubuntu22/check-all.sh`，覆盖 `manage.py check`、迁移漂移、`pip check`、`git diff --check`、工作区状态与全量测试；`--fast` 可跳过测试。WSL 实测通过。 |
+| Cloudflare WAF / 速率限制 | **仍需在 Cloudflare 面板操作**，属用户侧配置，代码层无法代劳。 |
+
+**当前 10 个定时任务**（新增异地备份）：钉钉 outbox（每分钟）、健康检查（5 分钟）、预占过期（每小时）、备份（02:16）、一致性检查（03:04）、**异地备份（03:30）**、安全清理（03:45）、借用提醒（09:10）、media 清理（周日 03:43）、低库存周报（周一 09:03）。
+
 > 版本读取注意：权威文件是 `/opt/after-sales-warehouse/current/release-info`（随 release 目录走）。同一目录下的 `/opt/after-sales-warehouse/current-release` 是 2026-11-06 遗留的陈旧文件（仍写着 `release_version=20261106-182713`、`source_revision=bbc187c`），读取它会得到错误版本，不要用它判断当前 release。
 
 ### Previous release (已部署，本轮被替换)
