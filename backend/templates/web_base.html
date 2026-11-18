@@ -228,6 +228,13 @@
     .form-card { max-width: 860px; margin-top: 22px; padding: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
     .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; margin-top: 18px; }
     .form-field { display: grid; gap: 6px; }
+    /* 纯勾选框行：没有 label + 控件的两行结构，不应参与网格行高计算。
+       过去把 <label class="checkbox-inline"> 塞进带 select 的 form-field 里，
+       该网格行会多出一行高度，同一行相邻字段被一起撑大——表现为
+       「接收人姓名」「联系电话」比别处更高、画幅不协调。
+       把勾选行独立出来后，它自身高度压到与普通控件一致。 */
+    .form-field.checkbox-row { align-content: center; min-height: 35px; }
+    .form-field.checkbox-row .checkbox-inline { margin-top: 0; }
     .form-field.full { grid-column: 1 / -1; }
     .form-field label { color: var(--ink); font-size: 12px; font-weight: 650; }
     .required { color: var(--coral); }

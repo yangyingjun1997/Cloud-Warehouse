@@ -67,3 +67,27 @@ class RecipientFieldVisibilityTests(TestCase):
         html = self._page()
         self.assertEqual(html.count('id="recipient_select"'), 1)
         self.assertEqual(html.count('id="recipient_name"'), 1)
+
+    def test_external_checkbox_is_own_row(self):
+        """勾选框必须独立成行。
+
+        历史问题：把 checkbox-inline 塞进带 select 的 form-field 后，该网格行
+        多出一行高度，同一行的「接收人姓名」「联系电话」被一起撑大，
+        表现为字段高度不一致、画幅不协调。
+        """
+        html = self._page()
+        self.assertIn('form-field checkbox-row', html)
+
+        # 接收人 select 所在的 form-field 内不能再出现勾选框
+        match = re.search(
+            r'<div class="form-field"[^>]*>(?:(?!</div>).)*?id="recipient_select"(?:(?!</div>).)*?</div>',
+            html, re.S,
+        )
+        self.assertIsNotNone(match, '未找到接收人下拉框容器')
+        self.assertNotIn('checkbox-inline', match.group(0),
+                         '勾选框仍在接收人 select 的 form-field 内，会撑高该行')
+
+    def test_checkbox_row_style_defined(self):
+        """校验行样式必须存在，否则独立出来仍然是普通 form-field 高度。"""
+        html = self._page()
+        self.assertIn('form-field.checkbox-row', html)
