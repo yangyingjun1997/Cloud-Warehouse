@@ -3,10 +3,10 @@ Description=Periodic Cloudflare Tunnel health self-heal for 售后仓库
 Documentation=https://developers.cloudflare.com/cloudflare-one/connections/connect-apps
 
 [Timer]
-# 每 5 分钟检查一次。断连后最多 5 分钟自动恢复，
-# 同时不会因为一次瞬时抖动就频繁重启。
-OnBootSec=3min
-OnUnitActiveSec=5min
+# 每 10 分钟检查一次。判断依据是 metrics 里的实时连接数，
+# 不是日志事件，因此不会被时间窗口影响。
+OnBootSec=5min
+OnUnitActiveSec=10min
 AccuracySec=30s
 
 [Install]

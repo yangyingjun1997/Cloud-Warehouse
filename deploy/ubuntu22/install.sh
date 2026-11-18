@@ -207,6 +207,11 @@ if [[ -n "$RESOLVED_PUBLIC_DOMAIN" ]]; then
   RESOLVED_SERVER_NAME="$RESOLVED_SERVER_NAME $RESOLVED_PUBLIC_DOMAIN"
 fi
 
+# server_name 去重：--host 传入的地址也会被网卡探测再次收集，
+# 不去重会出现「192.168.x.x 192.168.x.x domain domain」这种重复项。
+# Nginx 能接受重复但可读性差，且掩盖配置来源问题。
+RESOLVED_SERVER_NAME="$(echo "$RESOLVED_SERVER_NAME" | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ' | sed 's/ $//')"
+
 if [[ $OFFLINE_UPDATE -eq 0 ]]; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
