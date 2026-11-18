@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily offsite backup push for 售后仓库
+Documentation=https://example.invalid/after-sales-warehouse/offsite-backup
+
+[Timer]
+# 本地备份 02:16 开始，留足余量后 03:30 推送（避开 03:04 一致性检查的读压力）
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

@@ -427,12 +427,15 @@ install -m 644 "$SCRIPT_DIR/after-sales-warehouse-dingtalk-outbox.service" /etc/
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-dingtalk-outbox.timer" /etc/systemd/system/after-sales-warehouse-dingtalk-outbox.timer
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-media-gc.service" /etc/systemd/system/after-sales-warehouse-media-gc.service
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-media-gc.timer" /etc/systemd/system/after-sales-warehouse-media-gc.timer
+install -m 644 "$SCRIPT_DIR/after-sales-warehouse-offsite-backup.service" /etc/systemd/system/after-sales-warehouse-offsite-backup.service
+install -m 644 "$SCRIPT_DIR/after-sales-warehouse-offsite-backup.timer" /etc/systemd/system/after-sales-warehouse-offsite-backup.timer
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-logrotate" /etc/logrotate.d/after-sales-warehouse
 install -d -m 755 /etc/systemd/journald.conf.d
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-journald.conf" /etc/systemd/journald.conf.d/after-sales-warehouse.conf
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-tmpfiles.conf" /etc/tmpfiles.d/after-sales-warehouse.conf
 install -m 750 "$SCRIPT_DIR/backup.sh" /usr/local/sbin/after-sales-warehouse-backup
 install -m 750 "$SCRIPT_DIR/media-gc.sh" /usr/local/sbin/after-sales-warehouse-media-gc
+install -m 750 "$SCRIPT_DIR/offsite-backup.sh" /usr/local/sbin/after-sales-warehouse-offsite-backup
 install -m 750 "$SCRIPT_DIR/runtime-status.sh" /usr/local/sbin/after-sales-warehouse-status
 install -m 750 "$SCRIPT_DIR/health-monitor.sh" /usr/local/sbin/after-sales-warehouse-health
 install -m 750 "$SCRIPT_DIR/restore-drill.sh" /usr/local/sbin/after-sales-warehouse-restore-drill
@@ -459,6 +462,7 @@ systemctl enable --now after-sales-warehouse-consistency.timer
 systemctl enable --now after-sales-warehouse-security-cleanup.timer
 systemctl enable --now after-sales-warehouse-dingtalk-outbox.timer
 systemctl enable --now after-sales-warehouse-media-gc.timer
+systemctl enable --now after-sales-warehouse-offsite-backup.timer
 systemctl enable nginx
 # `enable --now` does not reload an already-running Nginx process.
 systemctl reload nginx

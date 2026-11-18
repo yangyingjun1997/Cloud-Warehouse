@@ -1,0 +1,17 @@
+[Unit]
+Description=Push warehouse backups offsite
+Documentation=https://example.invalid/after-sales-warehouse/offsite-backup
+# 在本地备份（02:16）之后运行，确保推的是当天新产物
+After=after-sales-warehouse-backup.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+# 未配置 /srv/after-sales-warehouse/offsite.env 时脚本会静默跳过，不报错。
+ExecStart=/usr/local/sbin/after-sales-warehouse-offsite-backup
+TimeoutStartSec=3600
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=after-sales-warehouse-offsite-backup
