@@ -24,18 +24,23 @@ from apps.common.audit import record_operation
 
 from .models import Asset, AssetLifecycleEvent
 
-# 允许登记持有人的状态：这些状态意味着「资产不在仓库里」。
-# 刻意排除 IN_STOCK / PENDING_INSPECTION 等仍在仓的状态，
-# 也排除 SOLD / SCRAPPED 等终态（应走客户或处置记录而非持有人）。
-HOLDER_REGISTRABLE_STATUSES = frozenset({
-    Asset.Status.BORROWED,
-    Asset.Status.ISSUED,
-    Asset.Status.INTERNAL_BORROW,
-    Asset.Status.SHIPPED_OUT,
-    Asset.Status.PENDING_RETURN,
-    Asset.Status.REPAIRING,
-    Asset.Status.MAINTENANCE,
+# 不能登记持有人的状态：判据是「东西还在仓库」或「东西已不存在」。
+#
+# 早期版本反过来只列了少数几个允许状态（borrowed/issued/repairing…），
+# 把 sold、returned_to_vendor、lost、damaged 全都挡在外面。但「已售出」
+# 同样意味着资产离开了仓库，也需要记录现在在谁手上——用户明确指出过这点。
+# 因此改成排除法：只要不是下面这几种矛盾状态，都允许登记。
+HOLDER_NOT_APPLICABLE_STATUSES = frozenset({
+    Asset.Status.IN_STOCK,            # 在库：东西还在仓库，有持有人是自相矛盾
+    Asset.Status.PENDING_INSPECTION,  # 待质检：同样还在仓
+    Asset.Status.SCRAPPED,            # 已报废：物品已不存在
 })
+
+# 兼容既有引用：所有未被排除的状态都可登记
+HOLDER_REGISTRABLE_STATUSES = frozenset(
+    status for status in Asset.Status.values
+    if status not in HOLDER_NOT_APPLICABLE_STATUSES
+)
 
 MAX_HOLDER_REGISTRATION_BATCH = 50
 

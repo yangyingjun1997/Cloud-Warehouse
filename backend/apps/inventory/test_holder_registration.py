@@ -29,6 +29,14 @@ class HolderRegistrableStatusTests(TestCase):
         """在库资产不该有持有人。"""
         self.assertNotIn(Asset.Status.IN_STOCK, HOLDER_REGISTRABLE_STATUSES)
 
+    def test_pending_inspection_not_registrable(self):
+        """待质检说明东西还在仓。"""
+        self.assertNotIn(Asset.Status.PENDING_INSPECTION, HOLDER_REGISTRABLE_STATUSES)
+
+    def test_scrapped_not_registrable(self):
+        """已报废物品已不存在。"""
+        self.assertNotIn(Asset.Status.SCRAPPED, HOLDER_REGISTRABLE_STATUSES)
+
     def test_out_of_warehouse_statuses_registrable(self):
         for status in (
             Asset.Status.BORROWED,
@@ -39,10 +47,25 @@ class HolderRegistrableStatusTests(TestCase):
             with self.subTest(status=status):
                 self.assertIn(status, HOLDER_REGISTRABLE_STATUSES)
 
-    def test_terminal_statuses_not_registrable(self):
-        for status in (Asset.Status.SOLD, Asset.Status.SCRAPPED):
+    def test_sold_and_returned_registrable(self):
+        """已售出、已退供应商同样离开了仓库，必须能记录现在在谁手上。
+
+        用户明确指出过：只有「在库」才不该有持有人。
+        """
+        for status in (
+            Asset.Status.SOLD,
+            Asset.Status.RETURNED_TO_VENDOR,
+            Asset.Status.LOST,
+            Asset.Status.DAMAGED,
+        ):
             with self.subTest(status=status):
-                self.assertNotIn(status, HOLDER_REGISTRABLE_STATUSES)
+                self.assertIn(status, HOLDER_REGISTRABLE_STATUSES)
+
+    def test_only_three_statuses_excluded(self):
+        """排除法：只应有 3 个状态不可登记，避免以后又收窄成白名单。"""
+        from apps.inventory.holder_services import HOLDER_NOT_APPLICABLE_STATUSES
+
+        self.assertEqual(len(HOLDER_NOT_APPLICABLE_STATUSES), 3)
 
 
 class RegisterAssetHolderTests(TestCase):
@@ -201,3 +224,55 @@ class HolderPageRenderingTests(TestCase):
     def test_form_hidden_for_in_stock_asset(self):
         html = self.client.get(f'/warehouse/assets/{self.in_stock.id}/lifecycle/').content.decode('utf-8')
         self.assertNotIn('holder-register-box', html)
+
+
+class AssetEditPageStatusCardTests(TestCase):
+    """编辑资产页必须一眼看到状态与持有人，并能就地登记。
+
+    用户反馈：编辑页全是静态属性（编码/型号/采购单号），最需要看的
+    实时状态和持有人反而只在生命周期页，信息架构是反的。
+    """
+
+    def setUp(self):
+        user = User.objects.create_user(username='card_actor', password='Pw#2026aa')
+        user.is_staff = True
+        for group in ('warehouse_admin', 'warehouse_state_correction'):
+            user.groups.add(Group.objects.get_or_create(name=group)[0])
+        self.client.force_login(user)
+
+        self.warehouse = Warehouse.objects.create(name='卡片仓', code='CARD-WH')
+        category = Category.objects.create(name='卡片分类', code='CARD-CAT')
+        item_type = ItemType.objects.create(name='卡片类型', code='CARD-IT', category=category)
+        self.borrowed = Asset.objects.create(
+            name='借出', system_asset_no='AST-CARD-B1', item_type=item_type,
+            warehouse=self.warehouse, status=Asset.Status.BORROWED,
+        )
+        self.sold = Asset.objects.create(
+            name='售出', system_asset_no='AST-CARD-S1', item_type=item_type,
+            warehouse=self.warehouse, status=Asset.Status.SOLD,
+        )
+        self.in_stock = Asset.objects.create(
+            name='在库', system_asset_no='AST-CARD-I1', item_type=item_type,
+            warehouse=self.warehouse, status=Asset.Status.IN_STOCK,
+        )
+
+    def _html(self, asset):
+        response = self.client.get(f'/warehouse/assets/{asset.id}/')
+        self.assertEqual(response.status_code, 200)
+        return response.content.decode('utf-8')
+
+    def test_edit_page_shows_status_card(self):
+        for asset in (self.borrowed, self.sold, self.in_stock):
+            with self.subTest(asset=asset.system_asset_no):
+                self.assertIn('asset-status-card', self._html(asset))
+
+    def test_holder_button_shown_for_out_of_warehouse(self):
+        for asset in (self.borrowed, self.sold):
+            with self.subTest(asset=asset.system_asset_no):
+                self.assertIn('id="holder-toggle"', self._html(asset))
+
+    def test_holder_button_hidden_for_in_stock(self):
+        html = self._html(self.in_stock)
+        self.assertNotIn('id="holder-toggle"', html)
+        # 应给出明确提示，而不是让用户找不到入口
+        self.assertIn('资产在库，不应有持有人', html)

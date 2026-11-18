@@ -6,6 +6,67 @@
 {% block content %}
   <div class="page-heading"><div><h1>{% if asset %}编辑资产{% else %}录入资产{% endif %}</h1><p class="page-copy">系统永久编号自动生成。已有 SC/DZSB 原样录入；没有行政编码但确认按资产管理时，可按型号维护的源表 SC 前缀续号。</p></div><div class="page-actions">{% if asset %}<a class="button button-primary" href="{% url 'asset_lifecycle' asset.id %}">生命周期与维修</a>{% endif %}{% if asset and user_is_system_admin %}<a class="button button-secondary" href="{% url 'asset_domain_change' asset.id %}">调整资产归属</a><a class="button button-secondary" href="{% url 'controlled_asset_delete' asset.id %}">删除测试资产</a>{% endif %}{% if asset and asset.status == 'in_stock' %}<a class="button button-secondary" href="{% url 'inventory_conversion' %}?direction=asset_to_stock&amp;asset_id={{ asset.id }}">转为耗材配件</a>{% endif %}<a class="button button-secondary" href="{% url 'warehouse_management' %}">返回仓库管理</a></div></div>
   {% if asset %}<section class="asset-qr-card"><img src="data:image/png;base64,{{ asset_qr_image }}" alt="{{ asset.system_asset_no }} 二维码"><div><h2>资产身份标签</h2><p>资产编码：<span class="code">{{ asset.asset_code|default:'暂未赋码' }}</span></p><p>系统永久编号：<span class="code">{{ asset.system_asset_no }}</span></p><p>生产厂家 SN：<span class="code">{{ asset.serial_number|default:'未提供' }}</span></p><p>二维码协议：<span class="code">{{ asset.qr_value }}</span></p></div></section>{% endif %}
+  {% if asset %}
+  {# 实时状态卡片：编辑页原本只放静态属性（编码/型号/采购），
+     而最需要一眼看到的「当前状态 + 持有人 + 库位」却只在生命周期页。
+     这里把状态置顶成只读卡片，并提供就地登记持有人的入口。 #}
+  <section class="asset-status-card">
+    <style>
+      .asset-status-card { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px 22px;
+        margin-top: 14px; padding: 16px 18px; background: #f7fbfa; border: 1px solid #c5ded9; border-radius: 8px; }
+      .asset-status-card .cell span { display: block; color: var(--muted); font-size: 10px; letter-spacing: .03em; }
+      .asset-status-card .cell strong { display: block; margin-top: 5px; font-size: 14px; }
+      .asset-status-card .cell strong .tag { font-size: 11px; }
+      .asset-status-card .cell-holder { grid-column: 1 / -1; }
+      .asset-status-card .holder-actions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+      .asset-status-card .holder-hint { color: var(--muted); font-size: 11px; }
+      .holder-inline-form { margin-top: 12px; padding-top: 12px; border-top: 1px solid #d9ece8; }
+      .holder-inline-form[hidden] { display: none; }
+    </style>
+    <div class="cell"><span>当前状态</span><strong><span class="tag {% if asset.status == 'in_stock' %}in-stock{% elif asset.status in 'borrowed,issued,internal_borrow,shipped_out' %}pending{% else %}neutral{% endif %}">{{ asset.get_status_display }}</span></strong></div>
+    <div class="cell"><span>仓库 / 库位</span><strong>{{ asset.warehouse.name|default:'未分配' }}{% if asset.location %} / {{ asset.location.code }}{% endif %}</strong></div>
+    <div class="cell"><span>可用性</span><strong>{{ asset.get_availability_state_display|default:'—' }}</strong></div>
+    <div class="cell"><span>质量 / 处置</span><strong>{{ asset.get_quality_state_display|default:'—' }}{% if asset.disposition_state %} / {{ asset.get_disposition_state_display }}{% endif %}</strong></div>
+    <div class="cell cell-holder">
+      <span>当前持有人</span>
+      <strong>{% if asset.current_holder %}{{ asset.current_holder.get_full_name|default:asset.current_holder.username }}（系统账号：{{ asset.current_holder.username }}）{% elif asset.external_holder_name %}{{ asset.external_holder_name }}{% if asset.external_holder_company %}（{{ asset.external_holder_company }}）{% endif %}{% if asset.external_holder_phone %} · {{ asset.external_holder_phone }}{% endif %}{% else %}无{% endif %}</strong>
+      <div class="holder-actions">
+        {% if holder_registrable and can_correct_state %}
+          <button type="button" class="button button-secondary" id="holder-toggle">{% if asset.current_holder or asset.external_holder_name %}修改持有人{% else %}登记持有人{% endif %}</button>
+          <span class="holder-hint">历史台账补录用；正常出入库请走业务单据。</span>
+        {% elif asset.status == 'in_stock' %}
+          <span class="holder-hint">资产在库，不应有持有人。需要借出请走快速出入库或申请流程。</span>
+        {% else %}
+          <span class="holder-hint">当前状态（{{ asset.get_status_display }}）不支持登记持有人。</span>
+        {% endif %}
+      </div>
+      {% if holder_registrable and can_correct_state %}
+      <form method="post" class="holder-inline-form lifecycle-form-grid" id="holder-inline-form" hidden>
+        {% csrf_token %}
+        <input type="hidden" name="action" value="register_holder">
+        <input type="hidden" name="holder-expected_asset_updated_at" value="{{ asset.updated_at|date:'c' }}">
+        {% if holder_form.non_field_errors %}<div class="form-field full"><div class="notice error">{{ holder_form.non_field_errors }}</div></div>{% endif %}
+        <div class="form-field"><label for="{{ holder_form.holder.id_for_label }}">系统内账号</label>{{ holder_form.holder }}<small class="field-help">与外部持有人二选一</small></div>
+        <div class="form-field"><label for="{{ holder_form.external_holder_name.id_for_label }}">外部持有人姓名</label>{{ holder_form.external_holder_name }}</div>
+        <div class="form-field"><label for="{{ holder_form.external_holder_company.id_for_label }}">单位</label>{{ holder_form.external_holder_company }}</div>
+        <div class="form-field"><label for="{{ holder_form.external_holder_phone.id_for_label }}">电话</label>{{ holder_form.external_holder_phone }}</div>
+        <div class="form-field full"><label for="{{ holder_form.reason.id_for_label }}">登记原因 <span class="required">*</span></label>{{ holder_form.reason }}</div>
+        <div class="form-actions full"><button class="button button-primary" type="submit">保存持有人</button><button class="button button-secondary" type="button" id="holder-cancel">取消</button></div>
+      </form>
+      {% endif %}
+    </div>
+  </section>
+  <script>
+    (() => {
+      const toggle = document.getElementById('holder-toggle');
+      const form = document.getElementById('holder-inline-form');
+      const cancel = document.getElementById('holder-cancel');
+      if (!toggle || !form) return;
+      toggle.addEventListener('click', () => { form.hidden = !form.hidden; if (!form.hidden) form.querySelector('select, input')?.focus(); });
+      cancel?.addEventListener('click', () => { form.hidden = true; });
+    })();
+  </script>
+  {% endif %}
   <form method="post" class="form-card management-form">{% csrf_token %}{% if return_to %}<input type="hidden" name="next" value="{{ return_to }}">{% endif %}
     {% if form.non_field_errors %}<div class="notice error">{{ form.non_field_errors }}</div>{% endif %}
     <div class="form-section"><h2>归属与编码</h2><div class="form-grid">{% if asset %}<div class="form-field"><label>系统永久编号</label><input value="{{ asset.system_asset_no }}" readonly><small class="field-help">永久不变，用于二维码和系统关联。</small></div>{% endif %}{% for field in form %}{% if field.name == 'domain' or field.name == 'code_source' or field.name == 'asset_type_code' or field.name == 'product_model_code' or field.name == 'asset_code' or field.name == 'identity_change_reason' %}<div class="form-field {% if field.name == 'identity_change_reason' %}full{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <span class="required">*</span>{% endif %}</label>{{ field }}{{ field.errors }}{% if field.help_text %}<small class="field-help">{{ field.help_text }}</small>{% endif %}</div>{% endif %}{% endfor %}</div></div>

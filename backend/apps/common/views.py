@@ -3228,9 +3228,40 @@ def warehouse_asset_edit(request, asset_id=None):
     if is_create and not is_admin:
         messages.error(request, '只有管理员可以新增资产。')
         return redirect('warehouse_management')
-    if request.method == 'POST' and not is_admin:
+
+    # 编辑页顶部的「登记持有人」内联表单：与主表单共用一个 POST 端点，
+    # 用 action 区分。放在主表单处理之前，避免被 AssetManagementForm 的校验吞掉。
+    holder_form = AssetHolderRegistrationForm(
+        request.POST if request.POST.get('action') == 'register_holder' else None,
+        prefix='holder',
+        asset=asset,
+    )
+    if asset and request.method == 'POST' and request.POST.get('action') == 'register_holder':
+        if holder_form.is_valid():
+            data = holder_form.cleaned_data
+            try:
+                register_asset_holder(
+                    asset=asset,
+                    actor=request.user,
+                    holder=data.get('holder'),
+                    external_name=data.get('external_holder_name', ''),
+                    external_company=data.get('external_holder_company', ''),
+                    external_phone=data.get('external_holder_phone', ''),
+                    reason=data['reason'],
+                    expected_updated_at=data['expected_asset_updated_at'],
+                )
+            except AssetHolderRegistrationError as exc:
+                messages.error(request, str(exc))
+            else:
+                messages.success(request, '持有人已登记，并写入审计与资产履历。')
+                return redirect(f'{reverse("warehouse_asset_edit", args=[asset.id])}')
+        # 校验失败时不落主表单，直接重新渲染（下方 render 会带上 holder_form 的错误）
+
+    if request.method == 'POST' and request.POST.get('action') != 'register_holder' and not is_admin:
         raise PermissionDenied('只有管理员可以编辑资产。')
-    form = AssetManagementForm(request.POST or None, instance=asset)
+    # 持有人登记请求不要喂给主表单，否则主表单会把缺失的必填项报一堆错误
+    main_form_data = request.POST if request.method == 'POST' and request.POST.get('action') != 'register_holder' else None
+    form = AssetManagementForm(main_form_data, instance=asset)
     if not is_admin:
         for field in form.fields.values():
             field.disabled = True
@@ -3274,6 +3305,10 @@ def warehouse_asset_edit(request, asset_id=None):
         'return_to': _safe_next_url(request),
         'asset_qr_image': _asset_qr_image(asset) if asset else '',
         'can_edit_asset': is_admin,
+        # 编辑页顶部的状态卡片与「登记持有人」内联表单
+        'holder_form': holder_form,
+        'holder_registrable': bool(asset) and asset.status in HOLDER_REGISTRABLE_STATUSES,
+        'can_correct_state': can_correct_asset_state(request.user),
         'user_can_use_admin': is_admin,
         'user_is_operator': True,
         'user_is_system_admin': is_admin,
