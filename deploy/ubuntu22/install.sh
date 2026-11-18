@@ -195,9 +195,11 @@ fi
 # 对外域名：优先取调用方传入的 --public-domain，其次读现有 app.env 的 ALLOWED_HOSTS
 # 里第一个非 IP、非 localhost 的条目（即真实域名）。都没有时留空，
 # 模板会把 __PUBLIC_DOMAIN__ 替换成空字符串，不产生多余空格。
+#
+# 注意 app.env 在 /srv/after-sales-warehouse（DATA_DIR），不是 APP_DIR（代码目录）。
 RESOLVED_PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-}"
-if [[ -z "$RESOLVED_PUBLIC_DOMAIN" && -f "$APP_DIR/app.env" ]]; then
-  RESOLVED_PUBLIC_DOMAIN="$(grep -E '^ALLOWED_HOSTS=' "$APP_DIR/app.env" 2>/dev/null \
+if [[ -z "$RESOLVED_PUBLIC_DOMAIN" && -f "$ENV_FILE" ]]; then
+  RESOLVED_PUBLIC_DOMAIN="$(grep -E '^ALLOWED_HOSTS=' "$ENV_FILE" 2>/dev/null \
     | cut -d= -f2- | tr ',' '\n' \
     | grep -vE '^[0-9.]+$|^localhost$|^\*$|^$' | head -1 || true)"
 fi
@@ -442,6 +444,8 @@ install -m 644 "$SCRIPT_DIR/after-sales-warehouse-media-gc.service" /etc/systemd
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-media-gc.timer" /etc/systemd/system/after-sales-warehouse-media-gc.timer
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-offsite-backup.service" /etc/systemd/system/after-sales-warehouse-offsite-backup.service
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-offsite-backup.timer" /etc/systemd/system/after-sales-warehouse-offsite-backup.timer
+install -m 644 "$SCRIPT_DIR/after-sales-warehouse-cloudflared-selfheal.service" /etc/systemd/system/after-sales-warehouse-cloudflared-selfheal.service
+install -m 644 "$SCRIPT_DIR/after-sales-warehouse-cloudflared-selfheal.timer" /etc/systemd/system/after-sales-warehouse-cloudflared-selfheal.timer
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-logrotate" /etc/logrotate.d/after-sales-warehouse
 install -d -m 755 /etc/systemd/journald.conf.d
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-journald.conf" /etc/systemd/journald.conf.d/after-sales-warehouse.conf
@@ -449,6 +453,7 @@ install -m 644 "$SCRIPT_DIR/after-sales-warehouse-tmpfiles.conf" /etc/tmpfiles.d
 install -m 750 "$SCRIPT_DIR/backup.sh" /usr/local/sbin/after-sales-warehouse-backup
 install -m 750 "$SCRIPT_DIR/media-gc.sh" /usr/local/sbin/after-sales-warehouse-media-gc
 install -m 750 "$SCRIPT_DIR/offsite-backup.sh" /usr/local/sbin/after-sales-warehouse-offsite-backup
+install -m 750 "$SCRIPT_DIR/cloudflared-selfheal.sh" /usr/local/sbin/after-sales-warehouse-cloudflared-selfheal
 install -m 750 "$SCRIPT_DIR/runtime-status.sh" /usr/local/sbin/after-sales-warehouse-status
 install -m 750 "$SCRIPT_DIR/health-monitor.sh" /usr/local/sbin/after-sales-warehouse-health
 install -m 750 "$SCRIPT_DIR/restore-drill.sh" /usr/local/sbin/after-sales-warehouse-restore-drill
@@ -478,6 +483,8 @@ systemctl enable --now after-sales-warehouse-security-cleanup.timer
 systemctl enable --now after-sales-warehouse-dingtalk-outbox.timer
 systemctl enable --now after-sales-warehouse-media-gc.timer
 systemctl enable --now after-sales-warehouse-offsite-backup.timer
+# 隧道自愈依赖 cloudflared 已安装；未装时 enable 会失败，用 || true 跳过
+systemctl enable --now after-sales-warehouse-cloudflared-selfheal.timer || true
 systemctl enable nginx
 # `enable --now` does not reload an already-running Nginx process.
 systemctl reload nginx

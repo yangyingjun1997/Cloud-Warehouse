@@ -1,0 +1,16 @@
+[Unit]
+Description=Cloudflare Tunnel self-heal check for 售后仓库
+Documentation=https://developers.cloudflare.com/cloudflare-one/connections/connect-apps
+After=cloudflared.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+# 检查 cloudflared 是否真的建立了连接；进程活着但 0 连接时自动重启。
+ExecStart=/usr/local/sbin/after-sales-warehouse-cloudflared-selfheal
+TimeoutStartSec=180
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=after-sales-warehouse-cloudflared-selfheal
