@@ -120,6 +120,12 @@
     /* 默认中性色兜底：状态值来自数据库（下划线命名），任何新增状态都不会退化成无底色的裸文本。 */
     .tag { display: inline-flex; align-items: center; width: fit-content; padding: 4px 6px; border-radius: 4px; font-size: 10px; white-space: nowrap; color: #596e73; background: #edf2f2; font-weight: 650; }
     .tag.in-stock, .tag.in_stock, .tag.neutral { color: #176e68; background: var(--teal-soft); }
+    /* 启用/停用：原来「停用」复用 .tag.neutral，和「启用」同一套绿色，肉眼分不出。
+       这里给停用单独一套灰底+删除线感的弱化样式，与启用的绿色形成明确对比。 */
+    .tag.is-active { color: #146c3f; background: #dcf2e3; }
+    .tag.is-inactive { color: #7a7f85; background: #e8ebed; font-weight: 600; }
+    .tag.is-inactive::before { content: "×"; margin-right: 3px; font-weight: 700; }
+    .tag.is-active::before { content: "✓"; margin-right: 3px; font-weight: 700; }
     .tag.pending, .tag.waiting { color: #90601b; background: var(--amber-soft); }
     .tag.pending-out, .tag.pending_out, .tag.pending-return, .tag.pending_return, .tag.pending-inspection, .tag.pending_inspection { color: #385fa7; background: var(--blue-soft); }
     /* 借用与领用代表设备已离库：实心底色 + 加粗，保证仓管一眼识别。 */

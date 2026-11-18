@@ -63,6 +63,26 @@ class LocationActiveFlagTests(TestCase):
         self.assertIn('>启用<', html)
         self.assertIn('>停用<', html)
 
+    def test_status_tags_use_distinct_colors(self):
+        """启用/停用必须视觉可区分：过去两者共用 .tag.neutral 的绿色，看不出差别。"""
+        admin = User.objects.create_user(username='loc_color_admin', password='Pw#2026aa')
+        admin.is_staff = True
+        admin.groups.add(_group('warehouse_admin'))
+
+        # 测试类之间共享数据库，这里显式保证存在一启一停两条库位
+        Location.objects.filter(warehouse=self.warehouse).delete()
+        Location.objects.create(warehouse=self.warehouse, code='CLR-ON', name='彩色启用', is_active=True)
+        Location.objects.create(warehouse=self.warehouse, code='CLR-OFF', name='彩色停用', is_active=False)
+
+        self.client.force_login(admin)
+        html = self.client.get('/warehouse/setup/locations/').content.decode('utf-8')
+
+        self.assertIn('tag is-active', html)
+        self.assertIn('tag is-inactive', html)
+        # 旧的同色写法不应再出现
+        self.assertNotIn('tag neutral">停用', html)
+        self.assertNotIn('tag in-stock">启用', html)
+
 
 class AccountReviewPermissionTests(TestCase):
     """账号开通与建号：显式授权，不继承 warehouse_staff 的宽泛兜底。"""
