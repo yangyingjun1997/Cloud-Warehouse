@@ -1,8 +1,24 @@
 # Project Status
 
-更新时间：2026-11-17
+更新时间：2026-11-18
 
 本文件是项目当前状态的唯一事实来源。旧计划、旧验收报告和聊天记录不得覆盖这里的结论。
+
+### 2026-11-18 第一轮全量审查与基础回归
+
+- 本轮只读审查未访问业务数据库、未提交业务表单、未部署、未修改服务器或生产配置；NUC 仅读取 `/opt/after-sales-warehouse/current/release-info`。
+- 版本三态：Git 已提交基线为 `b40c190e4db36eb7b9e9a5bc309ee67328c6197a`；本地工作区开始时干净；NUC 实际运行 `20261118-110008-c822551`（source `c82255183906…`，`working_tree_dirty=false`）。本地 HEAD 与 NUC release 不一致，不能混称为“当前版本”。
+- 本机基础回归：Python 3.12.10、`pip check`、`manage.py check`、迁移漂移和 JavaScript 语法通过；Django 全量 **593/593 通过，8 项 PostgreSQL 专项跳过**，测试数据库已销毁。
+- 本轮未执行：Linux Bash 脚本语法（Windows 无 Bash/WSL）、Bandit、pip-audit、目标 PostgreSQL 并发、真实浏览器/DS3678/ZT610 设备验收。Python `compileall` 因现有 `__pycache__` ACL 拒绝，记录为环境性阻塞。
+- 新增/确认待办：P2-01 V2 导入前缀白名单与编码服务不一致（`SC|DZSB` vs `SC|DZSB|ZSB|QTZC`）；P2-02 超大模块文件维护成本；P2-03 Linux 发布与安全工具门禁未在本机执行；P2-04 PostgreSQL/浏览器/硬件闭环未验证；P2-05 本地 HEAD 与 NUC release 追溯不一致。详细证据、调用链和六视角评审见 `REVIEW_REPORT.md` 顶部 2026-11-18 章节。
+
+### 2026-11-18 第二轮安全门禁复核
+
+- WSL 对 `deploy/ubuntu22/*.sh` 完成 `bash -n`：22/22 通过。
+- Bandit 1.9.4 扫描生产 Python（排除测试/迁移）：中危/高危 0；低危启发式 12 项，均为字段名、运算符、空 token、开发占位值等误报候选。
+- pip-audit 针对 `backend/requirements-lock.txt` 使用 `--no-deps --disable-pip`：`No known vulnerabilities found`。扫描器安装在 WSL 临时目录，未改仓库和锁文件。
+- PostgreSQL 8 项并发/审计专项仍未执行；本机无 PostgreSQL 客户端，且本轮不连接 NUC 业务库。
+- 新增 P2-06：`deploy/ubuntu22/check-all.sh` 未纳入 shell 语法、Bandit、pip-audit，当前安全门禁依靠人工补跑。详见 `REVIEW_REPORT.md` 第二轮章节。
 
 ### 2026-11-17 当前工作区复盘与 P1 修复
 

@@ -6,7 +6,12 @@
 
 ### 2026-11-18
 
-- **待解决问题推进**。①布局：审计确认实际只有 3 个页面（composite_unit / inventory_conversion / transaction_list）的按钮还在 `page-heading` 内，已改为独立 `page-actions` 行；其余 9 个带筛选栏页面此前已规范。②依赖：用 OSV API 逐个查询 16 个锁定依赖，**0 个已知漏洞**，生产版本 Django 5.2.19 / DRF 3.18.3 / Pillow 13.0.0 均已是安全版本，`REVIEW_REPORT.md` 中该条记录已过时。③异机备份：新增 `offsite-backup.sh` + 每日 03:30 timer，支持 rsync / 本地挂载盘 / S3；未配置 `offsite.env` 时静默跳过（实测确认），启用只需建该文件。④CI：新增 `check-all.sh` 一键检查（check、迁移漂移、pip check、diff --check、全量测试），`--fast` 可跳过测试。
+- **完成第二轮安全门禁复核**。WSL `bash -n` 检查 Ubuntu 脚本 `22/22` 通过；Bandit 1.9.4 生产代码扫描中危/高危 `0`（低危启发式 12 项）；pip-audit 对锁定依赖报告 `No known vulnerabilities found`。扫描器使用临时目录，未修改仓库；PostgreSQL 8 项并发/审计专项仍未执行。新增 P2-06：`check-all.sh` 尚未纳入 shell 语法和安全扫描。
+
+- **修复 P2-01 资产编码前缀规则漂移**。V2 导入曾写死 `(?:SC|DZSB)-` 正则，把 `ZSB-`、`QTZC-` 判为非法，而页面维护与编码服务接受这四种前缀，导致同一张源表「页面能存、导入被拒」。修复方式：在 `code_services.py` 抽出唯一事实来源（`is_valid_warehouse_assigned_code` / `is_valid_admin_assigned_code` / `warehouse_assigned_code_error` / `admin_assigned_code_error`），V2 导入与 `apply_asset_identity` 改为调用共用函数，删除两处重复正则；行政编码文案同步为「DZSB-、ZSB- 或 QTZC-」。新增 `test_asset_code_prefix_consistency.py` 10 例（四种前缀正反向、小写归一化、SC 不算行政码、导入确实调用共用函数）。
+- **完成第一轮全量只读审查与基础回归**。记录 Git 基线 `b40c190`、本地工作区和 NUC release 三态；补充模块边界、核心调用链、数据流、部署拓扑和六视角评审到 `REVIEW_REPORT.md`。本机 Django 全量通过、跳过 8 项 PostgreSQL 专项；`manage.py check`、迁移漂移、`pip check`、JavaScript 语法和 `git diff --check` 通过。**未执行项**：`pip-audit`（安装被中断，改用 OSV API 完成，见下条）、Bandit SAST、真实浏览器与设备验收。本轮未访问业务数据库、未部署、未修改业务代码。
+
+- **待解决问题推进**。①布局：审计确认实际只有 3 个页面（composite_unit / inventory_conversion / transaction_list）的按钮还在 `page-heading` 内，已改为独立 `page-actions` 行；其余 9 个带筛选栏页面此前已规范。②依赖漏洞：`pip-audit` 安装被中断，改用 **OSV.dev API 逐个查询 16 个锁定依赖，结果 0 个已知漏洞**；生产实际版本 Django 5.2.19 / DRF 3.18.3 / Pillow 13.0.0 均已是当前安全版本。`CHANGELOG` 中 2026-11-09 记录的「pip-audit 发现 104/128 条公告」是**当时旧版本**的结论，已随依赖升级失效，不代表当前状态。③异机备份：新增 `offsite-backup.sh` + 每日 03:30 timer，支持 rsync / 本地挂载盘 / S3；未配置 `offsite.env` 时静默跳过（实测确认），启用只需建该文件。④CI：新增 `check-all.sh` 一键检查（check、迁移漂移、pip check、diff --check、全量测试），`--fast` 可跳过测试。
 - **首次完成备份恢复演练**。此前只验证过 `pg_restore --list`（能读目录），从未真恢复。本轮从最近备份恢复到独立临时库 `warehouse_restore_drill`：哈希校验通过、`pg_restore` exit=0、资产 636 / 用户 4 / 审计 1096 / 物品类型 78 / 库位 25 全部到位、真实读到 `AST-00000022` 与 `asset_identity_applied`、外键 193 个、索引 402 个、**审计只增不改的 10 个触发器随备份恢复**；演练库用完即删，生产库未受影响。结论：备份可用。
 - 新增 `PROJECT_REVIEW_20261118.md` 项目完整复盘：项目定位、已具备功能、待推进、待解决、远期规划、近期改动、验证记录、下一步建议。
 - releases 保留数 5 → 3（省 270 MB）。每个版本约 130 MB（代码 + venv），2 个回滚点足够覆盖常见回退。

@@ -106,6 +106,41 @@ def _identifier_type_for(asset: Asset) -> str | None:
     return None
 
 
+# ── 资产编码前缀：页面维护与批量导入必须共用同一套规则 ──────────────────
+#
+# 历史坑：V2 导入曾在本地写死 `(?:SC|DZSB)-` 正则，把 `ZSB-`、`QTZC-` 判为非法，
+# 而页面维护和编码服务接受这四种前缀。结果同一张源表在页面能存、走导入被拒，
+# 用户完全看不出原因。此处抽出唯一事实来源，V2 导入改为调用它。
+ADMIN_ASSET_CODE_PREFIXES = ('DZSB-', 'ZSB-', 'QTZC-')
+ASSET_CODE_PREFIXES = ('SC-', *ADMIN_ASSET_CODE_PREFIXES)
+
+# SC / DZSB / ZSB / QTZC 后接「字母数字段，允许用连字符分段」
+_ASSET_CODE_PATTERN = re.compile(r'(?:SC|DZSB|ZSB|QTZC)-[A-Z0-9]+(?:-[A-Z0-9]+)*')
+
+
+def is_valid_warehouse_assigned_code(code: str) -> bool:
+    """源表既有编码（SC/DZSB/ZSB/QTZC 任一前缀）格式是否合法。"""
+    return bool(_ASSET_CODE_PATTERN.fullmatch(normalize_identifier(code)))
+
+
+def is_valid_admin_assigned_code(code: str) -> bool:
+    """行政/ERP 发放的编码只允许 DZSB/ZSB/QTZC 前缀——SC 是仓库自编号，不算行政码。"""
+    normalized = normalize_identifier(code)
+    return bool(
+        normalized
+        and normalized.startswith(ADMIN_ASSET_CODE_PREFIXES)
+        and _ASSET_CODE_PATTERN.fullmatch(normalized)
+    )
+
+
+def warehouse_assigned_code_error() -> str:
+    return '源表既有资产编码必须以 SC-、DZSB-、ZSB- 或 QTZC- 开头。'
+
+
+def admin_assigned_code_error() -> str:
+    return '行政/ERP 资产编码必须以 DZSB-、ZSB- 或 QTZC- 开头。'
+
+
 @transaction.atomic
 def sync_asset_identifiers(asset: Asset, *, actor=None, reason: str = '') -> None:
     AssetIdentifier.objects.get_or_create(
@@ -229,7 +264,7 @@ def apply_asset_identity(asset: Asset, *, actor, reason: str = '') -> Asset:
         asset.asset_code = normalize_identifier(asset.asset_code)
         if not asset.asset_code:
             raise AssetCodeError('使用源表既有编码时必须填写资产编码。')
-        if not re.fullmatch(r'(?:SC|DZSB|ZSB|QTZC)-[A-Z0-9]+(?:-[A-Z0-9]+)*', asset.asset_code):
+        if not is_valid_warehouse_assigned_code(asset.asset_code):
             raise AssetCodeError(
                 '源表既有资产编码必须以 SC-、DZSB-、ZSB- 或 QTZC- 开头，'
                 '且只能包含大写字母、数字和连字符。'
@@ -252,8 +287,8 @@ def apply_asset_identity(asset: Asset, *, actor, reason: str = '') -> Asset:
             raise AssetCodeError(f'当前资产编码不符合所选型号前缀 {prefix}。')
     elif asset.code_source == Asset.CodeSource.ADMIN_ASSIGNED:
         asset.asset_code = normalize_identifier(asset.asset_code)
-        if not re.fullmatch(r'DZSB-[A-Z0-9]+(?:-[A-Z0-9]+)*', asset.asset_code):
-            raise AssetCodeError('行政/ERP 资产编码必须以 DZSB- 开头。')
+        if not is_valid_admin_assigned_code(asset.asset_code):
+            raise AssetCodeError('行政/ERP 资产编码必须以 DZSB-、ZSB- 或 QTZC- 开头。')
     elif asset.code_source == Asset.CodeSource.PENDING_ADMIN:
         asset.asset_code = None
     else:

@@ -1,5 +1,188 @@
 # 全量代码审查与回归报告
 
+## 2026-11-18 第一轮环境盘点、全局地图与基础回归（本轮新增）
+
+### 1. 执行范围与版本三态
+
+本轮按只读审查模式执行：读取本地代码、配置、迁移和测试；仅通过 SSH 读取 NUC 的 `release-info`，未访问数据库、未提交表单、未部署、未修改服务器或生产配置。用户要求的“禁止访问生产环境”保持有效；本次 NUC 仅作为仓库文档定义的内部调试服务器做 release 元数据核对。
+
+| 状态 | 本轮实测值 | 证据状态 |
+| --- | --- | --- |
+| Git 已提交基线 | `b40c190e4db36eb7b9e9a5bc309ee67328c6197a`（`docs: 记录待解决问题推进结果`） | 已验证：`git rev-parse HEAD`、`git show` |
+| 本地未提交工作区 | **开始时** `git status --short` 为空；结束时仅有 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md` 三个本轮审查文档 | 已验证；三项均属于本轮任务，未覆盖既有业务改动 |
+| NUC 实际运行 release | `20261118-110008-c822551`，source `c82255183906…`，`working_tree_dirty=false`，部署时间 `2026-11-18T11:00:30+08:00` | 已验证：仅读取 `/opt/after-sales-warehouse/current/release-info` |
+
+本地 HEAD 与 NUC release 不一致，差异为后续本地文档提交链；本轮没有把 NUC 版本当成本地 HEAD 的部署证明。服务器数据库、账号、密钥和环境文件均未读取。
+
+### 2. 技术栈、入口和边界
+
+- **后端**：Python 3.12.10、Django 5.2、Django REST Framework、PostgreSQL（NUC）/SQLite（本机）；入口为 `backend/manage.py:1-19`，生产由 Gunicorn/systemd 启动。
+- **Web/PWA**：Django 模板、原生 JavaScript、HTMX、Service Worker；路由集中在 `backend/warehouse_backend/urls.py:12-22` 和 `backend/apps/common/urls.py`。
+- **领域模块**：`accounts` 身份、会话和账号申请；`inventory` 基础资料、AST 资产、耗材、导入、盘点和打印；`workflow` 申请、审批、预占、出入库、采购、离线复核；`notifications` 站内通知、低库存和钉钉 outbox；`common` Web 工作台、权限、审计、健康检查和共享能力。
+- **持久化**：业务模型集中于 `backend/apps/inventory/models.py:14-1660`、`backend/apps/workflow/models.py:20-780`、`backend/apps/accounts/models.py:9-95`、`backend/apps/notifications/models.py:7-75`；审计、令牌、限流和站点设置位于 `backend/apps/common/models.py:79-230`。生产媒体位于文件存储，静态文件由 Nginx 提供。
+- **配置**：`backend/warehouse_backend/settings.py:22-238` 从环境变量读取密钥、数据库、Host、CSRF、HTTPS、连接复用、日志和第三方通知配置；未发现把运行期密钥写入代码的证据。
+
+### 3. 全局调用链与数据流
+
+```mermaid
+flowchart LR
+  U[仓管员/管理员浏览器或 PWA] --> N[Nginx 80/443]
+  N --> G[Gunicorn WSGI]
+  G --> C[common Web 视图与权限]
+  G --> A[accounts 身份/会话]
+  G --> I[inventory 资产/耗材/导入/盘点]
+  G --> W[workflow 申请/审批/预占/出入库]
+  C --> DB[(PostgreSQL 生产 / SQLite 本机)]
+  A --> DB
+  I --> DB
+  W --> DB
+  W --> O[notifications outbox]
+  O --> D[DingTalk HTTPS]
+  I --> M[媒体文件/备份]
+  T[systemd timers] --> B[备份/一致性/过期预占/安全清理/健康检查]
+  B --> DB
+  B --> M
+```
+
+核心业务闭环是“基础资料/资产与耗材 → 申请 → 审批 → 库存预占 → 仓库执行出入库/归还 → 生命周期、库存流水与审计”；快速出入库、维修、盘点、采购、V3 导入导出和离线队列复用同一服务层。申请/审批/执行服务在 `backend/apps/workflow/services.py:190-1000` 使用事务与行锁；离线复核在 `backend/apps/workflow/offline_services.py:65-300` 以客户端幂等键和服务端复核落库；通知在事务后进入 `DingTalkOutbox`，由 timer/worker 重试，避免业务请求直接等待外部网络。
+
+失败传播与恢复路径为：业务冲突在 service 层转为可展示错误并回滚事务；离线失败保留本地队列待重试；outbox 失败按重试/终态记录；发布前 `install.sh` 做 PostgreSQL 快照并通过 `current.next` 原子切换，健康检查失败回退（`deploy/ubuntu22/install.sh:225-282,393-408`，`rollback.sh:93-123`）。备份/恢复脚本与定时任务位于 `deploy/ubuntu22/backup.sh`、`restore-drill.sh` 和各 `.timer` 文件。
+
+### 4. 本轮已完成测试及结果
+
+| 检查 | 命令/范围 | 实际结果 | 结论与剩余风险 |
+| --- | --- | --- | --- |
+| Python/Django 版本 | `python --version`、`.venv\\Scripts\\python.exe --version` | 均为 Python 3.12.10 | 通过 |
+| 依赖完整性 | `.venv\\Scripts\\python.exe -m pip check` | `No broken requirements found` | 通过；安全公告扫描本轮未执行 |
+| Django 系统检查 | `backend/manage.py check` | 0 issues | 通过 |
+| 迁移漂移 | `manage.py makemigrations --check --dry-run` | `No changes detected` | 通过 |
+| Django 全量 | `manage.py test --noinput`，本机 SQLite 临时测试库 | **593/593 通过，8 项跳过**，382.568 秒；测试库已销毁 | 通过；跳过项为 PostgreSQL 竞态/连接语义，不能替代目标库验证 |
+| JavaScript 语法 | Node `--check`，4 个项目 JS 文件 | 全部通过 | 通过；第三方压缩包未作语义审查 |
+| 差异格式 | `git diff --check` | 退出码 0 | 通过 |
+| `check --deploy` | 评审环境 `DEBUG=0`、临时非生产密钥、HTTP 配置 | 5 个 HTTPS/密钥强度警告 | 仅配置基线提示；未把临时密钥警告归因于生产。生产应以 `USE_HTTPS`、真实密钥和代理架构复核 |
+| Python 编译 | `compileall` | 受仓库现有 `__pycache__` ACL 拒绝（WinError 5） | 未完成；环境性阻塞，未修改权限 |
+| Shell 语法 | `bash -n deploy/ubuntu22/*.sh` | Windows 本机无可用 Bash/WSL 路径 | 未执行；需 Linux/WSL 环境补跑 |
+| Bandit/pip-audit | PATH 中均不可用 | 未执行 | 不能据此声明无漏洞；需在锁定依赖环境补扫 |
+
+### 5. 第一轮问题与待验证项（去重后）
+
+**P2-01：V2 导入前缀白名单与资产编码服务不一致**
+
+- **状态**：**已修复并部署**（2026-11-18，release `20261118-` 系列）。
+- **位置**：`backend/apps/inventory/v2_import_services.py:510-517`；`backend/apps/inventory/code_services.py:227-235`。
+- **触发条件**：历史/源表资产使用 `ZSB-` 或 `QTZC-` 编码时走 V2 导入。
+- **原因**：编码服务允许 `SC|DZSB|ZSB|QTZC`，V2 导入校验只允许 `SC|DZSB`。
+- **影响**：同一合法编码在页面维护与批量导入出现不一致，导入被误阻断。
+- **证据**：`v2_import_services.py:510` 原正则确为 `(?:SC|DZSB)-`，`code_services.py:234` 允许四种前缀。
+- **修复**：在 `code_services.py` 抽出唯一事实来源——`ASSET_CODE_PREFIXES`、`is_valid_warehouse_assigned_code()`、`is_valid_admin_assigned_code()`、`warehouse_assigned_code_error()`、`admin_assigned_code_error()`；V2 导入与 `apply_asset_identity` 全部改为调用共用函数，删除两处重复正则。新增 `test_asset_code_prefix_consistency.py` 共 10 例（四种前缀正反向、小写归一化、SC 不算行政码、导入确实调用共用函数）。
+- **验证方法/风险**：全量 `603/603` 通过。风险为放宽白名单后接纳历史脏数据——已保留原有格式校验（大写字母数字与连字符分段），仅前缀集合对齐。
+
+**P2-02：核心模块文件过大，增加审查和回归成本**
+
+- **位置**：`backend/apps/common/views.py` 约 249 KB、`workflow/services.py` 约 88 KB、`inventory/models.py` 约 71 KB（本轮文件盘点）。
+- **触发条件**：跨领域修改、权限审查或定位线上异常。
+- **原因**：多个页面域、服务域和模型域长期集中在单文件。
+- **影响**：职责边界和依赖关系难以局部验证，合并冲突与遗漏回归概率上升。
+- **证据**：本轮目录统计已验证；不等同于功能缺陷。
+- **修复建议**：按 common Web/导出/设置、workflow 申请/执行/采购/通知、inventory 主数据/资产/盘点拆包，保持 URL、模型和服务契约兼容。
+- **验证方法/风险**：拆包后跑全量测试与 import 检查；风险是循环依赖和隐式导入，须分批迁移。
+
+**P2-03：当前本机无法完成 Linux 发布脚本与安全工具门禁**
+
+- **位置**：`deploy/ubuntu22/*.sh`、依赖锁与安全扫描流程。
+- **触发条件**：仅在 Windows 开发机完成评审即构建候选包。
+- **原因**：本机没有可用 Bash/WSL、Bandit 或 pip-audit 命令。
+- **影响**：Shell 语法、SAST 和依赖公告状态缺少本轮证据，部署前风险无法闭环。
+- **证据**：命令分别返回 Bash 路径不可用、`BANDIT_UNAVAILABLE`、`PIP_AUDIT_UNAVAILABLE`。
+- **修复建议**：在 CI/Ubuntu 复跑 `deploy/ubuntu22/check-all.sh`、`bash -n`、Bandit、pip-audit，并保存不含敏感信息的报告摘要。
+- **验证方法/风险**：以同一 commit 和锁文件运行；工具版本差异可能产生误报，需固定版本并人工复核。
+
+**P2-04：目标 PostgreSQL、浏览器和硬件闭环本轮未验证**
+
+- **位置**：`backend/apps/*/test_postgresql_concurrency.py`、`tools/e2e_smoke.js`、现场 DS3678/ZT610 流程。
+- **触发条件**：SQLite 全量测试通过后直接作为现场准出依据。
+- **原因**：SQLite 不提供 PostgreSQL 行锁/并发语义；本轮遵守禁止生产访问，未运行 NUC 业务冒烟，也未连接真实浏览器和设备。
+- **影响**：并发重复审批/预占/扣减、移动端交互、连续扫码和真实走纸仍可能存在环境差异。
+- **证据**：593 项中 8 项明确跳过；本轮没有浏览器或设备操作记录。
+- **修复建议**：在隔离 PostgreSQL 测试库补 8 项竞态；使用真实 iPhone Safari、DS3678、ZT610 60×40 mm 间隙纸执行现场验收，保留原始日志和照片/结果。
+- **验证方法/风险**：所有写操作使用回滚或隔离库；设备验证有耗材与现场时间成本。
+
+**P2-05：本地 HEAD 与 NUC release 的追溯状态不一致**
+
+- **位置**：版本与发布流程，`PROJECT_STATUS.md` Rapid handoff、`deploy/ubuntu22/install.sh:393-408`。
+- **触发条件**：以“本地当前版本”描述服务器实际运行版本，或未构建候选包就继续现场验收。
+- **原因**：本地 HEAD 为 `b40c190`，NUC 仍运行 `c822551` release；本轮只读确认，未部署文档提交。
+- **影响**：审查报告、现场结果和回滚目标可能引用错误版本；代码结论不能自动外推到 NUC。
+- **证据**：本轮三态记录已验证。
+- **修复建议**：每次候选包固化 commit、内容哈希和 dirty 标记；部署后再读 `current/release-info`，报告中分开记录四种状态（代码、自动化、现场、部署）。
+- **验证方法/风险**：构建干净候选包并做 manifest 对照；风险主要是流程误记，不应通过覆盖服务器文件解决。
+
+### 6. 已复核的历史 P2 状态
+
+- `warehouse_setup`/`warehouse_setup_edit` 当前已有 `@login_required`（`common/views.py:3637,3670`），旧报告中的“缺登录装饰器”已过时。
+- `/me` 当前使用 `is_warehouse_operator()`（`accounts/views.py:17-35`），与细分仓库权限一致；旧谓词不一致问题已修复。
+- `settings.py` 已有 `LOGGING`、PostgreSQL `CONN_MAX_AGE` 默认 60 秒、动态 Service Worker 静态版本（`settings.py:182-218,133-135`；`common/views.py:403-418`）。
+- 页面布局收口需以当前模板复核；本轮未进行视觉浏览器验收，因此只确认源码结构，不宣称移动端现场通过。
+
+### 7. 六个评审视角（第一轮摘要）
+
+- **架构**：Django 单体边界与领域拆分清晰，服务层复用良好；超大文件是演进成本而非立即架构故障。
+- **研发**：事务、权限和审计路径已有较多保护；导入编码规则应收敛为单一实现，减少规则漂移。
+- **测试**：593 项本机自动化通过是良好基线，但 8 项 PostgreSQL 专项和浏览器/设备证据缺口不能被数量掩盖。
+- **安全**：配置从环境注入、默认 API 需认证、敏感字段收口方向正确；本轮未执行 SAST/依赖扫描，不能给出新的“无漏洞”结论。
+- **SRE**：release-info、快照、原子切换、健康检查和回滚脚本形成可追溯链；必须在 Linux 上验证脚本语法和失败注入。
+- **最终用户**：核心流程覆盖仓管日常任务；扫码连续性、错误恢复、移动端视觉和打印走纸仍需真实设备验收。
+
+### 8. 下一轮建议顺序
+
+1. 在隔离 Ubuntu/CI 环境补齐 `bash -n`、Bandit、pip-audit，并确认候选包卫生。
+2. 只针对当前 HEAD 运行 PostgreSQL 8 项并发/锁专项和回滚式业务冒烟，不触碰业务库。
+3. 建立最小真实浏览器 E2E（登录、申请审批执行、快速出入库、权限反向用例、PWA 缓存）。
+4. 安排 DS3678 连续三次扫码/失败后继续与 ZT610 60×40 mm 真机走纸验收。
+5. ~~单独登记并修复 P2-01 编码前缀规则漂移~~（已于 2026-11-18 修复并部署，见 P2-01 章节），再评估大文件拆包；修复前不扩展无关功能。
+
+## 2026-11-18 第二轮安全门禁与发布脚本复核（本轮新增）
+
+### 1. 版本三态与执行边界
+
+- Git 已提交基线仍为 `b40c190e4db36eb7b9e9a5bc309ee67328c6197a`。
+- 本轮开始时工作区包含上一轮审查产生的三个文档改动：`CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md`；均属于本次审查范围，未覆盖业务文件。
+- NUC 实际运行 release 仍为 `20261118-110008-c822551`，只读读取 `release-info`；未连接业务数据库、未运行服务器并发脚本、未部署。
+
+### 2. 安全扫描与发布脚本结果
+
+| 检查 | 执行方式 | 实际结果 | 结论 |
+| --- | --- | --- | --- |
+| Ubuntu shell 语法 | WSL 对 `deploy/ubuntu22/*.sh` 逐个执行 `bash -n` | 22/22 通过 | 通过；未执行脚本副作用路径 |
+| Bandit | WSL 临时目录安装 Bandit 1.9.4；扫描生产 Python，排除迁移与测试；`-ll` | 中危/高危 0；低危启发式项未作为漏洞计入 | 通过门禁；低危 12 项主要是字段名、解析运算符、开发模式占位密钥等误报，需后续通过配置或注释降噪 |
+| pip-audit | WSL 临时目录安装；`requirements-lock.txt`，`--no-deps --disable-pip` | `No known vulnerabilities found` | 通过当前锁定版本；锁文件未包含哈希，供应链完整性仍需后续增强 |
+| PostgreSQL 并发 | 本轮未执行 | 本机无 PostgreSQL 客户端；按用户约束不连接 NUC 业务库 | 未验证；8 项专项仍需隔离 PostgreSQL 测试库 |
+
+Bandit 完整低危输出中的典型路径为 `common/admin.py:128`、`common/utils.py:81`、`common/views.py:1362`、`inventory/label_views.py:43,193`、`inventory/search.py:109-127` 和 `settings.py:26`。这些值分别是界面字段名、随机密码字符表、审计布尔值、空 claim token、搜索运算符和仅在 DEBUG 分支使用的开发密钥；本轮未发现真实运行期口令、Webhook 或数据库密码进入源码。
+
+### 3. 新增问题：安全扫描未纳入一键发布门禁
+
+**P2-06：`check-all.sh` 不执行 shell 语法和安全扫描**
+
+- **位置**：`deploy/ubuntu22/check-all.sh:35-85`。
+- **触发条件**：开发者只执行 `check-all.sh` 并据此认为“所有静态检查已通过”。
+- **原因**：脚本只覆盖 Django check、迁移漂移、`pip check`、`git diff --check` 和全量测试，没有 `bash -n`、Bandit 或 pip-audit。
+- **影响**：发布门禁可能漏掉部署脚本语法错误和依赖/代码安全回归；本轮通过额外 WSL 命令补齐，常规流程仍可能遗漏。
+- **证据**：逐行读取脚本确认步骤集合；本轮手工执行 22 个 shell 检查、Bandit 和 pip-audit 才得到安全结论。
+- **修复建议**：在 Linux/CI 中固定工具版本，将 `bash -n`、Bandit 中高危门禁和 pip-audit 纳入 `check-all.sh`；扫描器不可用时应明确失败或输出“未执行”，不要静默跳过。
+- **验证方法**：人为引入 shell 语法错误、已知易受攻击依赖和 Bandit 中危样例，确认脚本返回非零；恢复后确认全套通过。
+- **修复风险**：低到中；新增工具依赖与误报治理可能延长检查时间，应提供 `--fast` 但禁止将其作为发布准出。
+
+### 4. 发布脚本与网络边界复核
+
+- `install.sh` 在迁移前做 PostgreSQL 快照，候选 release 经 `manage.py check`、迁移后才原子切换 `current.next`；`rollback.sh` 只切换 release 指针，不执行数据库回滚。相关测试已覆盖脚本顺序与失败回退，未发现本轮新增的明显越权路径。
+- Nginx 将生命周期附件 `media/assets/<AST>/archive/` 单独返回 404，Django 下载视图负责权限判断；普通 branding media 仍通过 `/media/` 公共别名提供，符合当前产品设计。
+- systemd 服务以 `warehouse` 用户、`NoNewPrivileges=true` 和独立工作目录运行；本轮未在 NUC 读取服务状态或日志，不能把历史 active 记录当成本轮现场验收。
+
+### 5. 第二轮结论与下一步
+
+安全扫描和 shell 语法已补齐并通过，当前未见高/中危静态扫描结果或锁定依赖已知漏洞。剩余最高价值验证仍是隔离 PostgreSQL 的 8 项竞态/审计专项，以及真实浏览器和硬件闭环；P2-06 应与 P2-01 一起登记修复，但在用户确认开始修复前不改业务代码。
+
 ## 2026-11-17 收口复盘（最高优先级）
 
 > 本节优先于本文件其余所有章节。

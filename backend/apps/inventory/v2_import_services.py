@@ -16,6 +16,8 @@ from apps.common.audit import record_operation
 from .code_services import (
     SYSTEM_CODE_PATTERN, AssetCodeError, apply_asset_identity, normalize_identifier,
     validate_sn,
+    admin_assigned_code_error, is_valid_admin_assigned_code,
+    is_valid_warehouse_assigned_code, warehouse_assigned_code_error,
 )
 from .models import (
     Asset, AssetAssemblyLink, AssetIdentifier, AssetTypeCode, ImportBatch, InventoryDomain,
@@ -507,14 +509,16 @@ def validate_asset_v2_records(records: list[dict]) -> list[dict]:
         if source == Asset.CodeSource.WAREHOUSE_ASSIGNED:
             if not record['asset_code']:
                 issues.append(_issue(record, 'error', 'warehouse_code_required', '编码方式为源表既有编码时必须填写资产编码。'))
-            elif not re.fullmatch(r'(?:SC|DZSB)-[A-Z0-9]+(?:-[A-Z0-9]+)*', record['asset_code']):
-                issues.append(_issue(record, 'error', 'warehouse_code_prefix', '源表既有资产编码必须以 SC- 或 DZSB- 开头。'))
+            elif not is_valid_warehouse_assigned_code(record['asset_code']):
+                # 与页面维护共用同一套前缀规则（SC/DZSB/ZSB/QTZC），
+                # 避免「页面能存、导入被拒」的不一致。
+                issues.append(_issue(record, 'error', 'warehouse_code_prefix', warehouse_assigned_code_error()))
         elif source == Asset.CodeSource.PENDING_ADMIN:
             if record['asset_code']:
                 issues.append(_issue(record, 'error', 'pending_code_present', '编码方式为暂未赋码时资产编码必须留空。'))
         elif source == Asset.CodeSource.ADMIN_ASSIGNED:
-            if not re.fullmatch(r'DZSB-[A-Z0-9]+(?:-[A-Z0-9]+)*', record['asset_code']):
-                issues.append(_issue(record, 'error', 'admin_code_required', '行政/ERP 资产编码必须以 DZSB- 开头。'))
+            if not is_valid_admin_assigned_code(record['asset_code']):
+                issues.append(_issue(record, 'error', 'admin_code_required', admin_assigned_code_error()))
         elif source == Asset.CodeSource.MARKET_GENERATED:
             type_code = AssetTypeCode.objects.filter(code=record['asset_type_code'], is_active=True).first()
             model_code = ProductModelCode.objects.filter(
