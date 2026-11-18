@@ -6,9 +6,29 @@
 
 ### 2026-11-18
 
+- **完成第九轮本地容量与 PostgreSQL 专项可运行性复核**。一次性 SQLite E2E 数据库覆盖 8 条登录态只读路由、并发 1/4/8/12 共 160 次请求，全部 HTTP 200、错误率 0；12 并发 P95 366.19ms、P99 441.81ms。PostgreSQL 并发/审计专项 8 项因本机 SQLite 按设计跳过；当前环境无 Playwright，浏览器 E2E/UI 审计未执行。容量临时产物已清理，未修改业务代码、未连接 NUC、未部署。
+
+- **完成第八轮报表、导出、审计归档与容量复核**。本机专项 `152/152` 通过（159.665 秒，SQLite 临时库，system check 无问题）；审计归档、供应商/呆滞库存/交易导出和财务权限回归均执行。发现 **P1-12**：`transaction_export()` 在无财务权限时隐藏成本表头但仍输出 `cost_amount` 数据，临时测试已复现；发现 **P2-11**：供应商价格、报表总览和呆滞库存路径存在无上限 Python 全量物化，需 PostgreSQL 大数据量压测。未修改业务代码、未连接业务数据库、未部署；NUC release 本轮未复核。
+
+- **完成第三轮身份/权限边界与核心 API 复核**。本机 SQLite 临时库专项测试 `30/30` 通过（14.731 秒），覆盖申请/审批/出入库动作权限、成本字段财务权限、照片上传、资产写权限、账号治理和 `/me` 一致性。静态确认申请与资产 API 禁用硬删除，嵌套申请创建使用事务；未发现新增 P0/P1。当前 NUC release 本轮 SSH 无法复核，不能把此前读取的 `20261118-122912-b79551b` 当作本轮现场验收。
+
+- **P2-01 提交随后已部署到 NUC**（由其他并发执行者完成，非本轮操作）：上次成功读取的 release 为 `20261118-122912-b79551b`，source revision 与本地 HEAD 一致，工作树干净。本轮无法重新连接 NUC，未追加 PostgreSQL 或现场设备验收结论。
+
+- **完成第四轮通知/outbox 与附件访问复核**。通知收件人隔离、钉钉 outbox 幂等/回滚/重试/失败恢复和上传校验专项 `8/8` 通过；生命周期附件直链由 Nginx 拦截并经 Django 授权下载。新增待确认 P2 候选：发票/费用凭证附件目前未按财务权限细分，需业务确认后再登记开发计划。
+
+- **完成第五轮部署与恢复路径复核**。发现 P1-09：`backup.sh` 已切换到 `media-snapshots` 硬链接增量格式，但 `restore-drill.sh` 仍要求 `media.tar.gz`，当前恢复演练无法启动；历史恢复演练结论不适用于新格式。另记录 P2-08：`check-all.sh` 未清理 `.test-run-temp`。本轮未修改部署脚本、未连接 NUC、未执行数据库恢复。
+
+- **补充发现 P2-09**：`install.sh --import-sqlite` 将完整 `dumpdata` 输出写入固定 `/tmp` 文件，异常时可能遗留业务数据且未显式限制权限；修复前不建议在共享服务器启用该一次性导入路径。
+
+- **补充发现 P2-10**：Workflow API/离线同步未在服务层校验目标仓库和库位的启用状态，停用对象仍可能被写入新的调拨、归还或维修入库流程；需确认管理员例外后登记修复。
+
+- **完成第六轮核心 workflow 与离线流程回归**。`OfflineOperationTests` 与 `WorkflowApiTests` 共 `35/35` 通过（24.577 秒），覆盖幂等、跨账号、payload 篡改、冲突回滚、拒绝和重复复核；未执行 PostgreSQL 并发、真实浏览器、断网设备和现场硬件验收。
+
+- **完成第七轮采购、盘点、导入和审计专项**。专项 37 项通过、2 项跳过（共 39 项，43.159 秒），跳过项为 PostgreSQL 原始 SQL 审计触发器测试；覆盖盘点差异、采购部分到货、导入撤销和应用层审计不可变性。新增 P1-11：采购到货无幂等键，成功后重试可能重复增加库存。
+
 - **完成第二轮安全门禁复核**。WSL `bash -n` 检查 Ubuntu 脚本 `22/22` 通过；Bandit 1.9.4 生产代码扫描中危/高危 `0`（低危启发式 12 项）；pip-audit 对锁定依赖报告 `No known vulnerabilities found`。扫描器使用临时目录，未修改仓库；PostgreSQL 8 项并发/审计专项仍未执行。新增 P2-06：`check-all.sh` 尚未纳入 shell 语法和安全扫描。
 
-- **修复 P2-01 资产编码前缀规则漂移**。V2 导入曾写死 `(?:SC|DZSB)-` 正则，把 `ZSB-`、`QTZC-` 判为非法，而页面维护与编码服务接受这四种前缀，导致同一张源表「页面能存、导入被拒」。修复方式：在 `code_services.py` 抽出唯一事实来源（`is_valid_warehouse_assigned_code` / `is_valid_admin_assigned_code` / `warehouse_assigned_code_error` / `admin_assigned_code_error`），V2 导入与 `apply_asset_identity` 改为调用共用函数，删除两处重复正则；行政编码文案同步为「DZSB-、ZSB- 或 QTZC-」。新增 `test_asset_code_prefix_consistency.py` 10 例（四种前缀正反向、小写归一化、SC 不算行政码、导入确实调用共用函数）。
+- **P2-01 资产编码前缀规则改动已提交但未部署**。其他并发执行者将修复提交为 `b79551b`：V2 导入与 `apply_asset_identity` 复用 `code_services.py` 的唯一事实来源，并新增 `test_asset_code_prefix_consistency.py` 10 例；专项 `10/10`、全量 `603/603` 通过（8 项 PostgreSQL 跳过）。本轮未执行该提交，NUC 仍运行 `c822551`，不能视为现场验收或已部署。
 - **完成第一轮全量只读审查与基础回归**。记录 Git 基线 `b40c190`、本地工作区和 NUC release 三态；补充模块边界、核心调用链、数据流、部署拓扑和六视角评审到 `REVIEW_REPORT.md`。本机 Django 全量通过、跳过 8 项 PostgreSQL 专项；`manage.py check`、迁移漂移、`pip check`、JavaScript 语法和 `git diff --check` 通过。**未执行项**：`pip-audit`（安装被中断，改用 OSV API 完成，见下条）、Bandit SAST、真实浏览器与设备验收。本轮未访问业务数据库、未部署、未修改业务代码。
 
 - **待解决问题推进**。①布局：审计确认实际只有 3 个页面（composite_unit / inventory_conversion / transaction_list）的按钮还在 `page-heading` 内，已改为独立 `page-actions` 行；其余 9 个带筛选栏页面此前已规范。②依赖漏洞：`pip-audit` 安装被中断，改用 **OSV.dev API 逐个查询 16 个锁定依赖，结果 0 个已知漏洞**；生产实际版本 Django 5.2.19 / DRF 3.18.3 / Pillow 13.0.0 均已是当前安全版本。`CHANGELOG` 中 2026-11-09 记录的「pip-audit 发现 104/128 条公告」是**当时旧版本**的结论，已随依赖升级失效，不代表当前状态。③异机备份：新增 `offsite-backup.sh` + 每日 03:30 timer，支持 rsync / 本地挂载盘 / S3；未配置 `offsite.env` 时静默跳过（实测确认），启用只需建该文件。④CI：新增 `check-all.sh` 一键检查（check、迁移漂移、pip check、diff --check、全量测试），`--fast` 可跳过测试。

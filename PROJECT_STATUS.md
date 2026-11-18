@@ -4,13 +4,61 @@
 
 本文件是项目当前状态的唯一事实来源。旧计划、旧验收报告和聊天记录不得覆盖这里的结论。
 
+### 2026-11-18 第九轮本地容量与 PostgreSQL 专项复核
+
+- 版本三态：Git 基线仍为 `b79551bb55bea3c1251363002c755f2bc82095b4`；本轮文档为 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md`，另有并发产生的三个非本轮未提交文件；NUC SSH 认证失败，实际 release 记为“未复核”。
+- 使用一次性 SQLite E2E 数据库执行 `run_local_capacity.ps1 -RequestsPerStep 40 -ConcurrencyRamp 1,4,8,12`：8 条登录态只读路由共 160 次请求全部 200，错误率 0；12 并发 P95 366.19ms、P99 441.81ms。该结果仅代表最小数据集本机基线，不能解除 P2-11。
+- PostgreSQL 并发/审计专项 **8 项全部跳过**（当前数据库为 SQLite），未执行 NUC PostgreSQL 验证；Playwright 运行时缺失，本轮未执行浏览器 E2E/UI 审计。
+- 本轮未修改业务代码、未访问业务数据库、未部署；容量临时数据库、报告和日志已清理。详见 `REVIEW_REPORT.md` 第九轮章节。
+
+### 2026-11-18 第八轮报表、导出与容量复核
+
+- 版本三态：Git 已提交基线 `b79551bb55bea3c1251363002c755f2bc82095b4`；本轮审查文档为 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md`，另有并发产生、非本轮的 `backend/templates/quick_inventory_process.html`、`backend/templates/request_create.html`、`backend/apps/common/test_recipient_field_visibility.py` 未提交改动；本轮 SSH 认证失败，NUC 实际运行 release 记为“未复核”。
+- 报表、导出、审计归档和 workflow 相关专项在 `TEMP/TMP=runtime-data` 下执行 **152/152 通过，159.665 秒**，测试库已销毁，system check 无问题。系统临时目录不可写时曾出现 4 项临时文件错误，改用可写目录后完整专项通过。
+- 新增 **P1-12**：`transaction_export()` 无财务权限时虽隐藏成本表头，但仍把 `cost_amount` 写入每行；临时测试已复现非财务账号读取成本值。修复前不得向非财务角色发放该 CSV。
+- 新增 **P2-11**：供应商价格历史、报表总览、呆滞库存页面/导出存在无上限 Python 全量物化，且呆滞库存分页发生在物化之后；大数据量性能风险尚未压测。
+- 本轮未修改业务代码、未访问业务数据库、未部署；临时测试文件和目录已清理。详细证据、路径、修复和验证方法见 `REVIEW_REPORT.md` 第八轮章节。
+
+### 2026-11-18 第三轮权限与核心 API 复核
+
+- 版本三态：Git 已提交基线 `b79551bb55bea3c1251363002c755f2bc82095b4`；本地未提交仅为 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md` 审查文档；本轮 SSH 无法重新连接 NUC，当前 release 记为“未复核”。此前本会话成功读取的最后 release 为 `20261118-122912-b79551b`，source 与本地 HEAD 一致，但不替代本轮现场复核。
+- 权限/API 专项：30/30 通过（14.731 秒）。覆盖 workflow 审批/拒绝/执行、批量审批、inventory 成本字段和照片上传、资产写权限、账号治理、`/me` 谓词一致性及移动端权限相关测试；测试库已销毁。
+- 静态复核：申请和资产 API 禁用硬删除；核心动作按审批/执行/录入权限分离；资产、耗材、出入库流水成本字段按财务权限过滤；嵌套申请创建使用事务。未发现新增 P0/P1。
+- 未完成：PostgreSQL 8 项并发/审计专项、真实浏览器 E2E、DS3678/ZT610 设备验收；P2-06 安全门禁未纳入 `check-all.sh` 仍待修复。详细证据见 `REVIEW_REPORT.md` 第三轮章节。
+
+### 2026-11-18 第四轮通知与附件访问复核
+
+- 通知只读 API 按收件人隔离；钉钉 outbox 的幂等、回滚、重试、失败和 stale claim 专项 `8/8` 通过。
+- 生命周期附件已由 Nginx 拦截直链并经 Django 授权下载；文件名路径经过白名单化。
+- 新增待确认 P2 候选：附件下载目前只检查仓库业务权限，`invoice`/费用凭证类别未与财务权限关联。现有测试只覆盖仓库操作员成功、普通员工拒绝；需业务确认后再决定是否纳入开发计划。
+
+### 2026-11-18 第五轮部署与恢复路径复核
+
+- 新增 **P1-09**：`backup.sh` 已使用 `media-snapshots/<timestamp>/` 硬链接增量格式，但 `restore-drill.sh` 仍检查不存在的 `media.tar.gz`，当前恢复演练会在数据库恢复前失败。历史恢复演练结论不能覆盖格式切换后的脚本状态。
+- 新增 **P2-08**：`check-all.sh` 创建 `.test-run-temp` 后没有退出清理，重复运行可能积累测试产物；本轮已手动清理本地产物。
+- 新增 **P2-09**：`install.sh --import-sqlite` 将完整业务 dump 写到固定 `/tmp/after-sales-warehouse-initial.json`，没有显式 600 权限和失败清理；需在任何一次性导入前修复并验证。
+- 新增 **P2-10**：Workflow API 和离线同步只校验目标库位与仓库的归属关系，未在服务层阻断停用仓库/库位；需补充 API、离线和 Web 反向用例。
+- 新增 **P1-11**：采购到货登记没有幂等键；响应丢失后重试可能重复生成到货单、入库单和库存流水。现有测试未覆盖成功后重放。
+- 本轮未连接 NUC、未执行数据库恢复、未修改部署脚本；P1-09 应优先于现场恢复验收处理。
+
+### 2026-11-18 第六轮 workflow 与离线流程回归
+
+- `OfflineOperationTests` + `WorkflowApiTests`：**35/35 通过，24.577 秒**；覆盖离线幂等、跨账号、payload 篡改、冲突回滚、拒绝和重复复核。
+- 静态确认 workflow 服务使用事务和稳定锁顺序；SQLite 不能替代 PostgreSQL 并发验证。
+- 停用仓库/库位写入仍是 P2-10，真实浏览器、断网恢复、并发重复提交和设备现场验收均未执行。
+
+### 2026-11-18 第七轮采购、盘点、导入与审计专项
+
+- 专项 37 项通过、2 项跳过（共 39 项），43.159 秒；跳过项为 PostgreSQL 原始 SQL 审计触发器测试。
+- 覆盖盘点、采购部分到货、导入撤销和应用层审计不可变性；采购到货重放幂等仍是 P1-11，真实 PostgreSQL 和浏览器重试未验证。
+
 ### 2026-11-18 第一轮全量审查与基础回归
 
 - 本轮只读审查未访问业务数据库、未提交业务表单、未部署、未修改服务器或生产配置；NUC 仅读取 `/opt/after-sales-warehouse/current/release-info`。
-- 版本三态：Git 已提交基线为 `b40c190e4db36eb7b9e9a5bc309ee67328c6197a`；本地工作区开始时干净；NUC 实际运行 `20261118-110008-c822551`（source `c82255183906…`，`working_tree_dirty=false`）。本地 HEAD 与 NUC release 不一致，不能混称为“当前版本”。
+- 版本三态：Git 已提交基线当前为 `b79551bb55bea3c1251363002c755f2bc82095b4`（P2-01 修复提交，由其他并发执行者产生）；本地当前仅有三个审查文档未提交；NUC 实际运行 `20261118-110008-c822551`（source `c82255183906…`，`working_tree_dirty=false`）。本地 HEAD 与 NUC release 不一致，不能混称为“当前版本”。
 - 本机基础回归：Python 3.12.10、`pip check`、`manage.py check`、迁移漂移和 JavaScript 语法通过；Django 全量 **593/593 通过，8 项 PostgreSQL 专项跳过**，测试数据库已销毁。
 - 本轮未执行：Linux Bash 脚本语法（Windows 无 Bash/WSL）、Bandit、pip-audit、目标 PostgreSQL 并发、真实浏览器/DS3678/ZT610 设备验收。Python `compileall` 因现有 `__pycache__` ACL 拒绝，记录为环境性阻塞。
-- 新增/确认待办：P2-01 V2 导入前缀白名单与编码服务不一致（`SC|DZSB` vs `SC|DZSB|ZSB|QTZC`）；P2-02 超大模块文件维护成本；P2-03 Linux 发布与安全工具门禁未在本机执行；P2-04 PostgreSQL/浏览器/硬件闭环未验证；P2-05 本地 HEAD 与 NUC release 追溯不一致。详细证据、调用链和六视角评审见 `REVIEW_REPORT.md` 顶部 2026-11-18 章节。
+- 新增/确认待办：P2-01 已在本地提交 `b79551b` 并通过自动化，但尚未部署/现场验收；P2-02 超大模块文件维护成本；P2-03 Linux 发布与安全工具门禁未纳入一键脚本；P2-04 PostgreSQL/浏览器/硬件闭环未验证；P2-05 本地 HEAD 与 NUC release 追溯不一致。详细证据、调用链和六视角评审见 `REVIEW_REPORT.md` 顶部 2026-11-18 章节。
 
 ### 2026-11-18 第二轮安全门禁复核
 
@@ -19,6 +67,7 @@
 - pip-audit 针对 `backend/requirements-lock.txt` 使用 `--no-deps --disable-pip`：`No known vulnerabilities found`。扫描器安装在 WSL 临时目录，未改仓库和锁文件。
 - PostgreSQL 8 项并发/审计专项仍未执行；本机无 PostgreSQL 客户端，且本轮不连接 NUC 业务库。
 - 新增 P2-06：`deploy/ubuntu22/check-all.sh` 未纳入 shell 语法、Bandit、pip-audit，当前安全门禁依靠人工补跑。详见 `REVIEW_REPORT.md` 第二轮章节。
+- 本轮中途发现其他工作区新增 P2-01 修复改动，随后由其他并发执行者提交为 `b79551b`：`code_services.py`、`v2_import_services.py` 和 `test_asset_code_prefix_consistency.py`；专项 `10/10`、全量 `603/603` 通过（8 项 PostgreSQL 跳过）。该提交未部署，不能作为 NUC 验收结论。
 
 ### 2026-11-17 当前工作区复盘与 P1 修复
 
@@ -90,12 +139,12 @@
 
 ### Three version states
 
-- Git 已提交基线：`c05db869f5bd3df93cc1cd8491001f7475a9ae6e`，短 revision `c05db86`，最后提交为 `fix: 修复导出公式注入、盘点扫码归一化与耗材歧义解析`。自旧基线 `1901c85` 起共 **12 个本地提交（未 push）**：chore 忽略临时目录 → accounts 账号治理 → common 审计与权限 → workflow 审批分离 → inventory 搜索/导入 → 打印 ZPL 位图 → PWA 图标与移动端 → 测试补充 → deploy 隧道与 Nginx → docs 归档 → docs 基线记录 → **P1 修复**。
-- 本地未提交工作区：**干净**（`git status --short` 为空）。P1 修复前后各跑一次全量测试，均通过。
-- NUC 实际运行 release：`20261117-162436-c05db86`，source revision `c05db869f5bd...`，`working_tree_dirty=false`，部署时间 `2026-11-17T16:26:15+08:00`。**版本标记与本地 HEAD 完全对齐**。部署地址 `192.168.123.101`；服务器 PostgreSQL、Gunicorn、Nginx、Cloudflare Tunnel 和业务数据均未清理。
-- 三个 P1 修复已**在生产环境实跑验证**：导出公式注入（`=cmd|'/c calc'!A1` 被转义为文本）、盘点归一化（`WMS2：A：AST-1` → `WMS2:A:AST-1`，真实资产带尾随换行仍可解析）、耗材编码优先解析。
+- Git 已提交基线：`b79551bb55bea3c1251363002c755f2bc82095b4`，短 revision `b79551b`，包含资产编码前缀规则收敛修复与 10 项专项测试。
+- 本地未提交工作区：`CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md` 三个审查文档有未提交改动；业务代码无未提交改动。
+- NUC 实际运行 release：本轮 SSH 复核**未复核**；此前本会话成功读取 `20261118-122912-b79551b`，source revision 与本地 HEAD 一致，`working_tree_dirty=false`。部署地址仍为 `192.168.123.101`；本轮未读取数据库、未修改服务器数据。
+- 资产编码修复的本机专项和全量自动化已通过；PostgreSQL、浏览器和设备现场验收不因自动化结果而视为完成。
 
-### 2026-11-18 备份恢复演练（首次真实验证）
+### 2026-11-18 备份恢复演练（旧媒体 tar 格式，历史结果）
 
 此前备份只验证过 `pg_restore --list`（能读目录），**从未验证过真恢复**。本轮完成端到端演练：
 
@@ -110,7 +159,7 @@
 | **审计只增不改触发器** | **10 个随备份一起恢复** |
 | 演练库清理 | 已删除，生产库未受影响 |
 
-**结论：备份可用，恢复路径验证通过。** 演练脚本思路记录在 `PROJECT_REVIEW_20261118.md` 的验证记录章节。
+**历史结论：当时使用的数据库 dump 可恢复，旧媒体 tar 格式的演练通过。** 之后 `backup.sh` 已切换到 `media-snapshots` 硬链接增量格式；当前 `restore-drill.sh` 仍要求 `media.tar.gz`，因此该历史结果不能作为当前恢复链验收。详见本文件顶部 P1-09。
 
 ### 项目完整复盘
 

@@ -109,18 +109,14 @@
 
       // 接收人二选一：勾选「不在系统内」才显示手工姓名输入框，
       // 否则用下拉框里的账号（与新建申请表单逻辑一致）。
+      //
+      // 注意：显示/隐藏统一由下方 refresh() 负责，这里只保留元素引用。
+      // 以前这里另写了一份 nameField.hidden 控制，会被 refresh() 覆盖，
+      // 表现为「选了物品后姓名框又冒出来」。
       const externalBox = document.getElementById('recipient_external');
       const nameField = document.getElementById('recipient-name-field');
       const nameInput = document.getElementById('recipient_name');
       const recipientSelect = document.getElementById('recipient_select');
-      function syncRecipientFields() {
-        const external = Boolean(externalBox && externalBox.checked);
-        if (nameField) nameField.hidden = !external;
-        if (nameInput) nameInput.required = external;
-        if (recipientSelect) recipientSelect.required = !external;
-      }
-      if (externalBox) externalBox.addEventListener('change', syncRecipientFields);
-      syncRecipientFields();
       const count = document.getElementById('selected-count');
       const warning = document.getElementById('selection-warning');
       const queryInput = document.getElementById('item-query');
@@ -160,14 +156,28 @@
       function refresh() {
         const currentType = type.value;
         searchType.value = currentType;
+        // 与新建申请同样的坑：手工姓名框同时带 data-types，通用可见性逻辑
+        // 会把它无条件放出来，导致「下拉框 + 姓名框」两个接收人域同时可见。
+        // 这里让通用逻辑尊重「接收人不在系统内」勾选。
+        const wantsExternalRecipient = Boolean(externalBox && externalBox.checked);
         document.querySelectorAll('[data-types]').forEach((field) => {
-          const visible = field.dataset.types.split(',').includes(currentType);
+          let visible = field.dataset.types.split(',').includes(currentType);
+          if (field === nameField) visible = visible && wantsExternalRecipient;
           field.hidden = !visible;
           field.querySelectorAll('input, select, textarea').forEach((input) => {
             input.disabled = !visible;
             input.required = visible && (field.dataset.requiredTypes || '').split(',').includes(currentType);
           });
         });
+        // 下拉框与姓名框互斥：外部接收人时禁用下拉，否则禁用姓名框
+        if (recipientSelect) {
+          recipientSelect.disabled = wantsExternalRecipient;
+          recipientSelect.required = !wantsExternalRecipient;
+        }
+        if (nameInput) {
+          nameInput.required = wantsExternalRecipient;
+          if (!wantsExternalRecipient) nameInput.value = '';
+        }
         document.querySelectorAll('.candidate-add').forEach((button) => {
           const incompatible = !allowed(button).includes(currentType);
           button.classList.toggle('incompatible', incompatible);
@@ -357,6 +367,9 @@
         refresh();
       });
       type.addEventListener('change', refresh);
+      // 「接收人不在系统内」勾选变化统一走 refresh()，
+      // 保证姓名框与下拉框的显示/禁用只由一处逻辑决定。
+      if (externalBox) externalBox.addEventListener('change', refresh);
       queryInput.addEventListener('keydown', async (event) => {
         if (event.key !== 'Enter' && event.key !== 'Tab') return;
         if (event.key === 'Tab' && !queryInput.value.trim()) return;

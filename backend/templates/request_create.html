@@ -112,6 +112,11 @@
       const count = document.getElementById('selected-count');
       const warning = document.getElementById('selection-warning');
       const queryInput = document.getElementById('item-query');
+      // 接收人二选一：勾选「不在系统内」才显示手工姓名框。
+      // 该字段同时带 data-types，会被 refresh() 的通用可见性逻辑覆盖，
+      // 所以必须在 refresh() 里单独收口，否则一选物品就无条件冒出来。
+      const recipientExternal = document.getElementById('recipient_external');
+      const recipientNameField = document.getElementById('recipient-name-field');
       const scanMessage = document.getElementById('scan-message');
       const scanPanel = document.getElementById('continuous-scan-panel');
       const scanVideo = document.getElementById('scan-video');
@@ -136,14 +141,35 @@
       function refresh() {
         const currentType = type.value;
         searchType.value = currentType;
+        // 「接收人不在系统内」为真时，手工姓名框才该显示。
+        // 这个开关必须先算出来，再让通用可见性逻辑尊重它——
+        // 否则一选物品触发 refresh()，姓名框会被无条件放出来，
+        // 和下拉框同时可见（历史上就这么冒出来的）。
+        const wantsExternalRecipient = Boolean(recipientExternal && recipientExternal.checked);
         document.querySelectorAll('[data-types]').forEach((field) => {
-          const visible = field.dataset.types.split(',').includes(currentType);
+          let visible = field.dataset.types.split(',').includes(currentType);
+          if (field === recipientNameField) visible = visible && wantsExternalRecipient;
           field.hidden = !visible;
           field.querySelectorAll('input, select, textarea').forEach((input) => {
             input.disabled = !visible;
             input.required = visible && (field.dataset.requiredTypes || '').split(',').includes(currentType);
           });
         });
+        // 下拉框与姓名框互斥必填：外部接收人时禁用下拉，否则禁用姓名框
+        const recipientSelect = document.getElementById('recipient_select');
+        const recipientNameInput = document.getElementById('recipient_name');
+        const recipientVisible = Boolean(
+          recipientSelect && recipientSelect.closest('[data-types]')
+          && !recipientSelect.closest('[data-types]').hidden
+        );
+        if (recipientSelect) {
+          recipientSelect.disabled = recipientVisible && wantsExternalRecipient;
+          recipientSelect.required = recipientVisible && !wantsExternalRecipient;
+        }
+        if (recipientNameInput) {
+          recipientNameInput.required = recipientVisible && wantsExternalRecipient;
+          if (!wantsExternalRecipient) recipientNameInput.value = '';
+        }
         document.querySelectorAll('.candidate-add').forEach((button) => {
           const incompatible = !allowed(button).includes(currentType);
           button.classList.toggle('incompatible', incompatible);
@@ -328,6 +354,10 @@
         refresh();
       });
       type.addEventListener('change', refresh);
+      // 「接收人不在系统内」勾选变化时统一走 refresh()，
+      // 保证姓名框与下拉框的显示/禁用只由一处逻辑决定。
+      document.addEventListener('warehouse:recipient-changed', refresh);
+      if (recipientExternal) recipientExternal.addEventListener('change', refresh);
       queryInput.addEventListener('keydown', async (event) => {
         if (event.key !== 'Enter' && event.key !== 'Tab') return;
         if (event.key === 'Tab' && !queryInput.value.trim()) return;
@@ -392,27 +422,19 @@
     })();
   </script>
 <script>
-  // 接收人：默认从系统账号里选；只有勾选"不在系统内"才切换为手工填写姓名。
+  // 接收人：默认从系统账号里选；只有勾选「不在系统内」才切换为手工填写姓名。
+  //
+  // 注意：字段的真正显示/隐藏统一由上面 refresh() 负责（它也在控制 data-types 各字段）。
+  // 这里只负责把勾选变化转成一次 refresh()。以前这里另写了一份 show/hide，
+  // 和 refresh() 抢同一个 field.hidden，结果一选物品就被 refresh() 覆盖，
+  // 姓名框无条件冒出来——那正是「选物品后多出一个接收人姓名框」的根因。
   (() => {
-    const select = document.getElementById('recipient_select');
     const external = document.getElementById('recipient_external');
-    const nameField = document.getElementById('recipient-name-field');
-    const nameInput = document.getElementById('recipient_name');
-    if (!select || !external || !nameField) return;
-    const sync = () => {
-      const isExternal = external.checked;
-      nameField.hidden = !isExternal;
-      select.disabled = isExternal;
-      select.required = !isExternal;
-      if (nameInput) nameInput.required = isExternal;
-      if (isExternal) {
-        if (nameInput) nameInput.focus();
-      } else if (nameInput) {
-        nameInput.value = '';
-      }
-    };
-    external.addEventListener('change', sync);
-    sync();
+    if (!external) return;
+    external.addEventListener('change', () => {
+      // refresh 定义在上方 IIFE 内，通过自定义事件桥接，避免跨作用域引用
+      document.dispatchEvent(new CustomEvent('warehouse:recipient-changed'));
+    });
   })();
 </script>
 {% endblock %}

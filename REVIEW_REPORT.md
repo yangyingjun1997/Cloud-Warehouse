@@ -1,5 +1,262 @@
 # 全量代码审查与回归报告
 
+## 2026-11-18 第九轮本地容量基线与 PostgreSQL 专项可运行性复核（本轮新增）
+
+### 1. 版本三态与执行边界
+
+| 状态 | 本轮记录 | 证据状态 |
+| --- | --- | --- |
+| Git 已提交基线 | `b79551bb55bea3c1251363002c755f2bc82095b4` | 已验证：`git rev-parse HEAD` |
+| 本地未提交工作区 | 本轮审查文档 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md`；另有并发产生、非本轮的 `backend/templates/quick_inventory_process.html`、`backend/templates/request_create.html`、`backend/apps/common/test_recipient_field_visibility.py` | 已验证：`git status --short`；非本轮三项未读取、未修改、未回退 |
+| NUC 实际运行 release | SSH 认证失败，本轮记为“未复核” | 未连接服务器，未读取数据库、配置或业务数据 |
+
+### 2. 本地只读容量基线
+
+使用仓库现有 `tools/run_local_capacity.ps1`，脚本创建名称含 `e2e` 的一次性 SQLite 数据库、随机测试密码、本机 `runserver`，并在结束时停止服务；本轮生成物已按文件名清理。
+
+```text
+run_local_capacity.ps1 -RequestsPerStep 40 -ConcurrencyRamp "1,4,8,12"
+```
+
+覆盖登录态 8 条 GET 路由：`/`、`/warehouse/`、`/transactions/`、`/reports/`、`/requests/`、`/approvals/`、`/warehouse/quick-process/`、`/api/inventory/assets/`。共 160 次请求，四档均 **40/40 HTTP 200、错误率 0、服务错误日志 0**：
+
+| 并发 | 吞吐 | P95 | P99 |
+| ---: | ---: | ---: | ---: |
+| 1 | 25.59 req/s | 55.61 ms | 82.89 ms |
+| 4 | 40.81 req/s | 141.10 ms | 144.47 ms |
+| 8 | 47.70 req/s | 213.45 ms | 245.32 ms |
+| 12 | 42.53 req/s | 366.19 ms | 441.81 ms |
+
+该基线只使用最小 E2E 数据（1 个资产、无历史交易），只能证明本机服务和只读入口在小数据量下可运行，不能解除 P2-11 的大数据量风险，也不能代表 Gunicorn/Nginx/PostgreSQL 现场容量。
+
+### 3. PostgreSQL 与浏览器专项可运行性
+
+- 本机执行 `apps.accounts.test_postgresql_concurrency`、`apps.workflow.test_postgresql_concurrency`、`apps.common.test_postgresql_concurrency`、`apps.common.test_postgresql_audit_immutability`：**8 项全部跳过**，原因是当前数据库为 SQLite；system check 通过。未把“跳过”写成“通过”。
+- 本轮未执行 `tools/e2e_smoke.js`、`tools/ui_audit.py`：当前 Node/Python 环境均未提供 Playwright（`Cannot find module 'playwright'`、`ModuleNotFoundError: No module named 'playwright'`）。历史报告中的浏览器结果只证明历史环境，不能作为本轮当前工作区的新增证据。
+- NUC 当前不可达，无法执行隔离 PostgreSQL 并发/触发器、Gunicorn/Nginx 容量、真实浏览器和设备验收。
+
+### 4. 本轮结论与下一步
+
+- **已验证**：本地隔离服务的登录态只读容量小基线无 HTTP 错误；8 项 PostgreSQL 专项在 SQLite 上按设计跳过，未误报为通过。
+- **高概率推断**：并发从 8 提升到 12 时本地 P95/P99 明显上升，说明容量需持续观察；但最小数据集无法归因于 P2-11 的全量物化路径。
+- **需确认**：在 NUC 或隔离 PostgreSQL 上补跑 8 项并发/审计测试和大数据容量测试；准备受控 Playwright 运行时后重新执行登录、响应式、扫码、离线队列和页面审计。P1-12 仍未修复，非财务 CSV 不应开放。
+
+## 2026-11-18 第八轮报表、导出、审计归档与容量复核（本轮新增）
+
+### 1. 版本三态与执行边界
+
+| 状态 | 本轮记录 | 证据状态 |
+| --- | --- | --- |
+| Git 已提交基线 | `b79551bb55bea3c1251363002c755f2bc82095b4` | 已验证：`git rev-parse HEAD` |
+| 本地未提交工作区 | 本轮审查文档 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md`；另有并发产生、非本轮的 `backend/templates/quick_inventory_process.html`、`backend/templates/request_create.html`、`backend/apps/common/test_recipient_field_visibility.py` | 已验证：`git status --short`；非本轮三项未读取、未修改、未回退 |
+| NUC 实际运行 release | 本轮 SSH 返回 `Permission denied (publickey,password)`，记为“未复核” | 已验证连接失败；未读取服务器数据库、配置或业务数据 |
+
+本轮没有修改业务代码、提交业务表单、访问业务数据库或部署服务器。临时测试文件和临时目录均已清理。
+
+### 2. 已执行专项测试
+
+在本机 SQLite 临时测试库执行：
+
+```text
+TEMP=runtime-data TMP=runtime-data
+manage.py test apps.common.tests.StaleInventoryReportTests
+  apps.common.tests.ExportAuditArchiveTests
+  apps.common.tests.DashboardAndAdminTests
+  apps.inventory.test_finance_permission
+  apps.workflow.tests --verbosity 1
+```
+
+结果：**152/152 通过，159.665 秒**，测试库已销毁，Django system check 无问题。覆盖报表总览、资产/出入库/呆滞库存/供应商导出、财务字段权限、审计归档、采购订单资料导入和 workflow 回归。首次使用系统临时目录时有 4 项因 Windows Python 无法创建临时文件而报错；改用仓库既有可写 `runtime-data` 目录后同一完整专项全部通过。该环境问题不是业务断言失败，但发布机应保证 Python 临时目录可写。
+
+### 3. P1-12：无财务权限的出入库 CSV 行仍泄露成本值
+
+- **位置**：`backend/apps/common/views.py:4374`、`backend/apps/common/views.py:4407-4418`。
+- **触发条件**：仅具备报表查看权限、没有财务权限的账号下载 `/reports/transactions.csv`，且结果集中存在 `cost_amount`。
+- **原因**：表头按 `can_view_financials()` 隐藏“库存成本价值”列，但每行构造仍无条件追加 `item.cost_amount`；无财务权限时响应表头与数据列数不一致，成本值仍出现在 CSV 中。
+- **影响**：仓库报表角色可读取采购/出入库成本等财务敏感数据；下游按列解析还可能错位。该问题属于权限边界失效，按 P1 处理。
+- **证据**：临时 `TestCase` 创建带 `cost_amount=123.45` 的交易，以仅报表角色请求 CSV，响应中检测到 `123.45`；既有 `backend/apps/inventory/test_finance_permission.py:70-77` 只检查表头是否包含中文列名，没有带成本交易行的反向断言。临时测试文件已删除。
+- **修复建议**：构造行时与表头使用同一权限分支，无财务权限时完全不加入 `cost_amount`；增加 CSV 解析后的列数、成本值不存在/财务角色可见的双向测试，并覆盖资产和耗材交易。
+- **验证方法**：用无财务、财务、系统管理员三类账号分别导出带成本交易，断言列数一致、无财务响应不包含成本值，财务响应包含且数值正确；同时验证公式注入转义仍生效。
+- **修复风险**：低到中。导出列结构会被严格修正，依赖旧错误列位的外部脚本需要迁移提示。
+
+### 4. P2-11：报表页面和部分导出对数据量没有上限，分页发生在全量物化之后
+
+- **位置**：`backend/apps/common/views.py:2440-2459`、`backend/apps/common/views.py:2495-2506`、`backend/apps/common/views.py:4139-4166`、`backend/apps/common/views.py:4193-4201`、`backend/apps/common/views.py:4277-4315`、`backend/apps/common/views.py:4322-4364`。
+- **触发条件**：交易历史、采购价格历史、资产/耗材数量或呆滞库存达到较大规模，或用户提交跨多年日期范围；普通报表角色即可触发这些只读请求。
+- **原因**：供应商价格页把整个 QuerySet 按供应商和物品加载到 Python `groups`；总览按日期范围遍历全部交易计算 action 计数，并用 Python `sum` 计算全量库存成本；呆滞库存先把资产和耗材全部转换为 `rows`、排序，再 `Paginator(rows, 50)`，导出也遍历完整列表。只有资产台账和出入库导出使用 `.iterator()`，但仍没有结果集上限或超时预算。
+- **影响**：大数据量下单请求内存随历史记录线性增长，排序和关联对象加载会延长响应并占用 Gunicorn worker；极端情况下可能超时、触发 OOM，报表请求会拖累业务接口。当前 SQLite 专项只证明功能正确，没有容量或 PostgreSQL 执行计划证据。
+- **证据**：上述代码路径均无日期最大跨度、最大行数、分页前数据库聚合或流式响应；`stale_inventory_report()` 明确在 `Paginator` 前接收完整 `rows`。本轮 152 项功能专项通过，但未执行大数据量压测，性能结论为高概率推断。
+- **修复建议**：总览 action/成本/维度统计改为数据库聚合；价格历史按分组查询或数据库窗口函数分页；呆滞库存把闲置条件下推到查询并使用稳定排序和数据库分页，CSV 使用流式响应；对日期范围和导出行数设置业务上限并提供异步归档任务，配合查询超时、慢查询指标和内存告警。
+- **验证方法**：在隔离 PostgreSQL 生成 10 万/100 万级交易、资产和采购行，执行页面和导出容量基线，记录 P50/P95、峰值 RSS、数据库扫描行数和 worker 并发；验证超限请求返回可理解提示且不会产生 OOM。
+- **修复风险**：中等。聚合口径、排序稳定性和导出分页可能改变边界结果，需要用现有报表快照和财务核对数据做兼容验证。
+
+### 5. 本轮结论与下一步
+
+- **已验证**：报表、导出、审计归档及采购资料专项 152/152 通过；审计归档 tarball 和 `SHA256SUMS` 现有测试通过；无财务权限 CSV 成本值泄露已由临时实测复现。
+- **高概率推断**：P2-11 在 PostgreSQL 数据量增长后会造成内存和响应时间线性上升，当前没有容量上限或查询预算。
+- **需确认**：P1-12 修复前不得把出入库 CSV 提供给非财务角色；P2-11 的业务数据规模、可接受报表延迟、异步导出需求和 PostgreSQL 容量基线仍需确认。NUC release、真实 PostgreSQL 压测、浏览器和设备现场验收本轮仍未复核。
+
+## 2026-11-18 第三轮身份/权限边界与核心 API 写路径复核（本轮新增）
+
+### 1. 版本三态与执行边界
+
+| 状态 | 本轮记录 | 证据状态 |
+| --- | --- | --- |
+| Git 已提交基线 | `b79551bb55bea3c1251363002c755f2bc82095b4` | 已验证：`git rev-parse HEAD` |
+| 本地未提交工作区 | `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md` 三个审查文档；业务代码无未提交改动 | 已验证：`git status --short` |
+| NUC 实际运行 release | 本轮 SSH 复核未连接成功，记为“未复核”；此前本会话已成功读取 `20261118-122912-b79551b`，source `b79551bb55bea3c1251363002c755f2bc82095b4`，`working_tree_dirty=false` | 当前连接失败，不能把上次读取当成本轮现场验收 |
+
+本轮没有读取业务数据库、没有提交业务表单、没有部署或修改服务器配置。SSH 失败原因仅记录为认证未通过，未在报告中写入密码或密钥。
+
+### 2. 已完成专项测试
+
+使用本机 SQLite 临时测试库执行：
+
+```text
+manage.py test apps.workflow.test_api_security apps.workflow.test_batch_approval_web
+  apps.inventory.test_api_permissions apps.inventory.test_asset_write_permission
+  apps.common.test_account_review_and_mobile --noinput -v 2
+```
+
+结果：**30/30 通过，14.731 秒**，测试库已销毁；Django system check 无问题。覆盖申请/审批/执行动作权限、批量拒绝原因、成本字段财务权限、照片上传权限、资产录入权限、账号治理权限、`/me` 谓词一致性和移动端页面权限相关回归。该结果不覆盖 PostgreSQL 行锁、真实浏览器、扫码枪或打印机。
+
+### 3. 核心 API 静态证据
+
+- 申请 API 在 `backend/apps/workflow/views.py:81-156` 将 DELETE 从 `http_method_names` 中移除；审批、拒绝、执行分别使用 `IsWorkflowApprover`、`IsInventoryExecutor`，业务状态变更通过 service 层处理。
+- 资产 API 在 `backend/apps/inventory/views.py:217-231` 禁用 DELETE；基础资料的通用删除入口位于 `backend/apps/inventory/views.py:94-132`，当前均由系统管理员权限保护。资产照片上传在 `backend/apps/inventory/views.py:319-346` 显式要求 `IsInventoryEditor` 并经过图片校验。
+- `AssetSerializer` 在 `backend/apps/inventory/serializers.py:190-214` 移除无财务权限用户的 `purchase_amount`；`StockItemSerializer` 在 `backend/apps/inventory/serializers.py:351-377` 移除 `unit_cost`；`InventoryTransactionSerializer` 在 `backend/apps/workflow/serializers.py:103-112` 移除 `cost_amount`。
+- `/me` 在 `backend/apps/accounts/views.py:17-35` 使用 `is_warehouse_operator()`，与仓库组合权限判断保持一致；本轮专项 `MePermissionConsistencyTests` 通过。
+- `WorkflowRequestSerializer.create()` 在 `backend/apps/workflow/serializers.py:151-162` 使用 `transaction.atomic`，申请主单及明细不会在嵌套创建失败时留下部分写入；本轮未发现新的原子性缺口。
+
+本轮未发现新增 P0/P1。现有 P2-06（`check-all.sh` 未纳入 shell 语法、Bandit、pip-audit）仍未修复；P2-04（PostgreSQL、浏览器和设备闭环）仍未验证。此前 P2-01 已由 `b79551b` 修复并由其他执行者部署，但本轮无法重新连接 NUC，不能追加现场验收结论。
+
+### 4. 本轮结论与下一步
+
+- 已验证：30 项权限/API 专项全部通过；核心写路径没有发现可由普通仓库角色绕过的申请删除、审批、出入库执行或财务字段泄露路径。
+- 高概率推断：基础资料 API 的管理员删除策略与当前“资产历史不可硬删除”规则一致；仍应在 PostgreSQL 隔离库做外键保护和审计完整性验证。
+- 需确认：当前 NUC release、隔离 PostgreSQL 8 项并发专项、真实浏览器 E2E、DS3678 连续扫码和 ZT610 60×40 mm 真机走纸。
+
+## 2026-11-18 第四轮通知/outbox 与附件访问边界复核（本轮新增）
+
+### 1. 已验证
+
+- 通知 API 在 `backend/apps/notifications/views.py:8-29` 为只读集合，查询集按 `recipient=request.user` 限定；标记已读只能作用于当前用户的通知。本机 `apps.notifications.test_outbox` 与上传校验专项共 **8/8 通过，0.338 秒**。
+- 钉钉 outbox 在 `backend/apps/notifications/outbox.py:64-151` 以数据库行锁/`skip_locked`（目标数据库支持时）、幂等键、发送中超时回收、指数退避和终态失败组成恢复链；测试覆盖幂等、不随业务回滚、成功、重试、终态失败和 stale claim 恢复。
+- 生命周期附件下载在 `backend/apps/common/views.py:3587-3603` 要求登录且具备仓库业务权限；Nginx 在 `deploy/ubuntu22/nginx-after-sales-warehouse.conf:32-39` 对 `assets/<AST>/archive/` 直接返回 404，不能绕过 Django 授权直读。附件文件名在 `backend/apps/inventory/models.py:1073-1089` 经过路径剥离和字符白名单化。
+
+### 2. P2 候选：附件类别未细分财务权限（需业务确认）
+
+- **位置**：`backend/apps/common/views.py:3587-3603`、`backend/apps/inventory/models.py:1060-1072`。
+- **触发条件**：具备任一仓库组合权限的账号（包括仅报表或审批角色）访问 `AssetAttachment.Category.INVOICE` 附件下载地址。
+- **原因**：下载视图只判断 `is_warehouse_operator()`，没有根据附件类别调用 `can_view_financials()` 或其他最小权限谓词；模型类别明确包含“发票或费用凭证”。
+- **影响**：若发票、费用凭证属于财务敏感资料，仓库普通角色可读取超出职责范围的文件。当前代码证据足以确认权限粒度缺失，但是否允许所有仓库角色查看发票需业务负责人确认，因此暂列 P2 候选而非已确认漏洞。
+- **现有证据**：`backend/apps/inventory/tests.py:295-321` 只覆盖仓库操作员成功下载和普通员工拒绝，未覆盖报表-only/审批-only/非财务角色访问发票的反向用例。
+- **建议与验证**：先确认附件分类权限矩阵；若发票需财务权限，下载前增加类别到权限的映射，并补充至少四类角色的正反向测试及直接 `/media/` 404 验证。修复风险是历史用户习惯改变和旧附件分类不准确，需要迁移/兼容策略。
+
+### 3. 本轮结论
+
+通知隔离、outbox 幂等重试、私有附件直链防护和路径安全均有代码及自动化证据；新增的附件财务权限项仅为需确认的 P2 候选。当前最高优先级未验证项仍是 PostgreSQL 并发、真实浏览器和硬件现场闭环。
+
+## 2026-11-18 第五轮部署、备份与恢复路径复核（本轮新增）
+
+### P1-09：备份格式已切换，但恢复演练仍依赖已删除的 `media.tar.gz`
+
+- **位置**：`deploy/ubuntu22/backup.sh:22-90`、`deploy/ubuntu22/restore-drill.sh:6-29`。
+- **触发条件**：运行当前 `/usr/local/sbin/after-sales-warehouse-backup` 后，执行 README 记录的 `after-sales-warehouse-restore-drill`，或按参数对任意当前备份目录执行恢复演练。
+- **原因**：备份脚本现在把媒体写入独立的 `backups/media-snapshots/<timestamp>/`，并在批次目录只写 `database.dump` 与 `SHA256SUMS`；恢复脚本仍要求 `BACKUP_DIR/media.tar.gz` 存在并执行 `tar -tzf`。当前代码库没有生成 `media.tar.gz` 的路径。即使绕过该检查，`SHA256SUMS` 中的媒体校验路径也指向批次外的快照结构，不能按当前脚本直接恢复。
+- **影响**：恢复演练在 `line 18` 的文件检查处失败，无法验证数据库与媒体的一致恢复；真实灾难恢复时附件恢复步骤没有可执行路径，备份可用性结论不能沿用历史记录。
+- **证据**：`backup.sh:23` 定义 `MEDIA_SNAPSHOT_ROOT`，`backup.sh:55-72` 只创建硬链接快照；`backup.sh:80-90` 生成的媒体校验路径被改写为 `<stamp>/media/...`，但快照实际位于 `backups/media-snapshots/<stamp>/...`；`restore-drill.sh:18` 明确检查 `media.tar.gz`，`restore-drill.sh:25` 继续读取该文件。README 仍把该脚本作为恢复入口（`README.md:252`）。
+- **修复建议**：先确定恢复契约：①从指定数据库批次解析对应媒体快照并恢复到临时目录；②对数据库 dump 和媒体快照分别校验哈希；③演练完成后删除临时数据库和目录。同步更新 `offsite-backup.sh` 的媒体目录选择和 README 操作步骤，保留旧 tar 备份的兼容提示或明确迁移边界。
+- **验证方法**：在隔离主机/临时 PostgreSQL 库生成一批带媒体文件的备份，执行恢复脚本，验证数据库真实记录、附件文件内容、哈希和清理动作；再测试媒体无变化、媒体新增、异地同步三种场景。
+- **修复风险**：中等。媒体快照使用硬链接，恢复实现若误把链接当独立文件或清理顺序错误，可能造成磁盘占用或历史快照损坏；必须先做临时目录演练。
+
+### P2-08：`check-all.sh` 成功路径不会清理测试临时目录
+
+- **位置**：`deploy/ubuntu22/check-all.sh:32-38`。
+- **触发条件**：重复执行完整检查或在发布机长期运行检查脚本。
+- **原因**：脚本创建 `$REPO_ROOT/.test-run-temp` 并导出临时目录，但没有 `trap` 清理；脚本结束后测试输出、缓存或失败残留会持续留在工作区。
+- **影响**：增加磁盘占用和发布包卫生风险，也可能把上次失败留下的文件带入后续测试；当前 `.gitignore` 可避免提交，但不能避免空间累积。
+- **建议**：使用唯一临时目录并在 `EXIT` trap 中清理，或明确保留失败现场并提供受控清理参数；清理前不得触碰用户已有目录。
+
+### P2-09：SQLite 一次性导入把完整业务 dump 写入公共临时目录
+
+- **位置**：`deploy/ubuntu22/install.sh:376-390`。
+- **触发条件**：首次部署或迁移时使用 `--import-sqlite`，且 `backend/db.sqlite3` 存在；随后 `dumpdata`、迁移或 `loaddata` 任一步失败。
+- **原因**：脚本把完整序列化业务数据重定向到固定的 `/tmp/after-sales-warehouse-initial.json`，没有显式 `umask`/`chmod 600`，也没有 `trap` 保证异常退出清理；仅成功导入后才删除。
+- **影响**：在共享服务器上，临时文件可能被同机其他用户读取；失败重试前还可能残留人员、资产和审计数据。该流程不是常规发布路径，但一旦启用会处理全量业务数据。
+- **证据**：`install.sh:378` 直接写入固定 `/tmp` 路径，`install.sh:390` 的删除仅位于成功分支；当前没有对应权限和失败清理测试。
+- **建议**：使用 `mktemp` 创建 600 权限文件，设置 `trap 'rm -f ...' EXIT`，成功或失败均清理；更理想是通过受控管道直接导入，避免落盘。补充中断、loaddata 失败和重试场景验证。
+- **修复风险**：低到中。需保证 `sudo -u warehouse` 能读取临时文件，同时不能扩大文件权限。
+
+### P2-10：Workflow API/离线路径未在服务层阻断停用仓库或库位
+
+- **位置**：`backend/apps/workflow/services.py:408-410`、`backend/apps/workflow/serializers.py:176-188`、`backend/apps/workflow/offline_services.py:135-140`。
+- **触发条件**：直接提交 API 或构造离线 payload，指定 `is_active=false` 的 `Warehouse` 或 `Location`；目标库位仍属于目标仓库时即可通过现有关系校验。
+- **原因**：服务层 `_validate_target_location()` 只检查库位与仓库的归属关系，没有检查两者的 `is_active`；序列化器和离线 `_object()` 也只按主键取对象。Web 表单的 queryset 会过滤启用项，但这不能保护 API、离线同步或未来其他客户端。
+- **影响**：资产/耗材可能被调拨、归还或维修入库到已停用仓库/库位，后续页面默认过滤后难以定位，造成台账可见性和业务状态不一致。
+- **证据**：`inventory/forms.py:523-590` 对仓库使用 `is_active=True` 查询集；对应 service、serializer 和 offline path 没有同等谓词。当前测试覆盖跨仓库库位错误，但未覆盖停用对象。
+- **建议与验证**：在服务层统一增加启用状态校验，并补 API、离线、Web 三条路径的正反向用例；已有历史资产保留在停用位置时允许只读展示，禁止新的目标写入。修复风险低，但需确认“停用库位上的归还/维修收尾”是否允许管理员例外。
+
+### P1-11：采购到货登记没有幂等键，重复提交可能重复增加库存
+
+- **位置**：`backend/apps/workflow/services.py:1518-1701`、`backend/apps/common/views.py:2263-2296`。
+- **触发条件**：到货 POST 已在数据库提交，但浏览器因网络超时未收到响应，用户再次提交相同采购订单、数量和资产资料；或客户端重复发送同一到货请求。
+- **原因**：`receive_purchase_order()` 每次调用都会创建新的 `WorkflowRequest`、`PurchaseReceipt` 和库存流水，没有客户端请求号、幂等键或已处理请求匹配。`PurchaseReceipt` 只有自动生成的 `receipt_no`，不能识别同一业务请求的重放。
+- **影响**：同一批货物可能被登记两次，耗材数量、资产数量、入库流水和订单已收数量都重复增加；只要订单剩余量仍足够，第二次请求不会被“超量”校验拦截。
+- **证据**：服务函数入口没有 request key 参数，`PurchaseReceipt.objects.create()` 每次无条件执行；Web 视图 `action == 'receive'` 没有提交令牌或幂等字段。现有 `PurchaseOrderWorkflowTests` 覆盖部分到货、超量和位置错误，但没有成功后重试场景。
+- **修复建议**：为到货登记增加服务层幂等键和唯一约束，保存请求摘要与结果；重复请求返回原 `PurchaseReceipt`，同键不同 payload 明确拒绝。前端保留按钮禁用只能作为体验补充，不能代替服务端保护。
+- **验证方法**：模拟同一幂等键连续两次调用、第一次提交后模拟响应丢失重试、同键不同数量、并发双提交；断言只产生一张到货单、一张入库单、一次库存变化和一组审计。
+- **修复风险**：中等。需要兼容历史无幂等键的手工登记，并区分合法的多次部分到货与同一次请求重放。
+
+### 结论与剩余验证
+
+本轮确认部署失败回滚、数据库快照前置和健康检查顺序有静态测试覆盖；但当前备份格式与恢复脚本不兼容，是恢复链上的实质阻断。未连接 NUC、未执行数据库恢复或生产脚本。历史文档中“首次恢复演练通过”的记录应标注为旧 tar 格式时期的结果，不能覆盖本轮发现。
+
+## 2026-11-18 第六轮核心 workflow 与离线流程回归（本轮新增）
+
+### 1. 已执行测试
+
+在本机 SQLite 临时测试库执行：
+
+```text
+manage.py test apps.workflow.tests.OfflineOperationTests
+  apps.workflow.tests.WorkflowApiTests --noinput -v 1
+```
+
+结果：**35/35 通过，24.577 秒**，测试库已销毁，system check 无问题。已覆盖离线操作编号幂等、跨账号复用阻断、原始 payload 篡改阻断、状态冲突不写入库存、拒绝后不可执行、重复复核不重复生成流水，以及 workflow API 权限和删除约束。
+
+### 2. 业务链静态复核
+
+- `receive_offline_operation()` 在 `backend/apps/workflow/offline_services.py:65-105` 使用全局唯一客户端 UUID、持锁读取和原始 payload 比对；重复同步不会生成第二条离线操作。
+- `apply_offline_operation()` 在 `backend/apps/workflow/offline_services.py:208-268` 对已应用/已拒绝状态做幂等或阻断，并在业务冲突时回滚临时申请和库存流水，保留冲突审计。
+- `process_request()` 在 `backend/apps/workflow/services.py:944-1008` 先锁申请明细，再按资产/耗材主键排序加锁，降低相同物品并发处理的死锁概率；SQLite 测试不能证明 PostgreSQL 行锁语义，仍需隔离 PostgreSQL 专项。
+- 当前缺口是停用仓库/库位目标校验：表单层过滤启用项，API、服务层和离线路径缺少统一 `is_active` 保护，详见 P2-10。
+
+### 3. 尚未验证的用户场景
+
+以下场景仍未执行，不能写成通过：真实浏览器从申请到审批到出入库闭环、网络中断后的离线队列恢复、并发重复提交、停用库位写入、PostgreSQL 锁等待/死锁恢复，以及 DS3678/ZT610 设备验收。
+
+## 2026-11-18 第七轮采购、盘点、导入回滚与审计专项（本轮新增）
+
+### 1. 已执行测试
+
+在本机 SQLite 临时测试库执行：
+
+```text
+manage.py test apps.inventory.tests.InventoryCheckTests
+  apps.inventory.test_v3_import apps.common.test_audit_immutability
+  apps.common.test_postgresql_audit_immutability
+  apps.workflow.tests.PurchaseOrderWorkflowTests --noinput -v 1
+```
+
+结果：**37 项通过、2 项跳过（共 39 项），43.159 秒**；跳过项为 PostgreSQL 原始 SQL 审计触发器测试，按设计仅在目标数据库执行。覆盖盘点冻结快照、扫码、差异复核、盘盈盘亏、采购部分到货、资产逐件资料、错误位置/超量回滚、V3 导入撤销和 ORM 审计不可变性。
+
+### 2. 本轮结论
+
+- 已验证：事务回滚、盘点复核权限、导入撤销保护和应用层审计不可变性有自动化证据。
+- 高概率风险：采购到货重放缺少幂等保护（P1-11）；停用仓库/库位目标写入缺少服务层统一校验（P2-10）。
+- 未验证：真实 PostgreSQL 触发器、采购到货并发重放、浏览器网络超时重试和现场恢复演练。
+
 ## 2026-11-18 第一轮环境盘点、全局地图与基础回归（本轮新增）
 
 ### 1. 执行范围与版本三态
@@ -8,11 +265,11 @@
 
 | 状态 | 本轮实测值 | 证据状态 |
 | --- | --- | --- |
-| Git 已提交基线 | `b40c190e4db36eb7b9e9a5bc309ee67328c6197a`（`docs: 记录待解决问题推进结果`） | 已验证：`git rev-parse HEAD`、`git show` |
-| 本地未提交工作区 | **开始时** `git status --short` 为空；结束时仅有 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md` 三个本轮审查文档 | 已验证；三项均属于本轮任务，未覆盖既有业务改动 |
+| Git 已提交基线 | `b79551bb55bea3c1251363002c755f2bc82095b4`（`fix: 修复 P2-01 资产编码前缀规则漂移，补充审查文档`） | 已验证：`git rev-parse HEAD`、`git show`；该提交由其他并发执行者产生，本轮未执行提交 |
+| 本地未提交工作区 | 当前仅有 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md` 三个审查文档改动；此前 P2-01 代码已进入 `b79551b` | 已验证；文档三项属于本轮任务，未覆盖其他工作 |
 | NUC 实际运行 release | `20261118-110008-c822551`，source `c82255183906…`，`working_tree_dirty=false`，部署时间 `2026-11-18T11:00:30+08:00` | 已验证：仅读取 `/opt/after-sales-warehouse/current/release-info` |
 
-本地 HEAD 与 NUC release 不一致，差异为后续本地文档提交链；本轮没有把 NUC 版本当成本地 HEAD 的部署证明。服务器数据库、账号、密钥和环境文件均未读取。
+本地 HEAD 与 NUC release 不一致：本地已包含 `b79551b` 的 P2-01 修复，而 NUC 仍运行 `c822551`。本轮没有把本地提交当作服务器部署证明。服务器数据库、账号、密钥和环境文件均未读取。
 
 ### 2. 技术栈、入口和边界
 
@@ -68,7 +325,7 @@ flowchart LR
 
 **P2-01：V2 导入前缀白名单与资产编码服务不一致**
 
-- **状态**：**已修复并部署**（2026-11-18，release `20261118-` 系列）。
+- **状态**：已在本地提交 `b79551b` 并通过自动化；**尚未部署 NUC，未做现场验收**。
 - **位置**：`backend/apps/inventory/v2_import_services.py:510-517`；`backend/apps/inventory/code_services.py:227-235`。
 - **触发条件**：历史/源表资产使用 `ZSB-` 或 `QTZC-` 编码时走 V2 导入。
 - **原因**：编码服务允许 `SC|DZSB|ZSB|QTZC`，V2 导入校验只允许 `SC|DZSB`。
@@ -87,14 +344,14 @@ flowchart LR
 - **修复建议**：按 common Web/导出/设置、workflow 申请/执行/采购/通知、inventory 主数据/资产/盘点拆包，保持 URL、模型和服务契约兼容。
 - **验证方法/风险**：拆包后跑全量测试与 import 检查；风险是循环依赖和隐式导入，须分批迁移。
 
-**P2-03：当前本机无法完成 Linux 发布脚本与安全工具门禁**
+**P2-03：安全门禁尚未纳入一键检查脚本**
 
 - **位置**：`deploy/ubuntu22/*.sh`、依赖锁与安全扫描流程。
 - **触发条件**：仅在 Windows 开发机完成评审即构建候选包。
-- **原因**：本机没有可用 Bash/WSL、Bandit 或 pip-audit 命令。
-- **影响**：Shell 语法、SAST 和依赖公告状态缺少本轮证据，部署前风险无法闭环。
-- **证据**：命令分别返回 Bash 路径不可用、`BANDIT_UNAVAILABLE`、`PIP_AUDIT_UNAVAILABLE`。
-- **修复建议**：在 CI/Ubuntu 复跑 `deploy/ubuntu22/check-all.sh`、`bash -n`、Bandit、pip-audit，并保存不含敏感信息的报告摘要。
+- **原因**：第一轮 Windows 环境没有现成工具；第二轮已在 WSL 临时目录补跑，但 `check-all.sh` 本身仍不调用这些门禁。
+- **影响**：仅执行 `check-all.sh` 的发布流程可能漏掉部署脚本语法错误和安全回归。
+- **证据**：第二轮 `bash -n` 22/22、Bandit 中高危 0、pip-audit 无已知漏洞；脚本步骤仍未包含三项检查。
+- **修复建议**：在 CI/Ubuntu 固定工具版本，将 `bash -n`、Bandit、pip-audit 纳入 `deploy/ubuntu22/check-all.sh`，扫描器不可用时明确失败或标记未执行。
 - **验证方法/风险**：以同一 commit 和锁文件运行；工具版本差异可能产生误报，需固定版本并人工复核。
 
 **P2-04：目标 PostgreSQL、浏览器和硬件闭环本轮未验证**
@@ -111,7 +368,7 @@ flowchart LR
 
 - **位置**：版本与发布流程，`PROJECT_STATUS.md` Rapid handoff、`deploy/ubuntu22/install.sh:393-408`。
 - **触发条件**：以“本地当前版本”描述服务器实际运行版本，或未构建候选包就继续现场验收。
-- **原因**：本地 HEAD 为 `b40c190`，NUC 仍运行 `c822551` release；本轮只读确认，未部署文档提交。
+- **原因**：本地 HEAD 已推进到 `b79551b`，NUC 仍运行 `c822551` release；本轮只读确认，未部署本地提交。
 - **影响**：审查报告、现场结果和回滚目标可能引用错误版本；代码结论不能自动外推到 NUC。
 - **证据**：本轮三态记录已验证。
 - **修复建议**：每次候选包固化 commit、内容哈希和 dirty 标记；部署后再读 `current/release-info`，报告中分开记录四种状态（代码、自动化、现场、部署）。
@@ -128,26 +385,27 @@ flowchart LR
 
 - **架构**：Django 单体边界与领域拆分清晰，服务层复用良好；超大文件是演进成本而非立即架构故障。
 - **研发**：事务、权限和审计路径已有较多保护；导入编码规则应收敛为单一实现，减少规则漂移。
-- **测试**：593 项本机自动化通过是良好基线，但 8 项 PostgreSQL 专项和浏览器/设备证据缺口不能被数量掩盖。
-- **安全**：配置从环境注入、默认 API 需认证、敏感字段收口方向正确；本轮未执行 SAST/依赖扫描，不能给出新的“无漏洞”结论。
-- **SRE**：release-info、快照、原子切换、健康检查和回滚脚本形成可追溯链；必须在 Linux 上验证脚本语法和失败注入。
+- **测试**：当前提交本机自动化 603 项通过，但 8 项 PostgreSQL 专项和浏览器/设备证据缺口不能被数量掩盖。
+- **安全**：配置从环境注入、默认 API 需认证、敏感字段收口方向正确；第二轮 Bandit/pip-audit 通过，但未替代人工权限和运行时测试。
+- **SRE**：release-info、快照、原子切换、健康检查和回滚脚本形成可追溯链；shell 语法已在 WSL 通过，失败注入和目标环境复核仍待补齐。
 - **最终用户**：核心流程覆盖仓管日常任务；扫码连续性、错误恢复、移动端视觉和打印走纸仍需真实设备验收。
 
 ### 8. 下一轮建议顺序
 
-1. 在隔离 Ubuntu/CI 环境补齐 `bash -n`、Bandit、pip-audit，并确认候选包卫生。
+1. 将已在 WSL 补跑的 `bash -n`、Bandit、pip-audit 纳入 CI/`check-all.sh`，并确认候选包卫生。
 2. 只针对当前 HEAD 运行 PostgreSQL 8 项并发/锁专项和回滚式业务冒烟，不触碰业务库。
 3. 建立最小真实浏览器 E2E（登录、申请审批执行、快速出入库、权限反向用例、PWA 缓存）。
 4. 安排 DS3678 连续三次扫码/失败后继续与 ZT610 60×40 mm 真机走纸验收。
-5. ~~单独登记并修复 P2-01 编码前缀规则漂移~~（已于 2026-11-18 修复并部署，见 P2-01 章节），再评估大文件拆包；修复前不扩展无关功能。
+5. ~~单独登记并修复 P2-01 编码前缀规则漂移~~（已在本地提交 `b79551b` 修复并通过自动化，尚未部署 NUC），再评估大文件拆包；修复前不扩展无关功能。
 
 ## 2026-11-18 第二轮安全门禁与发布脚本复核（本轮新增）
 
 ### 1. 版本三态与执行边界
 
-- Git 已提交基线仍为 `b40c190e4db36eb7b9e9a5bc309ee67328c6197a`。
-- 本轮开始时工作区包含上一轮审查产生的三个文档改动：`CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md`；均属于本次审查范围，未覆盖业务文件。
+- Git 已提交基线为 `b79551bb55bea3c1251363002c755f2bc82095b4`；该提交包含 P2-01 代码与 10 项专项测试，由其他并发执行者产生，本轮未执行提交。
+- 本轮开始时工作区包含审查文档改动；当前未提交仍是 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md`，均属于本次审查范围，未覆盖业务文件。
 - NUC 实际运行 release 仍为 `20261118-110008-c822551`，只读读取 `release-info`；未连接业务数据库、未运行服务器并发脚本、未部署。
+- 本轮中途检测到其他工作区变更，随后被其他并发执行者提交为 `b79551b`：`code_services.py`、`v2_import_services.py` 和新增 `test_asset_code_prefix_consistency.py`。下述回归结果包含它们，但该提交仍未部署 NUC。
 
 ### 2. 安全扫描与发布脚本结果
 
@@ -160,7 +418,13 @@ flowchart LR
 
 Bandit 完整低危输出中的典型路径为 `common/admin.py:128`、`common/utils.py:81`、`common/views.py:1362`、`inventory/label_views.py:43,193`、`inventory/search.py:109-127` 和 `settings.py:26`。这些值分别是界面字段名、随机密码字符表、审计布尔值、空 claim token、搜索运算符和仅在 DEBUG 分支使用的开发密钥；本轮未发现真实运行期口令、Webhook 或数据库密码进入源码。
 
-### 3. 新增问题：安全扫描未纳入一键发布门禁
+### 3. P2-01 提交后的本地验证（未部署）
+
+提交 `b79551b` 将资产编码校验抽到 `backend/apps/inventory/code_services.py:109-143`，V2 导入在 `backend/apps/inventory/v2_import_services.py:509-523` 复用共享函数，并新增 10 项 `SimpleTestCase`。本轮验证：专项 **10/10 通过**，随后 Django 全量 **603/603 通过，8 项跳过**（386.815 秒）。
+
+该改动与现有表单、admin、serializer 对历史 `ZSB-/QTZC-` 行为的静态规则一致；但 NUC `c822551` 未包含它，不能写成已部署或现场验证。是否接受其“行政/ERP”前缀扩展，仍应由业务规则负责人确认后再部署。
+
+### 4. 新增问题：安全扫描未纳入一键发布门禁
 
 **P2-06：`check-all.sh` 不执行 shell 语法和安全扫描**
 
@@ -173,15 +437,15 @@ Bandit 完整低危输出中的典型路径为 `common/admin.py:128`、`common/u
 - **验证方法**：人为引入 shell 语法错误、已知易受攻击依赖和 Bandit 中危样例，确认脚本返回非零；恢复后确认全套通过。
 - **修复风险**：低到中；新增工具依赖与误报治理可能延长检查时间，应提供 `--fast` 但禁止将其作为发布准出。
 
-### 4. 发布脚本与网络边界复核
+### 5. 发布脚本与网络边界复核
 
 - `install.sh` 在迁移前做 PostgreSQL 快照，候选 release 经 `manage.py check`、迁移后才原子切换 `current.next`；`rollback.sh` 只切换 release 指针，不执行数据库回滚。相关测试已覆盖脚本顺序与失败回退，未发现本轮新增的明显越权路径。
 - Nginx 将生命周期附件 `media/assets/<AST>/archive/` 单独返回 404，Django 下载视图负责权限判断；普通 branding media 仍通过 `/media/` 公共别名提供，符合当前产品设计。
 - systemd 服务以 `warehouse` 用户、`NoNewPrivileges=true` 和独立工作目录运行；本轮未在 NUC 读取服务状态或日志，不能把历史 active 记录当成本轮现场验收。
 
-### 5. 第二轮结论与下一步
+### 6. 第二轮结论与下一步
 
-安全扫描和 shell 语法已补齐并通过，当前未见高/中危静态扫描结果或锁定依赖已知漏洞。剩余最高价值验证仍是隔离 PostgreSQL 的 8 项竞态/审计专项，以及真实浏览器和硬件闭环；P2-06 应与 P2-01 一起登记修复，但在用户确认开始修复前不改业务代码。
+安全扫描和 shell 语法已补齐并通过，当前未见高/中危静态扫描结果或锁定依赖已知漏洞。剩余最高价值验证仍是隔离 PostgreSQL 的 8 项竞态/审计专项，以及真实浏览器和硬件闭环；P2-06 仍需登记修复，P2-01 只完成本地提交与自动化验证，尚未部署或现场验收。
 
 ## 2026-11-17 收口复盘（最高优先级）
 
