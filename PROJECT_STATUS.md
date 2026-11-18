@@ -4,6 +4,15 @@
 
 本文件是项目当前状态的唯一事实来源。旧计划、旧验收报告和聊天记录不得覆盖这里的结论。
 
+### 2026-11-18 第十轮配置、PWA 与页面权限复核
+
+- 版本三态：Git 基线已由并发提交推进为 `3612d5da1714d439399e869c673e994ca0213887`（接收人字段可见性修复）；本轮文档为 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md`，另有并发产生、非本轮的 `backend/apps/common/test_recipient_field_visibility.py`、`backend/templates/quick_inventory_process.html`、`backend/templates/request_create.html`、`backend/templates/web_base.html` 未提交改动；NUC SSH 认证失败，实际 release 记为“未复核”。
+- 缓存头、PWA Service Worker、账号评审/移动页面及并发产生的接收人字段回归 **33/33 通过**；Ubuntu 发布脚本 `bash -n` 全部通过。
+- 当前工作区已验证 `warehouse_setup` 两入口包含 `@login_required`、settings 已有 `LOGGING`、PostgreSQL 已配置连接复用/健康检查、Service Worker 版本按静态资源 mtime 生成。
+- 新增 **P2-12**：`backend/.env.example` 默认 `DEBUG=1`、开发密钥、`ALLOWED_HOSTS=*`、全 CORS，手工部署直接复制可能形成公网安全误配置；正式 `install.sh` 路径会生成更安全的 app.env，但示例和 README 仍需 fail-closed 约束。
+- `check --deploy` 在 `USE_HTTPS=0` 的 Cloudflare 边缘 TLS/源站 HTTP 架构下出现 4 项预期 HTTPS 警告；需保留架构说明，不能把警告误当作生产故障或擅自打开源站重定向。
+- 本轮未修改业务代码、未访问业务数据库、未部署；详细证据见 `REVIEW_REPORT.md` 第十轮章节。
+
 ### 2026-11-18 第九轮本地容量与 PostgreSQL 专项复核
 
 - 版本三态：Git 基线仍为 `b79551bb55bea3c1251363002c755f2bc82095b4`；本轮文档为 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md`，另有并发产生的三个非本轮未提交文件；NUC SSH 认证失败，实际 release 记为“未复核”。

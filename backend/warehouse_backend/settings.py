@@ -33,6 +33,24 @@ if not DEBUG and (
 ):
     raise ImproperlyConfigured('生产环境不能使用开发占位 SECRET_KEY。')
 ALLOWED_HOSTS = env_list('ALLOWED_HOSTS', '127.0.0.1,localhost')
+
+# ── 生产环境误配置硬保护 ──────────────────────────────────────────────
+#
+# `.env.example` 里为了方便本机开发写了 ALLOWED_HOSTS 含 `*`。手工部署时
+# 直接复制成 .env 会让任意 Host 头通过校验（Host 头攻击 / 缓存投毒），
+# 且这类错误在界面上完全看不出来。SECRET_KEY 已有硬校验，这里补齐其余三项。
+if not DEBUG:
+    if '*' in ALLOWED_HOSTS:
+        raise ImproperlyConfigured(
+            '生产环境 ALLOWED_HOSTS 不能包含 *，请填写服务器内网 IP 与对外域名。'
+        )
+    if not ALLOWED_HOSTS:
+        raise ImproperlyConfigured('生产环境 ALLOWED_HOSTS 不能为空。')
+    if env_bool('CORS_ALLOW_ALL_ORIGINS', '0'):
+        raise ImproperlyConfigured(
+            '生产环境不能开启 CORS_ALLOW_ALL_ORIGINS，请按需列出具体来源。'
+        )
+
 USE_HTTPS = env_bool('USE_HTTPS', '0')
 
 INSTALLED_APPS = [

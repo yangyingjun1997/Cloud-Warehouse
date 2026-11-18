@@ -1,13 +1,52 @@
 # 全量代码审查与回归报告
 
+## 2026-11-18 第十轮配置、PWA 与页面权限复核（本轮新增）
+
+### 1. 版本三态与执行边界
+
+| 状态 | 本轮记录 | 证据状态 |
+| --- | --- | --- |
+| Git 已提交基线 | `3612d5da1714d439399e869c673e994ca0213887`（并发提交：接收人字段可见性修复） | 已验证：`git rev-parse HEAD`、`git log -3` |
+| 本地未提交工作区 | 本轮审查文档 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md`；另有并发产生、非本轮的 `backend/apps/common/test_recipient_field_visibility.py`、`backend/templates/quick_inventory_process.html`、`backend/templates/request_create.html`、`backend/templates/web_base.html` | 已验证：`git status --short`；非本轮四项未读取、未修改、未回退 |
+| NUC 实际运行 release | SSH 认证失败，本轮记为“未复核” | 未连接服务器，未读取数据库、配置或业务数据 |
+
+### 2. 已执行检查与回归
+
+- `apps.common.test_cache_headers`、`apps.common.test_recipient_field_visibility`、`apps.common.test_account_review_and_mobile`：**33/33 通过，14.138 秒**，system check 无问题。
+- `wsl bash -lc "find deploy/ubuntu22 -maxdepth 1 -name '*.sh' -exec bash -n {} +"`：所有 Ubuntu shell 脚本语法通过。
+- 使用 64 字符临时密钥、`DEBUG=0`、`USE_HTTPS=0` 执行 `manage.py check --deploy`：出现 Django 预期的 4 项 HTTPS 警告（HSTS、SSL redirect、Secure session cookie、Secure CSRF cookie）。当前部署设计由 Cloudflare 边缘终止 TLS、源站 Nginx 使用 HTTP；警告不能写成测试失败，但必须在运维标准中明确边缘 HTTPS 与源站配置关系。
+
+### 3. 当前配置与权限实现已验证
+
+- `backend/apps/common/views.py:3637`、`:3670` 的 `warehouse_setup` 与 `warehouse_setup_edit` 均有 `@login_required`；`_can_manage_setup_section()` 再按系统管理员/编码资料权限细分，未复现旧的未登录重定向链问题。
+- `backend/warehouse_backend/settings.py:182-213` 已配置 console `LOGGING`、Django request 和应用 logger；`:129-137` 对 PostgreSQL 设置 `CONN_MAX_AGE` 和 `CONN_HEALTH_CHECKS`，SQLite 保持短连接。
+- `backend/apps/common/views.py:395-478` 的 Service Worker 版本按静态资源最大 mtime 生成，`FRESH_STATIC_PATHS` 网络优先；`test_cache_headers` 已断言占位符被替换且 changing scripts 不走旧的硬编码版本。
+
+### 4. P2-12：`.env.example` 的默认值容易被误用于暴露环境
+
+- **位置**：`backend/.env.example:1-16`、`README.md:108-124`。
+- **触发条件**：运维人员直接复制示例文件到可被外部访问的部署目录，未同步收紧 `DEBUG`、Host、CORS 和密钥配置。
+- **原因**：示例默认 `DEBUG=1`、开发占位 `SECRET_KEY`、`ALLOWED_HOSTS` 含 `*`、`CORS_ALLOW_ALL_ORIGINS=1`；README 的复制步骤虽提示修改密钥，但没有把其余生产禁用项列为强制检查。正式 `install.sh` 会生成较安全的环境文件，因此该问题主要影响手工部署和误配置路径。
+- **影响**：错误复用示例配置可能扩大 Host/CORS 攻击面、暴露调试错误页，并使会话密钥可预测；不属于一键安装的直接漏洞，按 P2 配置风险记录。
+- **证据**：静态读取示例文件确认上述默认值；`settings.py` 在 `DEBUG=0` 时会拒绝占位密钥，但不会自动拒绝 `ALLOWED_HOSTS=*` 或全 CORS。`manage.py check --deploy` 只能提示 HTTPS 项，不能覆盖这些误配置。
+- **修复建议**：示例改为 fail-closed：`DEBUG=0`、`ALLOWED_HOSTS=127.0.0.1,localhost`、`CORS_ALLOW_ALL_ORIGINS=0`，将本地开发配置放入单独说明；README 增加复制后必须逐项确认的生产清单，部署预检拒绝 `*`、全 CORS 和开发密钥。
+- **验证方法**：在干净目录分别用示例配置启动本地开发和生产预检；生产模式对占位密钥、`*` Host、全 CORS 均应明确失败，正式安装生成的 app.env 应通过预检。
+- **修复风险**：低。主要是首次本地启动体验变化，需要在开发说明中给出明确的本地命令和临时密钥生成方式。
+
+### 5. 本轮结论与下一步
+
+- **已验证**：页面权限、日志、连接复用、Service Worker 缓存版本和 shell 语法均有当前工作区证据；33 项相关回归全部通过。
+- **高概率风险**：`.env.example` 被直接用于手工公网部署时可能形成安全误配置（P2-12）；`check --deploy` 的 4 项 HTTPS 警告仍需运维文档解释，不能靠口头经验传递。
+- **需确认**：P2-12 是否纳入当前稳定化修复批次；NUC release、Cloudflare/Nginx 实际白名单、PostgreSQL 并发、浏览器与设备现场验收仍未复核。
+
 ## 2026-11-18 第九轮本地容量基线与 PostgreSQL 专项可运行性复核（本轮新增）
 
 ### 1. 版本三态与执行边界
 
 | 状态 | 本轮记录 | 证据状态 |
 | --- | --- | --- |
-| Git 已提交基线 | `b79551bb55bea3c1251363002c755f2bc82095b4` | 已验证：`git rev-parse HEAD` |
-| 本地未提交工作区 | 本轮审查文档 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md`；另有并发产生、非本轮的 `backend/templates/quick_inventory_process.html`、`backend/templates/request_create.html`、`backend/apps/common/test_recipient_field_visibility.py` | 已验证：`git status --short`；非本轮三项未读取、未修改、未回退 |
+| Git 已提交基线 | `3612d5da1714d439399e869c673e994ca0213887`（并发提交：接收人字段可见性修复） | 已验证：`git rev-parse HEAD`、`git log -3` |
+| 本地未提交工作区 | 仅有本轮审查文档 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT.md` | 已验证：`git status --short`；业务代码无本轮未提交改动 |
 | NUC 实际运行 release | SSH 认证失败，本轮记为“未复核” | 未连接服务器，未读取数据库、配置或业务数据 |
 
 ### 2. 本地只读容量基线

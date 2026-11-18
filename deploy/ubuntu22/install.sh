@@ -192,6 +192,19 @@ if [[ -n "${WEB_ENTRY_ADDRESSES[*]:-}" ]]; then
   RESOLVED_SERVER_NAME="$SERVER_NAME ${WEB_ENTRY_ADDRESSES[*]:-}"
 fi
 
+# 对外域名：优先取调用方传入的 --public-domain，其次读现有 app.env 的 ALLOWED_HOSTS
+# 里第一个非 IP、非 localhost 的条目（即真实域名）。都没有时留空，
+# 模板会把 __PUBLIC_DOMAIN__ 替换成空字符串，不产生多余空格。
+RESOLVED_PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-}"
+if [[ -z "$RESOLVED_PUBLIC_DOMAIN" && -f "$APP_DIR/app.env" ]]; then
+  RESOLVED_PUBLIC_DOMAIN="$(grep -E '^ALLOWED_HOSTS=' "$APP_DIR/app.env" 2>/dev/null \
+    | cut -d= -f2- | tr ',' '\n' \
+    | grep -vE '^[0-9.]+$|^localhost$|^\*$|^$' | head -1 || true)"
+fi
+if [[ -n "$RESOLVED_PUBLIC_DOMAIN" ]]; then
+  RESOLVED_SERVER_NAME="$RESOLVED_SERVER_NAME $RESOLVED_PUBLIC_DOMAIN"
+fi
+
 if [[ $OFFLINE_UPDATE -eq 0 ]]; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
@@ -444,7 +457,9 @@ install -m 750 "$SCRIPT_DIR/security-check.sh" /usr/local/sbin/after-sales-wareh
 install -m 750 "$SCRIPT_DIR/run-concurrency-tests.sh" /usr/local/sbin/after-sales-warehouse-concurrency-test
 install -d -m 755 /usr/local/libexec
 install -m 750 "$SCRIPT_DIR/dingtalk-notify.py" /usr/local/libexec/after-sales-warehouse-dingtalk-notify
-sed "s/__SERVER_NAME__/$RESOLVED_SERVER_NAME/g" "$SCRIPT_DIR/nginx-after-sales-warehouse.conf" > /etc/nginx/sites-available/after-sales-warehouse
+sed -e "s/__SERVER_NAME__/$RESOLVED_SERVER_NAME/g" \
+    -e "s/__PUBLIC_DOMAIN__/$RESOLVED_PUBLIC_DOMAIN/g" \
+    "$SCRIPT_DIR/nginx-after-sales-warehouse.conf" > /etc/nginx/sites-available/after-sales-warehouse
 ln -sfn /etc/nginx/sites-available/after-sales-warehouse /etc/nginx/sites-enabled/after-sales-warehouse
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
