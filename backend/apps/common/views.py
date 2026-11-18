@@ -123,6 +123,7 @@ from apps.inventory.conversion_services import (
     convert_stock_to_assets,
 )
 from apps.inventory.import_batch_services import create_import_batch
+from apps.inventory.import_impact import describe_import_impact, estimate_import_impact
 from apps.inventory.v2_import_services import (
     AssetV2ImportError,
     apply_asset_v2_import,
@@ -2937,6 +2938,12 @@ def inventory_import(request):
                     'error_count': sum(issue['severity'] == 'error' for issue in issues),
                     'warning_count': sum(issue['severity'] == 'warning' for issue in issues),
                 }
+                # 执行前的影响预估：让用户先看到「将新增 N / 更新 M / 停用 K」再决定。
+                # 全量基准的停用是有破坏性的动作，不能只看一个总数就点执行。
+                impact = estimate_import_impact(
+                    records=records, mode=mode, template_version=template_version,
+                )
+                summary = {**summary, 'impact': impact}
                 batch = create_import_batch(
                     actor=request.user, filename=upload.name, content=content, mode=mode,
                     records=records, issues=issues, summary=summary,
@@ -2944,7 +2951,24 @@ def inventory_import(request):
                 if should_apply:
                     if summary['error_count']:
                         messages.error(request, '预检存在阻断问题，未写入正式库存。请打开批次查看并修正 Excel。')
-                    else:
+                    elif not request.POST.get('impact_confirmation'):
+                        # 没有勾选确认就不执行。批次已存为待复核，用户可回到页面确认后再跑。
+                        messages.warning(
+                            request,
+                            f'已生成预检（{describe_import_impact(impact)}），'
+                            '但未勾选「我已确认上述影响」，未写入任何数据。'
+                            '请确认影响后重新提交并勾选该项。',
+                        )
+                        should_apply = False
+                    elif mode == ImportBatch.Mode.BASELINE and not request.POST.get('baseline_double_confirm'):
+                        # 全量基准的二次确认：除了输入短语，还必须再勾一次
+                        messages.warning(
+                            request,
+                            '全量基准导入需要二次确认：请勾选「我确认缺失记录将被停用/归零」。',
+                        )
+                        should_apply = False
+
+                    if should_apply:
                         if template_version == 3:
                             apply_inventory_v3_import(
                                 actor=request.user, batch=batch, records=records,
@@ -2955,7 +2979,10 @@ def inventory_import(request):
                                 actor=request.user, batch=batch, records=records,
                                 warning_reason=request.POST.get('warning_confirmation', ''),
                             )
-                        messages.success(request, f'{batch.get_mode_display()}完成，共处理 {len(records)} 行。')
+                        messages.success(
+                            request,
+                            f'{batch.get_mode_display()}完成：{describe_import_impact(impact)}。',
+                        )
                 else:
                     messages.success(request, f'预检完成：可处理 {len(records)} 行，发现 {summary["error_count"]} 个阻断问题。')
                 return redirect(f'{reverse("inventory_import")}?batch={batch.id}')
