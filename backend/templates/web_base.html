@@ -14,7 +14,10 @@
   <script src="{% static 'warehouse/vendor/htmx-2.0.4.min.js' %}" defer></script>
   <title>{% block title %}售后仓库管理系统{% endblock %}</title>
   <style>
-    :root { --canvas: #f2f5f5; --surface: #ffffff; --ink: #1c2d34; --muted: #6e8086; --line: #d9e3e4; --nav: #173239; --nav-muted: #a9bec1; --teal: #18736e; --teal-soft: #e3f2ef; --blue: #3d70cf; --blue-soft: #eaf0ff; --amber: #bf781c; --amber-soft: #fff1d9; --coral: #c95f50; --coral-soft: #ffebe7; }
+    :root { --canvas: #f2f5f5; --surface: #ffffff; --ink: #1c2d34; --muted: #6e8086; --line: #d9e3e4; --nav: #173239; --nav-muted: #a9bec1; --teal: #18736e; --teal-soft: #e3f2ef; --blue: #3d70cf; --blue-soft: #eaf0ff; --amber: #bf781c; --amber-soft: #fff1d9; --coral: #c95f50; --coral-soft: #ffebe7;
+    /* 表单与信息卡片统一宽度上限。所有「撑满父容器 + 上限」的块都引用它，
+       避免再出现 860/980 两套数字导致同一页三块宽度参差。 */
+    --form-max-width: 1180px; }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     body { margin: 0; color: var(--ink); background: var(--canvas); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
@@ -225,9 +228,19 @@
     .inline-reject-form input { width: 170px; min-height: 34px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 5px; font: inherit; font-size: 11px; }
     .offline-item-summary { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; }
     .offline-item-summary span { padding: 4px 6px; color: #40585d; background: #f2f7f6; border-radius: 4px; font-size: 10px; }
-    .form-card { max-width: 860px; margin-top: 22px; padding: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
-    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; margin-top: 18px; }
-    .form-field { display: grid; gap: 6px; }
+    /* 表单容器宽度统一：撑满父容器，但给一个上限避免超宽屏下单行输入框过长。
+       历史上这里有 860px（.form-card）与 980px（.management-form、.asset-qr-card）
+       两套数字，同一个页面里「资产身份标签」「当前状态卡片」「归属与编码」
+       三块宽度不同，看起来参差不齐。现在统一成 --form-max-width。 */
+    .form-card { width: 100%; max-width: var(--form-max-width); margin-top: 22px; padding: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
+    /* 列数自适应：窄屏 1 列、中屏 2 列、宽屏 3 列，字段少的表单不会留空位。
+       240px 是单个字段的可读下限（含 label 与输入框内边距）。
+       这些类都用 auto-fit，因此不需要额外的媒体查询断点。 */
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 15px; margin-top: 18px; }
+    /* 子项从顶部排列，不因同一行其他字段更高而被拉伸。
+       过去缺这行时，同一行里「系统永久编号」（readonly、无 help）会被
+       旁边的多行字段拉高，看起来比左右字段更大。 */
+    .form-field { display: grid; gap: 6px; align-content: start; }
     /* 纯勾选框行：没有 label + 控件的两行结构，不应参与网格行高计算。
        过去把 <label class="checkbox-inline"> 塞进带 select 的 form-field 里，
        该网格行会多出一行高度，同一行相邻字段被一起撑大——表现为
@@ -569,7 +582,8 @@
     .stock-quantity.low { color: #a34e42; }
     .management-tools { display: flex; flex-wrap: wrap; gap: 14px; padding: 16px 2px; }
     .management-tools a { color: var(--muted); font-size: 11px; text-decoration: underline; text-underline-offset: 3px; }
-    .management-form { max-width: 980px; }
+    /* 宽度继承 --form-max-width，不再单独定 980px。 */
+    .management-form { width: 100%; max-width: var(--form-max-width); }
     .base-data-panel { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-top: 18px; padding: 16px 18px; background: #edf6f4; border: 1px solid #c5ded9; border-radius: 7px; }
     .base-data-panel h2 { font-size: 14px; }
     .base-data-panel p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
@@ -608,7 +622,7 @@
     .field-help { color: var(--muted); font-size: 10px; line-height: 1.5; }
     .import-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
     .import-summary span { padding: 6px 9px; background: #edf6f4; border-radius: 4px; color: #176e68; font-size: 11px; }
-    .asset-qr-card { display: flex; align-items: center; gap: 18px; max-width: 980px; margin-top: 20px; padding: 16px 18px; background: #edf6f4; border: 1px solid #c5ded9; border-radius: 7px; }
+    .asset-qr-card { display: flex; align-items: center; gap: 18px; width: 100%; max-width: var(--form-max-width); margin-top: 20px; padding: 16px 18px; background: #edf6f4; border: 1px solid #c5ded9; border-radius: 7px; }
     .asset-qr-card img { width: 112px; height: 112px; background: #fff; padding: 5px; border: 1px solid #d4e2e0; border-radius: 4px; image-rendering: pixelated; }
     .asset-qr-card h2 { font-size: 14px; }
     .asset-qr-card p { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
@@ -656,7 +670,9 @@
     .text-button { padding: 0; color: var(--teal); background: transparent; border: 0; cursor: pointer; font-size: 10px; }
     .danger-text { color: var(--coral); }
     .attachment-row > span { color: var(--teal); font-size: 10px; font-weight: 650; }
-    .lifecycle-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    /* 与 .form-grid 一致改用 auto-fit：宽屏自动 3 列，字段少时不留空。
+       200px 下限比主表单的 240px 略小，因为这里的控件是行内小表单。 */
+    .lifecycle-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
     .lifecycle-form-grid .form-field { gap: 4px; }
     .lifecycle-form-grid .form-field.full { grid-column: 1 / -1; }
     .lifecycle-form-grid input, .lifecycle-form-grid select, .lifecycle-form-grid textarea { min-height: 34px; padding: 7px 8px; font-size: 11px; }

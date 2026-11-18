@@ -11,7 +11,10 @@
   <section class="asset-status-card">
     <style>
       .asset-status-card { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px 22px;
-        margin-top: 14px; padding: 16px 18px; background: #f7fbfa; border: 1px solid #c5ded9; border-radius: 8px; }
+        /* 与资产身份标签、下方表单同宽，统一引用 --form-max-width。 */
+        width: 100%;
+        max-width: var(--form-max-width);
+        margin-top: 14px; padding: 16px 18px; background: #f7fbfa; border: 1px solid #c5ded9; border-radius: 7px; }
       .asset-status-card .cell span { display: block; color: var(--muted); font-size: 10px; letter-spacing: .03em; }
       .asset-status-card .cell strong { display: block; margin-top: 5px; font-size: 14px; }
       .asset-status-card .cell strong .tag { font-size: 11px; }
