@@ -53,7 +53,8 @@ class FormLayoutConsistencyTests(TestCase):
 
     def test_form_max_width_variable_defined(self):
         html = self._page()
-        self.assertIn('--form-max-width: 1180px', html)
+        # 方案 B：容器撑满（none），可读性交给内层 auto-fit 多列。
+        self.assertRegex(html, r'--form-max-width:\s*none')
 
     def test_all_cards_share_same_max_width(self):
         """四块容器必须引用同一变量，不能再各写数字。"""
@@ -72,10 +73,53 @@ class FormLayoutConsistencyTests(TestCase):
                 )
 
     def test_no_legacy_hardcoded_widths(self):
-        """860px / 980px 是历史遗留的两套数字，必须全部清除。"""
+        """860px / 980px / 1180px 都是历史遗留的固定宽度，必须全部清除。
+
+        方案 B 让容器撑满，宽度可读性由内层列数保证，不再依赖像素上限。
+        """
         html = self._page()
-        self.assertIsNone(re.search(r'max-width:\s*860px', html), '仍有 860px 残留')
-        self.assertIsNone(re.search(r'max-width:\s*980px', html), '仍有 980px 残留')
+        for width in ('860px', '980px', '1180px'):
+            with self.subTest(width=width):
+                self.assertIsNone(
+                    re.search(r'max-width:\s*' + width, html),
+                    f'仍有 {width} 残留',
+                )
+
+    def test_column_count_scales_with_viewport(self):
+        """模拟各视口宽度，确认每列宽度始终落在可读区间内。
+
+        容器撑满后，若列数不跟着增加，单个输入框会横向失控。
+        240px 是字段下限，520px 是可读上限。
+        """
+        content_max, content_pad, card_pad, field_min, gap = 1440, 34, 20, 240, 15
+
+        def sidebar(viewport):
+            if viewport > 1100:
+                return 224
+            if viewport > 760:
+                return 198
+            return 0
+
+        def columns(inner):
+            n = 1
+            while n * field_min + (n - 1) * gap <= inner:
+                n += 1
+            return max(1, n - 1)
+
+        for viewport in (390, 768, 1024, 1280, 1440, 1600, 1920, 2560, 3440):
+            with self.subTest(viewport=viewport):
+                main = viewport - sidebar(viewport)
+                content = min(main, content_max)
+                pad = 14 if viewport <= 1100 else content_pad
+                inner = content - pad * 2 - card_pad * 2
+                cols = columns(inner)
+                field_width = (inner - (cols - 1) * gap) / cols
+                self.assertGreaterEqual(field_width, field_min, '字段过窄')
+                self.assertLessEqual(field_width, 520, '字段过宽，输入会失控')
+                self.assertGreaterEqual(cols, 1)
+                # 宽屏必须真的增加列数，否则等于没解决
+                if viewport >= 1440:
+                    self.assertGreaterEqual(cols, 4, f'{viewport}px 下应有至少 4 列')
 
     def test_form_grid_is_auto_fit(self):
         """列数自适应，避免硬编码 2 列导致宽屏留白。"""

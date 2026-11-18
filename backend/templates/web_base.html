@@ -15,9 +15,12 @@
   <title>{% block title %}售后仓库管理系统{% endblock %}</title>
   <style>
     :root { --canvas: #f2f5f5; --surface: #ffffff; --ink: #1c2d34; --muted: #6e8086; --line: #d9e3e4; --nav: #173239; --nav-muted: #a9bec1; --teal: #18736e; --teal-soft: #e3f2ef; --blue: #3d70cf; --blue-soft: #eaf0ff; --amber: #bf781c; --amber-soft: #fff1d9; --coral: #c95f50; --coral-soft: #ffebe7;
-    /* 表单与信息卡片统一宽度上限。所有「撑满父容器 + 上限」的块都引用它，
-       避免再出现 860/980 两套数字导致同一页三块宽度参差。 */
-    --form-max-width: 1180px; }
+    /* 表单容器宽度：撑满父容器，不再设像素上限。
+       可读性由内层 .form-grid 的 auto-fit 多列保证——宽屏自动加到 4~6 列，
+       单个输入框不会横向失控；小屏自然回落到 1~2 列。
+       保留变量是为了让 .form-card / .management-form / .asset-qr-card /
+       .asset-status-card 共用同一来源，将来若要限宽只改这一处。 */
+    --form-max-width: none; }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     body { margin: 0; color: var(--ink); background: var(--canvas); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
@@ -233,9 +236,9 @@
        两套数字，同一个页面里「资产身份标签」「当前状态卡片」「归属与编码」
        三块宽度不同，看起来参差不齐。现在统一成 --form-max-width。 */
     .form-card { width: 100%; max-width: var(--form-max-width); margin-top: 22px; padding: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
-    /* 列数自适应：窄屏 1 列、中屏 2 列、宽屏 3 列，字段少的表单不会留空位。
+    /* 列数自适应：窄屏 1 列、中屏 2~3 列、宽屏 4~6 列。
        240px 是单个字段的可读下限（含 label 与输入框内边距）。
-       这些类都用 auto-fit，因此不需要额外的媒体查询断点。 */
+       容器已撑满，靠列数分散宽度，避免单个输入框横向过长。 */
     .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 15px; margin-top: 18px; }
     /* 子项从顶部排列，不因同一行其他字段更高而被拉伸。
        过去缺这行时，同一行里「系统永久编号」（readonly、无 help）会被
