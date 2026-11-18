@@ -4,6 +4,17 @@
 
 ## Unreleased
 
+### 2026-11-18
+
+- **首次完成备份恢复演练**。此前只验证过 `pg_restore --list`（能读目录），从未真恢复。本轮从最近备份恢复到独立临时库 `warehouse_restore_drill`：哈希校验通过、`pg_restore` exit=0、资产 636 / 用户 4 / 审计 1096 / 物品类型 78 / 库位 25 全部到位、真实读到 `AST-00000022` 与 `asset_identity_applied`、外键 193 个、索引 402 个、**审计只增不改的 10 个触发器随备份恢复**；演练库用完即删，生产库未受影响。结论：备份可用。
+- 新增 `PROJECT_REVIEW_20261118.md` 项目完整复盘：项目定位、已具备功能、待推进、待解决、远期规划、近期改动、验证记录、下一步建议。
+- releases 保留数 5 → 3（省 270 MB）。每个版本约 130 MB（代码 + venv），2 个回滚点足够覆盖常见回退。
+- 新增 `media-gc.sh` 与每周日 03:30 的 timer：清理数据库已不引用且超过 7 天宽限期的 media 孤儿文件。默认 dry-run，`--apply` 才真删；只扫白名单目录；删空目录自动清理；单次 ≥20 个时钉钉通知。实测发现真实遗留 `branding/logo.png.bak-20261116`。
+- 备份改为硬链接增量（`rsync --link-dest`）+ 数据库与 media 解耦 + 无变化时跳过快照。media 40GB / 保留 30 天从理论 1.2TB 降到约 60GB。修复 itemize 判断：目录 mtime 变化会输出 `.d..t`，原 `grep '^[<>ch]'` 误判为有变化导致每天建空快照，改为只认 `>f`/`cf`/`hf`。NUC 实测硬链接生效（同一文件两份快照 inode 相同）。
+- 附件上传上限 20 MB → 100 MB，Nginx `client_max_body_size` 同步，`client_body_timeout` / `proxy_send_timeout` / `proxy_read_timeout` 放宽到 600s。图片仍限 10 MB（Pillow 解码有内存风险）。实测 99MB 通过、101MB 明确拒绝。
+- 启用/停用状态用颜色区分：原来「停用」复用 `.tag.neutral` 与「启用」共用同一套绿色；新增 `.tag.is-active`（绿底✓）与 `.tag.is-inactive`（灰底×），应用到 `warehouse_setup.html` 全部 7 处。
+- 库位列表补「状态」列，与仓库/项目/工单格式一致（此前库位停用后列表看不出状态）。
+
 ### Review
 
 - 2026-11-17：完成复盘后的 P1 修复。申请明细主单字段改为只读，申请单更新携带 `lines` 明确拒绝；V2/V3 全量基准导入在写入前阻断活动资产、预占、未完成维修、耗材持有余额和未归还借用，避免整批导入产生库存破坏。新增专项 `27/27`，Django 全量 `536/536` 通过、跳过 8 项 PostgreSQL 专项；`check`、迁移漂移、`pip check`、`git diff --check` 通过。本轮未连接 NUC、未部署、未修改服务器数据库。

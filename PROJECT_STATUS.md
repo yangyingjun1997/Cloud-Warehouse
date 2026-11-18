@@ -79,6 +79,27 @@
 - NUC 实际运行 release：`20261117-162436-c05db86`，source revision `c05db869f5bd...`，`working_tree_dirty=false`，部署时间 `2026-11-17T16:26:15+08:00`。**版本标记与本地 HEAD 完全对齐**。部署地址 `192.168.123.101`；服务器 PostgreSQL、Gunicorn、Nginx、Cloudflare Tunnel 和业务数据均未清理。
 - 三个 P1 修复已**在生产环境实跑验证**：导出公式注入（`=cmd|'/c calc'!A1` 被转义为文本）、盘点归一化（`WMS2：A：AST-1` → `WMS2:A:AST-1`，真实资产带尾随换行仍可解析）、耗材编码优先解析。
 
+### 2026-11-18 备份恢复演练（首次真实验证）
+
+此前备份只验证过 `pg_restore --list`（能读目录），**从未验证过真恢复**。本轮完成端到端演练：
+
+| 步骤 | 结果 |
+| --- | --- |
+| 备份文件哈希校验 | `database.dump: 成功` |
+| `pg_restore` 到临时库 | `exit=0`，无错误 |
+| 恢复后数据 | 资产 636、用户 4、审计 1096、物品类型 78、库位 25 |
+| 真实读取（非只看表存在） | `AST-00000022` / `admin` / `asset_identity_applied` |
+| 外键约束 | 193 个 |
+| 索引 | 402 个 |
+| **审计只增不改触发器** | **10 个随备份一起恢复** |
+| 演练库清理 | 已删除，生产库未受影响 |
+
+**结论：备份可用，恢复路径验证通过。** 演练脚本思路记录在 `PROJECT_REVIEW_20261118.md` 的验证记录章节。
+
+### 项目完整复盘
+
+见 **`PROJECT_REVIEW_20261118.md`**：项目定位、已具备功能、待推进功能、待解决问题、远期规划、近期改动全清单。该文档面向交接与决策，权威进度仍以本文件为准。
+
 > 版本读取注意：权威文件是 `/opt/after-sales-warehouse/current/release-info`（随 release 目录走）。同一目录下的 `/opt/after-sales-warehouse/current-release` 是 2026-11-06 遗留的陈旧文件（仍写着 `release_version=20261106-182713`、`source_revision=bbc187c`），读取它会得到错误版本，不要用它判断当前 release。
 
 ### Previous release (已部署，本轮被替换)
