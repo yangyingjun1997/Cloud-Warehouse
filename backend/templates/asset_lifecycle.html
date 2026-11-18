@@ -16,6 +16,32 @@
     <div><span>累计维修</span><strong>{{ maintenance_records|length }} 次</strong></div>
   </section>
 
+  {% if can_correct_state and holder_registrable %}
+  <details class="holder-register-box">
+    <summary>登记当前持有人（历史台账补录）</summary>
+    <style>
+      .holder-register-box { margin-top: 14px; border: 1px solid #c5ded9; border-radius: 6px; background: #f7fbfa; }
+      .holder-register-box > summary { padding: 12px 14px; color: var(--teal); cursor: pointer; font-size: 12px; font-weight: 650; list-style: none; }
+      .holder-register-box > summary::-webkit-details-marker { display: none; }
+      .holder-register-box > summary::after { content: "▾"; float: right; color: var(--muted); }
+      .holder-register-box[open] > summary::after { content: "▴"; }
+      .holder-register-box form { padding: 0 14px 15px; border-top: 1px solid #d9ece8; }
+    </style>
+    <form method="post" class="lifecycle-form-grid">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="register_holder">
+      <input type="hidden" name="holder-expected_asset_updated_at" value="{{ asset.updated_at|date:'c' }}">
+      {% if holder_form.non_field_errors %}<div class="form-field full"><div class="notice error">{{ holder_form.non_field_errors }}</div></div>{% endif %}
+      <div class="form-field"><label for="{{ holder_form.holder.id_for_label }}">系统内账号</label>{{ holder_form.holder }}<small class="field-help">与外部持有人二选一</small></div>
+      <div class="form-field"><label for="{{ holder_form.external_holder_name.id_for_label }}">外部持有人姓名</label>{{ holder_form.external_holder_name }}</div>
+      <div class="form-field"><label for="{{ holder_form.external_holder_company.id_for_label }}">外部持有人单位</label>{{ holder_form.external_holder_company }}</div>
+      <div class="form-field"><label for="{{ holder_form.external_holder_phone.id_for_label }}">外部持有人电话</label>{{ holder_form.external_holder_phone }}</div>
+      <div class="form-field full"><label for="{{ holder_form.reason.id_for_label }}">登记原因 <span class="required">*</span></label>{{ holder_form.reason }}<small class="field-help">例如：历史台账补录、现场交接未走流程。会写入审计与履历。</small></div>
+      <div class="form-actions full"><button class="button button-primary" type="submit">保存持有人</button></div>
+    </form>
+  </details>
+  {% endif %}
+
   <nav class="lifecycle-tabs" aria-label="资产生命周期栏目">
     <a class="{% if tab == 'timeline' %}active{% endif %}" href="?tab=timeline">生命周期时间线</a>
     <a class="{% if tab == 'repairs' %}active{% endif %}" href="?tab=repairs">维修台账</a>

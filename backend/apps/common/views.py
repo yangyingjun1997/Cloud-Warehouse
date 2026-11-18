@@ -116,6 +116,12 @@ from apps.inventory.state_services import (
     RETURNABLE_ASSET_STATUSES,
     correct_asset_states,
 )
+from apps.inventory.holder_forms import AssetHolderRegistrationForm
+from apps.inventory.holder_services import (
+    HOLDER_REGISTRABLE_STATUSES,
+    AssetHolderRegistrationError,
+    register_asset_holder,
+)
 from apps.inventory.availability import available_asset_filter, in_warehouse_asset_filter, is_asset_available
 from apps.inventory.conversion_services import (
     InventoryConversionError,
@@ -3373,6 +3379,12 @@ def asset_lifecycle(request, asset_id):
     )
     scrap_form = ScrapApprovalForm(prefix='scrap')
     damage_form = DamageApprovalForm(prefix='damage')
+    # 持有人登记：只对「已离开仓库」的资产开放，与状态校正刻意分开
+    holder_form = AssetHolderRegistrationForm(
+        prefix='holder',
+        asset=asset,
+        initial={'expected_asset_updated_at': asset.updated_at},
+    )
 
     selected_maintenance = None
     selected_maintenance_id = request.GET.get('maintenance') or request.POST.get('maintenance_id')
@@ -3508,6 +3520,31 @@ def asset_lifecycle(request, asset_id):
                     )[0]
                     messages.success(request, f'台账校正已记录：{correction.get_to_status_display()}。')
                     return redirect(f'{reverse("asset_lifecycle", args=[asset.id])}?tab=corrections')
+            elif action == 'register_holder' and can_correct:
+                redirect_tab = 'overview'
+                holder_form = AssetHolderRegistrationForm(
+                    request.POST,
+                    prefix='holder',
+                    asset=asset,
+                )
+                if holder_form.is_valid():
+                    data = holder_form.cleaned_data
+                    try:
+                        register_asset_holder(
+                            asset=asset,
+                            actor=request.user,
+                            holder=data.get('holder'),
+                            external_name=data.get('external_holder_name', ''),
+                            external_company=data.get('external_holder_company', ''),
+                            external_phone=data.get('external_holder_phone', ''),
+                            reason=data['reason'],
+                            expected_updated_at=data['expected_asset_updated_at'],
+                        )
+                    except AssetHolderRegistrationError as exc:
+                        messages.error(request, str(exc))
+                    else:
+                        messages.success(request, '持有人已登记，并写入审计与资产履历。')
+                        return redirect(f'{reverse("asset_lifecycle", args=[asset.id])}?tab=overview')
             elif action == 'request_scrap' and can_manage:
                 scrap_form = ScrapApprovalForm(request.POST, prefix='scrap')
                 if scrap_form.is_valid():
@@ -3585,6 +3622,9 @@ def asset_lifecycle(request, asset_id):
     return render(request, 'asset_lifecycle.html', {
         'asset': asset,
         'holder_name': holder_name,
+        'holder_form': holder_form,
+        # 只有「已离开仓库」的状态才显示登记表单；在库资产不该有持有人
+        'holder_registrable': asset.status in HOLDER_REGISTRABLE_STATUSES,
         'tab': tab,
         'timeline': timeline,
         'maintenance_records': maintenance_records,

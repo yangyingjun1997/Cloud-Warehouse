@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
+
+from .settings_guards import ProductionConfigError, validate_production_config
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -39,17 +41,16 @@ ALLOWED_HOSTS = env_list('ALLOWED_HOSTS', '127.0.0.1,localhost')
 # `.env.example` 里为了方便本机开发写了 ALLOWED_HOSTS 含 `*`。手工部署时
 # 直接复制成 .env 会让任意 Host 头通过校验（Host 头攻击 / 缓存投毒），
 # 且这类错误在界面上完全看不出来。SECRET_KEY 已有硬校验，这里补齐其余三项。
+# 校验规则抽到 settings_guards.py，便于单测覆盖（在 settings 里 raise 无法断言）。
 if not DEBUG:
-    if '*' in ALLOWED_HOSTS:
-        raise ImproperlyConfigured(
-            '生产环境 ALLOWED_HOSTS 不能包含 *，请填写服务器内网 IP 与对外域名。'
+    try:
+        validate_production_config(
+            debug=DEBUG,
+            allowed_hosts=ALLOWED_HOSTS,
+            cors_allow_all=env_bool('CORS_ALLOW_ALL_ORIGINS', '0'),
         )
-    if not ALLOWED_HOSTS:
-        raise ImproperlyConfigured('生产环境 ALLOWED_HOSTS 不能为空。')
-    if env_bool('CORS_ALLOW_ALL_ORIGINS', '0'):
-        raise ImproperlyConfigured(
-            '生产环境不能开启 CORS_ALLOW_ALL_ORIGINS，请按需列出具体来源。'
-        )
+    except ProductionConfigError as exc:
+        raise ImproperlyConfigured(str(exc)) from exc
 
 USE_HTTPS = env_bool('USE_HTTPS', '0')
 
