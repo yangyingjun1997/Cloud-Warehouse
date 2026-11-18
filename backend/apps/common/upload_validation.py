@@ -11,7 +11,10 @@ from PIL import Image, UnidentifiedImageError
 
 
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
-MAX_ATTACHMENT_SIZE = 20 * 1024 * 1024
+# 2026-11-18 从 20 MB 提高到 100 MB：设备说明书、项目合同/图纸、CAD 导出件
+# 经常超过 20 MB。注意 Nginx 的 client_max_body_size 必须同步调整，否则
+# 请求会被反代层直接 413，用户只看到「上传失败」而不知道是大小限制。
+MAX_ATTACHMENT_SIZE = 100 * 1024 * 1024
 IMAGE_SUFFIXES = {'.jpg', '.jpeg', '.png', '.webp'}
 ALLOWED_IMAGE_FORMATS = {'JPEG', 'PNG', 'WEBP'}
 MAX_IMAGE_PIXELS = 25_000_000
