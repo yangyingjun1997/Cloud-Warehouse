@@ -1,0 +1,12 @@
+[Unit]
+Description=Weekly orphaned media cleanup for 售后仓库
+Documentation=https://example.invalid/after-sales-warehouse/media-gc
+
+[Timer]
+# 每周日 03:30 执行，避开每日备份（02:19）和一致性检查（03:03）的高峰
+OnCalendar=Sun 03:30
+Persistent=true
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

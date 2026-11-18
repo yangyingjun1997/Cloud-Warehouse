@@ -1,0 +1,17 @@
+[Unit]
+Description=Clean orphaned media files for 售后仓库
+Documentation=https://example.invalid/after-sales-warehouse/media-gc
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+# 孤儿文件清理：删除数据库已不引用且超过宽限期的 media 文件。
+# 宽限期默认 7 天，避免误删正在上传但尚未落库的临时文件。
+Environment=MEDIA_GC_GRACE_DAYS=7
+ExecStart=/usr/local/sbin/after-sales-warehouse-media-gc --apply
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=after-sales-warehouse-media-gc

@@ -425,11 +425,14 @@ install -m 644 "$SCRIPT_DIR/after-sales-warehouse-security-cleanup.service" /etc
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-security-cleanup.timer" /etc/systemd/system/after-sales-warehouse-security-cleanup.timer
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-dingtalk-outbox.service" /etc/systemd/system/after-sales-warehouse-dingtalk-outbox.service
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-dingtalk-outbox.timer" /etc/systemd/system/after-sales-warehouse-dingtalk-outbox.timer
+install -m 644 "$SCRIPT_DIR/after-sales-warehouse-media-gc.service" /etc/systemd/system/after-sales-warehouse-media-gc.service
+install -m 644 "$SCRIPT_DIR/after-sales-warehouse-media-gc.timer" /etc/systemd/system/after-sales-warehouse-media-gc.timer
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-logrotate" /etc/logrotate.d/after-sales-warehouse
 install -d -m 755 /etc/systemd/journald.conf.d
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-journald.conf" /etc/systemd/journald.conf.d/after-sales-warehouse.conf
 install -m 644 "$SCRIPT_DIR/after-sales-warehouse-tmpfiles.conf" /etc/tmpfiles.d/after-sales-warehouse.conf
 install -m 750 "$SCRIPT_DIR/backup.sh" /usr/local/sbin/after-sales-warehouse-backup
+install -m 750 "$SCRIPT_DIR/media-gc.sh" /usr/local/sbin/after-sales-warehouse-media-gc
 install -m 750 "$SCRIPT_DIR/runtime-status.sh" /usr/local/sbin/after-sales-warehouse-status
 install -m 750 "$SCRIPT_DIR/health-monitor.sh" /usr/local/sbin/after-sales-warehouse-health
 install -m 750 "$SCRIPT_DIR/restore-drill.sh" /usr/local/sbin/after-sales-warehouse-restore-drill
@@ -455,6 +458,7 @@ systemctl enable --now after-sales-warehouse-health.timer
 systemctl enable --now after-sales-warehouse-consistency.timer
 systemctl enable --now after-sales-warehouse-security-cleanup.timer
 systemctl enable --now after-sales-warehouse-dingtalk-outbox.timer
+systemctl enable --now after-sales-warehouse-media-gc.timer
 systemctl enable nginx
 # `enable --now` does not reload an already-running Nginx process.
 systemctl reload nginx
@@ -467,8 +471,11 @@ systemctl restart after-sales-warehouse-health.timer after-sales-warehouse-backu
 curl --silent --show-error --fail --max-time 15 http://127.0.0.1/health/ >/dev/null
 trap - ERR
 
-# Keep the current five atomic releases. Legacy tar snapshots are not matched.
-mapfile -t old_releases < <(find "$RELEASE_ROOT" -mindepth 2 -maxdepth 2 -type f -name release-info -printf '%T@ %h\n' | sort -rn | awk 'NR > 5 {print $2}')
+# 只保留最近 3 个原子 release（当前 + 2 个回滚点）。
+# 每个 release 是完整代码副本 + venv，约 130 MB；留 5 个会稳定占用 650 MB 以上。
+# 2 个回滚点足以覆盖「新版本有问题 → 退回上一版 → 再退回上上版」的常见场景。
+# 旧式 tar 快照不匹配此规则，不会被误删。
+mapfile -t old_releases < <(find "$RELEASE_ROOT" -mindepth 2 -maxdepth 2 -type f -name release-info -printf '%T@ %h\n' | sort -rn | awk 'NR > 3 {print $2}')
 if (( ${#old_releases[@]} > 0 )); then
   for old_release in "${old_releases[@]}"; do
     [[ "$old_release" == "$(readlink -f "$CURRENT_LINK")" ]] || rm -rf "$old_release"
