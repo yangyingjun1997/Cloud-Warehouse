@@ -35,6 +35,11 @@ release-*.tar.gz
 backend/.test-tmp/
 .test-run-temp/
 
+# ---- pip 中断残留（安装被取消时会留在仓库根） ----
+pip-metadata-*/
+pip-unpack-*/
+pip-install-*/
+
 # ---- 工具运行产物 ----
 artifacts/
 .worktmp/
