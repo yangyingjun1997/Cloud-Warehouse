@@ -191,7 +191,20 @@
         empty.hidden = total > 0;
         count.textContent = `${total} 项`;
         warning.hidden = !hasInvalid;
-        document.querySelector('[data-reason-label]').textContent = currentType === 'return' ? '归还说明' : '申请原因';
+        // 原因字段随类型换标题：报修写的是故障现象，归还是归还说明。
+        const reasonLabels = {
+          return: '归还说明',
+          repair: '故障描述（现象、报错、发生时间）',
+        };
+        document.querySelector('[data-reason-label]').textContent =
+          reasonLabels[currentType] || '申请原因';
+        // 报修不需要归还日期与项目信息，顺手把快捷原因换成故障类短语
+        const reasonInputEl = document.getElementById('reason');
+        if (reasonInputEl && currentType === 'repair') {
+          reasonInputEl.placeholder = '例如：开机无反应、屏幕闪烁、无法联网、异响';
+        } else if (reasonInputEl) {
+          reasonInputEl.placeholder = '选择上方快捷原因，或直接填写';
+        }
       }
 
       function addItem(button) {

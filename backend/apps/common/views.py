@@ -66,6 +66,7 @@ from apps.common.utils import generate_temporary_password as _generate_temporary
 from apps.common.utils import sanitize_csv_row as _csv_safe
 from apps.accounts.password_policy import validate_password_strength
 from apps.accounts.models import AccountRequest, AccountSession, Department, UserProfile
+from apps.accounts.system_accounts import exclude_system_accounts
 from apps.accounts.username_services import suggest_username
 from apps.accounts.session_services import (
     active_account_sessions,
@@ -4230,8 +4231,11 @@ def quick_inventory_process(request):
         'customers': Customer.objects.filter(is_active=True).order_by('name'),
         'projects': Project.objects.filter(is_active=True).select_related('customer').order_by('name'),
         'work_orders': WorkOrder.objects.filter(is_active=True).select_related('project').order_by('name'),
-        # 与新建申请保持一致的接收人选择：优先从系统内账号选，外部人员才手工填姓名
-        'recipient_choices': User.objects.filter(is_active=True).order_by('first_name', 'username'),
+        # 与新建申请保持一致的接收人选择：优先从系统内账号选，外部人员才手工填姓名。
+        # 排除维护账号，避免把资产「发」给 admin / label_print 这类无人接收的账号。
+        'recipient_choices': exclude_system_accounts(
+            User.objects.filter(is_active=True)
+        ).order_by('first_name', 'username'),
         'user_can_use_admin': is_system_administrator(request.user), 'user_is_operator': True,
         'user_is_system_admin': is_system_administrator(request.user),
         'user_role_label': _user_role_label(request.user, True, is_system_administrator(request.user)),
@@ -4545,6 +4549,9 @@ def request_create(request, request_id=None):
         WorkflowRequest.RequestType.BORROW,
         WorkflowRequest.RequestType.RETURN,
         WorkflowRequest.RequestType.ISSUE,
+        # 报修：员工自助提交，走审批后才进入维修中。
+        # 审批通过后由执行环节调用 ensure_maintenance_from_workflow 生成维修单。
+        WorkflowRequest.RequestType.REPAIR,
     }
     draft = None
     if request_id:
@@ -4870,18 +4877,29 @@ def request_create(request, request_id=None):
             (WorkflowRequest.RequestType.BORROW, '借用'),
             (WorkflowRequest.RequestType.RETURN, '归还'),
             (WorkflowRequest.RequestType.ISSUE, '领用'),
+            (WorkflowRequest.RequestType.REPAIR, '报修'),
         ],
         # 审批人候选只列真正具备审批权限的账号，并排除申请人自己：
         # 自己审批自己等于审批环节失效，除非系统里没有其他审批人（下方单独处理）。
-        'approver_choices': User.objects.filter(
-            is_active=True,
-            groups__name__in=['warehouse_approval', 'warehouse_staff', 'warehouse_admin'],
+        # 审批人候选只列真正具备审批权限的账号，并排除申请人自己与系统维护账号。
+        # 自己审批自己等于审批环节失效（除非系统里没有其他审批人，下方单独处理）；
+        # admin / label_print 这类维护账号绝不能出现在业务下拉里——既泄露账号存在，
+        # 又可能让申请落到没人处理的地方。
+        'approver_choices': exclude_system_accounts(
+            User.objects.filter(
+                is_active=True,
+                groups__name__in=['warehouse_approval', 'warehouse_staff', 'warehouse_admin'],
+            )
         ).exclude(pk=request.user.pk).distinct().order_by('username'),
-        'has_other_approver': User.objects.filter(
-            is_active=True,
-            groups__name__in=['warehouse_approval', 'warehouse_staff', 'warehouse_admin'],
+        'has_other_approver': exclude_system_accounts(
+            User.objects.filter(
+                is_active=True,
+                groups__name__in=['warehouse_approval', 'warehouse_staff', 'warehouse_admin'],
+            )
         ).exclude(pk=request.user.pk).exists(),
-        'recipient_choices': User.objects.filter(is_active=True).order_by('first_name', 'username'),
+        'recipient_choices': exclude_system_accounts(
+            User.objects.filter(is_active=True)
+        ).order_by('first_name', 'username'),
         'customers': Customer.objects.filter(is_active=True).order_by('name'),
         'projects': Project.objects.filter(is_active=True).select_related('customer').order_by('name'),
         'work_orders': WorkOrder.objects.filter(is_active=True).select_related('project').order_by('name'),

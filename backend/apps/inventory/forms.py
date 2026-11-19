@@ -3,6 +3,8 @@ from pathlib import Path
 from django import forms
 from django.contrib.auth import get_user_model
 
+from apps.accounts.system_accounts import exclude_system_accounts
+
 from apps.common.upload_validation import (
     ALLOWED_ATTACHMENT_SUFFIXES,
     validate_attachment_upload,
@@ -445,7 +447,7 @@ class MaintenanceCreateForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['responsible_user'].queryset = User.objects.filter(is_active=True).order_by('username')
+        self.fields['responsible_user'].queryset = exclude_system_accounts(User.objects.filter(is_active=True)).order_by('username')
 
 
 class MaintenanceUpdateForm(forms.ModelForm):
@@ -485,7 +487,7 @@ class MaintenanceUpdateForm(forms.ModelForm):
             choice for choice in MaintenanceRecord.Status.choices
             if choice[0] not in {MaintenanceRecord.Status.COMPLETED, MaintenanceRecord.Status.CANCELED}
         ]
-        self.fields['responsible_user'].queryset = User.objects.filter(is_active=True).order_by('username')
+        self.fields['responsible_user'].queryset = exclude_system_accounts(User.objects.filter(is_active=True)).order_by('username')
 
 
 class MaintenanceFinishForm(forms.Form):
@@ -616,7 +618,7 @@ class AssetHandoverForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['to_user'].queryset = User.objects.filter(is_active=True).order_by('username')
+        self.fields['to_user'].queryset = exclude_system_accounts(User.objects.filter(is_active=True)).order_by('username')
 
 
 class AssetAttachmentForm(forms.ModelForm):
