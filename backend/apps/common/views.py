@@ -4622,6 +4622,13 @@ def request_create(request, request_id=None):
         customer_ref = _get_by_uuid(Customer, request.POST.get('customer_ref'))
         project_ref = _get_by_uuid(Project, request.POST.get('project_ref'))
         work_order_ref = _get_by_uuid(WorkOrder, request.POST.get('work_order_ref'))
+        # 用途为「日常」时，前端会把项目相关字段禁用，浏览器不提交这些值。
+        # 这里再兜一层：即使有人手工构造请求，也不让日常单挂上项目/工单/客户，
+        # 否则报表按项目统计时会把普通借用算进项目。
+        if request.POST.get('usage_scope', 'daily') != 'project':
+            customer_ref = None
+            project_ref = None
+            work_order_ref = None
         try:
             if action not in {'submit', 'save_draft', 'save_template'}:
                 raise WorkflowError('不支持的申请操作。')
@@ -4739,8 +4746,10 @@ def request_create(request, request_id=None):
                 workflow_request.customer_ref = customer_ref
                 workflow_request.project_ref = project_ref
                 workflow_request.work_order_ref = work_order_ref
-                workflow_request.project_code = request.POST.get('project_code', '').strip()
-                workflow_request.work_order_no = request.POST.get('work_order_no', '').strip()
+                # 与上面 customer/project/work_order 一致：日常用途不保留手填的项目/工单编号
+                _is_project_scope = request.POST.get('usage_scope', 'daily') == 'project'
+                workflow_request.project_code = request.POST.get('project_code', '').strip() if _is_project_scope else ''
+                workflow_request.work_order_no = request.POST.get('work_order_no', '').strip() if _is_project_scope else ''
                 workflow_request.application_date = application_date
                 workflow_request.expected_return_date = expected_return_date if request_type == WorkflowRequest.RequestType.BORROW else None
                 workflow_request.status = WorkflowRequest.Status.DRAFT
@@ -4809,6 +4818,15 @@ def request_create(request, request_id=None):
         initial_application_date = draft.application_date
         initial_expected_return_date = draft.expected_return_date or timezone.localdate()
     form_values = {
+        # 用途开关：只要挂了项目/工单/客户任一，就默认展开「项目/客户」，
+        # 否则默认「日常」，避免普通借用手续填一堆项目字段。
+        'usage_scope': (
+            'project'
+            if getattr(initial_source, 'project_ref_id', None)
+            or getattr(initial_source, 'work_order_ref_id', None)
+            or getattr(initial_source, 'customer_ref_id', None)
+            else 'daily'
+        ),
         # 默认把当前登录账号作为接收人，但只填外键；姓名由模型/视图从账号派生，
         # 避免把拼音账号当成人名写进 recipient_name。
         'recipient_id': str(getattr(initial_source, 'recipient_id', '') or request.user.pk),
@@ -4868,6 +4886,11 @@ def request_create(request, request_id=None):
         'projects': Project.objects.filter(is_active=True).select_related('customer').order_by('name'),
         'work_orders': WorkOrder.objects.filter(is_active=True).select_related('project').order_by('name'),
         'draft': draft,
+        # 申请原因的快捷选项：覆盖现场最常见的几种，减少重复手打。
+        'reason_presets': (
+            '现场故障排查', '项目交付', '测试验证',
+            '日常借用', '客户演示', '内部培训',
+        ),
         'form_values': form_values,
         'request_templates': WorkflowRequestTemplate.objects.filter(owner=request.user).order_by('name'),
         'selected_template': selected_template,

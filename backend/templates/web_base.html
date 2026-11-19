@@ -266,6 +266,29 @@
     .form-field label { color: var(--ink); font-size: 12px; font-weight: 650; }
     .required { color: var(--coral); }
     .form-field input, .form-field select, .form-field textarea { width: 100%; box-sizing: border-box; min-height: 38px; padding: 9px 10px; color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 5px; font: inherit; font-size: 13px; outline-color: var(--teal); }
+    /* 只读/禁用字段的视觉区分。
+       系统里有不少字段是「绑定值」而非可编辑输入——例如申请单的实际使用人
+       固定为申请人、资产页的系统永久编号、各类自动生成的单号。
+       这些字段外观与可编辑框完全一样，第一次使用的人会以为是 bug（点了没反应）。
+       统一给灰底 + 虚线边 + not-allowed 光标，一眼可辨「这里不需要填」。 */
+    .form-field input[readonly],
+    .form-field input:disabled,
+    .form-field select:disabled,
+    .form-field textarea[readonly],
+    .form-field textarea:disabled,
+    .form-field input.is-readonly {
+      color: #40585d;
+      background: #f2f5f5;
+      border-style: dashed;
+      border-color: #cfdbdc;
+      cursor: not-allowed;
+    }
+    /* 只读字段获得焦点时不要高亮成「可编辑」的青色描边 */
+    .form-field input[readonly]:focus,
+    .form-field input:disabled:focus,
+    .form-field input.is-readonly:focus { outline-color: #cfdbdc; }
+    .form-field input[readonly]::placeholder,
+    .form-field input.is-readonly::placeholder { color: #8fa3a8; }
     .form-field input[type="checkbox"], .form-field input[type="radio"] { width: auto; min-height: 0; padding: 0; }
     /* iOS/Safari 的日期控件带原生外观和内边距，比文本框高出一截，
        会让同一行的日期输入与下拉框、按钮对不齐。这里只统一行高与图标间距，
