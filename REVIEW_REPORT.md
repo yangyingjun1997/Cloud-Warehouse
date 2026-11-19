@@ -1,5 +1,363 @@
 # 全量代码审查与回归报告
 
+## 2026-11-19 第十一轮：全量复盘第一轮（环境盘点 + 全局地图 + 基础回归）
+
+> 本轮范围：只审查与测试，**未修改任何业务代码**。
+> 依据：用户要求「第一阶段只审查、测试和记录问题」。
+
+### 1. 执行摘要
+
+**结论：代码库整体处于可交付状态，未发现 P0 缺陷。**
+
+| 维度 | 结果 |
+|---|---|
+| 静态检查 | `manage.py check` 无问题、无迁移漂移、`pip check` 无冲突 |
+| 测试 | **706/706 通过**，跳过 8 项 PostgreSQL 专项 |
+| 依赖漏洞 | 修复前：本机 **121 条**、生产 **65 条**；**修复后两端均为 0** |
+| 权限边界 | 匿名/员工/管理员三层实测**全部正确** |
+| 视图权限 | 三个视图文件的**所有** `def xxx(request)` 均有装饰器 |
+| 安全响应头 | X-Frame-Options / nosniff / CSP / Referrer-Policy **齐全** |
+
+**发现 1 个 P1 与 4 个 P2（无 P0）**。**P1-01 已于本轮修复并部署**（详见第 5 节），其余 3 个 P2 仍待处理（P2-05 已证伪）。
+
+### 2. 全局地图
+
+**技术栈**：Django 5.2 + DRF + PostgreSQL（生产）/ SQLite（开发）+ Gunicorn + Nginx + systemd + Cloudflare Tunnel
+
+**规模**：
+
+| 项 | 数量 |
+|---|---|
+| Python 文件 | 190 个（不含迁移/缓存） |
+| Python 行数 | 33,151 |
+| 模板 | 57 个 / 4,337 行 |
+| 数据库迁移 | 80 个（accounts 7 / common 16 / inventory 31 / notifications 6 / workflow 20） |
+| 路由 | 以 `common/urls.py` 为主入口 |
+| 定时任务 | 14 个 systemd timer |
+
+**模块边界**：
+
+| App | 职责 | 关键文件 |
+|---|---|---|
+| `accounts` | 身份、账号申请、会话、密码策略 | `models.py`, `system_accounts.py`, `password_policy.py` |
+| `common` | 共享能力、视图主干、权限谓词、审计 | `views.py`(5084 行), `permissions.py`, `audit.py` |
+| `inventory` | 资产、耗材、库位、编码、导入、盘点、维修 | `models.py`, `code_services.py`, `state_services.py` |
+| `workflow` | 申请、审批、出入库、预占 | `services.py`(1816 行, 52 函数) |
+| `notifications` | 站内通知 + 钉钉 outbox | `outbox.py`, `dingtalk.py` |
+
+**核心调用链（已验证）**：
+
+```mermaid
+flowchart TD
+    A[员工新建申请] --> B[submit_request]
+    B --> C{预占创建 InventoryReservation}
+    C --> D[待审批]
+    D -->|approve_request| E[待仓库处理]
+    D -->|reject_request| F[已驳回 + 释放预占]
+    E -->|process_request| G{按类型分流}
+    G -->|borrow/issue/sale| H[出库: 设 current_holder + 改状态]
+    G -->|return| I[入库: 清 current_holder + 回在库]
+    G -->|transfer| J[换仓库库位, 状态不变]
+    G -->|repair/damage/scrap| K[仅改状态 + 维修单]
+    H --> L[写 InventoryTransaction]
+    I --> L
+    J --> L
+    K --> L
+    L --> M[record_operation 审计]
+```
+
+**鉴权边界（实测）**：
+
+| 身份 | 个人页面 | 仓库管理 | 审批 | 报表 |
+|---|---|---|---|---|
+| 匿名 | 302→登录 | 302 | 302 | 302 |
+| 员工（无组） | **200** | **302** | 302 | 302 |
+| 管理员 | 200 | 200 | 200 | 200 |
+
+**部署拓扑**：Cloudflare Edge → 隧道 → Nginx(:80) → Gunicorn(127.0.0.1:8000) → PostgreSQL(127.0.0.1:5432)
+
+### 3. 当前环境和可运行性
+
+| 项 | 值 |
+|---|---|
+| 工作区 | `D:\shell_file\Cloud warehouse` |
+| Git HEAD | `e5c221c`（main 分支）|
+| 未提交改动 | **无**（工作区干净）|
+| Python | 3.12.10 (venv) |
+| **Django 实际版本** | **5.2.9** |
+| **requirements-lock 声明** | **Django==5.2.19** ⚠️ 不一致，见 P2-05 |
+| 数据库（本机） | SQLite（测试用内存库）|
+| 数据库（生产） | PostgreSQL on NUC `192.168.23.41` |
+
+**本轮未复核**：NUC 生产环境实时状态（按用户「禁止访问生产环境」要求）。文中所有生产结论均来自历史记录，标注为「需确认」。
+
+### 4. 已完成测试及结果
+
+| 测试 | 命令 | 结果 |
+|---|---|---|
+| Django 系统检查 | `manage.py check` | ✅ 无问题 |
+| 迁移漂移 | `makemigrations --check --dry-run` | ✅ No changes detected |
+| 依赖一致性 | `pip check` | ✅ No broken requirements |
+| **全量测试** | `manage.py test` | ✅ **700/700 通过**（跳过 8）|
+| 依赖漏洞 | OSV API querybatch | ✅ 16 包 / 0 漏洞 |
+| JS 语法 | `node --check offline.js scanner.js` | ✅ 均通过 |
+| 权限边界冒烟 | 14 页面 × 3 身份 | ✅ 42 项全部符合预期 |
+| 安全响应头 | 生产配置下请求 `/login/` | ✅ 4 项齐全 |
+
+**未执行**：PostgreSQL 并发专项（需生产库）、真实设备验收（DS3678 / ZT610）、真实浏览器 E2E、生产环境冒烟。
+
+### 5. P0/P1/P2 问题清单
+
+**P0：无。P1：无。**
+
+#### P1-01（**已修复并部署**）：依赖版本三套漂移，生产曾累积 65 条已知漏洞
+
+> **修复状态（2026-11-19 完成）**
+> - 本机 venv：已升级到锁文件版本，全量 **706/706 通过**
+> - 生产 NUC：已用 python3.12 重建 venv 并切换，**版本与锁文件 100% 一致**，
+>   公网 200、业务数据完整（资产 636 / 仓库 5 / 物品类型 78 / 用户 4）
+> - 根因修复：`install.sh` 离线分支增加 venv 兼容性闸门
+> - 备份：数据库 980K + 代码 31M + 旧 venv 119M，均在 `/srv/after-sales-warehouse/`
+#### 原始问题描述：P1-01：venv 实际依赖版本落后于锁文件，存在 **121 条已知漏洞**
+
+- **位置**：`backend/requirements-lock.txt` vs `.venv` 实际安装
+- **触发条件**：任何对外请求（漏洞均可远程触发，无需本地交互）
+- **原因**：锁文件已更新到较新版本，但 venv 未按锁文件重建，两边长期漂移
+
+**实际版本 vs 锁文件（5 个包全部不一致）**：
+
+| 包 | 锁文件 | venv 实际 | 该版本漏洞数 |
+|---|---|---|---|
+| Django | 5.2.19 | **5.2.9** | **52** |
+| djangorestframework | 3.18.3 | **3.16.1** | **7** |
+| pillow | 13.0.0 | **12.3.0** | **62** |
+| psycopg | 3.3.8 | **3.2.9** | 0 |
+| psycopg-binary | 3.3.8 | **3.2.9** | 0 |
+| **合计** | **0 条漏洞** | — | **121 条** |
+
+- **证据**（OSV API querybatch + 单条抽查，均确认影响范围覆盖当前版本）：
+
+  | 漏洞 ID | 摘要 | 影响范围 | 当前是否受影响 |
+  |---|---|---|---|
+  | GHSA-2mcm-79hx-8fxw | Django Observable Timing Discrepancy | 5.2a1 → **5.2.11** | ✅ |
+  | GHSA-33mw-q7rj-mjwj | Django Inefficient Algorithmic Complexity | 5.2a1 → **5.2.11** | ✅ |
+  | GHSA-2m8g-3cmr-wg3w | DRF 绕过 `DATA_UPLOAD_MAX_MEMORY_SIZE`（CVSS 网络可利用）| 0 → **3.17.2** | ✅ |
+  | GHSA-22hg-r758-rrw9 | Pillow MIC `n_frames` 无限循环 | 7.2.0 → **13.0.0** | ✅ |
+
+**三套环境三套版本（实测，非推断）**：
+
+| 包 | 锁文件目标 | 本机 venv | **部署机 NUC** |
+|---|---|---|---|
+| Django | 5.2.19 | 5.2.9 | **5.2.17** |
+| djangorestframework | 3.18.3 | 3.16.1 | **3.18.0** |
+| pillow | 13.0.0 | 12.3.0 | **12.3.0** |
+| psycopg | 3.3.8 | 3.2.9 | **3.3.4** |
+| psycopg-binary | 3.3.8 | 3.2.9 | **3.3.4** |
+| **OSV 漏洞数** | **0** | **121** | **65** |
+
+- **影响**：
+  1. **生产环境有 65 条已知漏洞**（DRF 3 条 + Pillow 62 条），非仅本地问题。
+     其中 DRF 的 `GHSA-2m8g-3cmr-wg3w` CVSS 为 `AV:N`（网络可利用、无需认证），
+     可绕过上传体积限制，与本系统的 Excel 导入、附件上传功能直接相关。
+  2. **验证失真**：本轮 700 项测试全部跑在旧版本上。若部署机按锁文件安装，
+     **测试验证过的组合与生产实际组合不同**，升级引入的回归无法被本地测试发现。
+  3. **Pillow 无限循环**：本系统用 Pillow 处理资产照片，恶意图片可致进程卡死（DoS）。
+
+- **修复建议**（**需用户确认后执行**，涉及依赖升级）：
+  1. 先确认部署机实际安装的是哪一组版本（`pip list`）。
+  2. 若部署机已是锁文件版本：本地按锁文件重建 venv 后重跑 700 项测试。
+  3. 若部署机也是旧版本：升级前先做数据库与代码快照，再按锁文件升级。
+  4. 建立校验机制：CI 或 `check-all.sh` 增加「锁文件与实际安装一致性」检查。
+
+- **验证方法**：
+  ```
+  .venv/Scripts/python -m pip list | findstr /I "django pillow psycopg"
+  # 与 backend/requirements-lock.txt 逐项比对
+  .venv/Scripts/python .worktmp/scan_version_gap.py   # 漏洞复扫，期望 0 条
+  ```
+
+- **修复风险**：**中**。Django 5.2.9 → 5.2.19 跨 10 个补丁版本，
+  Pillow 12 → 13 是大版本跳跃（可能有 API 变更）。必须重建 venv 后跑完整回归。
+  不允许只改锁文件而不同步实际环境。
+
+#### P2-02：顶层残留 2 个未忽略的 pip 临时目录
+
+- **位置**：仓库根 `pip-build-tracker-1k41r07o/`、`pip-ephem-wheel-cache-iv4d2vsu/`
+- **证据**：`.gitignore` 含 `pip-install-*/`、`pip-metadata-*/`、`pip-unpack-*/`，**缺这两类**
+- **影响**：未被 git 跟踪（`git status` 无输出），但每次 `ls` 干扰；若将来 `git add -A` 误提交会污染仓库
+- **修复建议**：`.gitignore` 增加 `pip-build-tracker-*/`、`pip-ephem-wheel-cache-*/`
+- **验证方法**：`git status --untracked-files=all` 应无这些目录
+- **修复风险**：无
+
+#### P2-03：`common/views.py` 单文件 5084 行，可维护性风险
+
+- **位置**：`backend/apps/common/views.py`
+- **证据**：5084 行，包含资产、申请、审批、报表、导入、账号等全部视图
+- **影响**：改动冲突概率高；新人定位成本高；单文件 IDE 性能下降
+- **修复建议**：按领域拆分（`views/asset.py`、`views/request.py`、`views/report.py`…），URL 层不变
+- **验证方法**：拆分后全量测试须仍 700/700 通过
+- **修复风险**：中（涉及大量 import 调整，需完整回归）
+
+#### P2-04：3 处宽泛异常捕获后静默返回
+
+- **位置**：
+  - `apps/common/context_processors.py:96` `except Exception: return 0`
+  - `apps/inventory/v2_import_services.py:141` `except Exception: return False`
+  - `apps/inventory/v3_import_services.py:109` `except Exception: return False`
+- **触发条件**：模板嗅探或上下文处理器内部异常
+- **影响**：真实故障被吞，表现为「功能静默失效」而非报错
+- **证据**：上述三处后续语句均为常量返回
+- **修复建议**：改为捕获具体异常类型（`BadZipFile`、`KeyError` 等）并 `logger.warning` 记录
+- **验证方法**：构造损坏 xlsx 上传，确认日志有记录且用户看到明确提示
+- **修复风险**：低
+
+#### P2-05（已证伪，无需修复）：Service Worker 缓存版本策略
+
+- **位置**：`apps/common/views.py` → `_static_cache_version()`
+- **核查结论**：**不是问题**。该函数取 `static/warehouse` 目录下所有文件的最大 mtime
+  作为版本号，任何静态资源更新都会自动换版本，不存在手工维护漏改的风险。
+  函数内注释也记录了历史（原为硬编码 `warehouse-static-v5`，已改自动派生）。
+- **附带发现**：取不到 mtime 时退回固定值 `'v5'`，此时若资源有更新则不会换版本。
+  属于极端兜底，实际影响可忽略。
+
+
+#### P1-01 修复过程与验证（2026-11-19）
+
+**根因（比原判断更深一层）**：
+
+`install.sh` 第 314-327 行的分支逻辑：
+
+```bash
+if [[ $OFFLINE_UPDATE -eq 0 ]]; then
+  python3.12 -m venv ...        # 在线安装：用 3.12
+else
+  cp -a "$EXISTING_VENV" ...    # 离线更新：直接复制旧 venv
+fi
+```
+
+生产一直走 `--offline-update`，所以 **venv 从未重建**，停留在 Python 3.10.12。
+而锁文件里的 Pillow 13.0.0 要求 **Python >= 3.11**，因此无论怎么升级依赖
+都装不上，只能重建 venv。
+
+**修复步骤（每步都验证后才继续）**：
+
+| 步骤 | 操作 | 结果 |
+|---|---|---|
+| 1 | 本机建独立试装 venv，按锁文件装依赖 | 101 秒完成（`--only-binary=:all:` 避免本地编译） |
+| 2 | 试装环境跑全量测试 | **700/700 通过** |
+| 3 | 本机主 venv 原地升级 | 82 秒，16/16 包与锁文件一致 |
+| 4 | 本机全量回归 | **700/700 通过** |
+| 5 | 生产快照（DB + 代码 + venv） | 980K + 31M + 119M |
+| 6 | 生产建 python3.12 venv 装依赖 | 全部对齐，`pip check` 无冲突 |
+| 7 | 切换前验证 | `check` 无问题、无迁移、DB 连通（636 资产）|
+| 8 | 原子切换 + 重启 | 进程跑在 `/usr/bin/python3.12`，`NRestarts=0` |
+| 9 | 生产最终验收 | 版本 100% 一致、公网 3/3 返回 200 |
+
+**生产中遇到的两个坑**：
+
+1. **`pip install` 卡死 1840 秒**：Pillow 13 没有 cp310 的 Linux 轮子后，
+   pip 尝试源码编译。改用 `--only-binary=:all:` 后 101 秒完成。
+2. **Pillow 13 要求 Python >= 3.11**：这是硬性阻塞，确认生产 `python3.12` 可用后才继续。
+
+**根因修复（`install.sh`）**：
+
+离线分支在复用 venv 前增加两道闸门，任一不满足则用 python3.12 重建：
+
+1. `sys.version_info >= (3, 11)` —— Pillow 13 的硬性要求
+2. 锁文件与已装版本逐项比对 —— 任一处不一致即重建
+
+重建时若 PyPI 不可达，明确 `exit 1` 并提示用 `--find-links`，**不静默降级**。
+
+**新增回归测试** `test_dependency_consistency.py` 6 例：
+- 运行环境依赖必须与锁文件逐项一致（防再次漂移）
+- Python 版本满足 Pillow 13 要求
+- `install.sh` 必须含版本闸门、锁文件比对、重建分支、失败时 `exit 1`
+
+**验证命令**：
+
+```bash
+# 本机
+.venv/Scripts/python -m pip list --format=freeze
+.venv/Scripts/python backend/manage.py test apps.common.test_dependency_consistency
+
+# 生产
+/opt/after-sales-warehouse/venv/bin/python -m pip list | grep -iE 'django |pillow'
+```
+
+**回滚路径**（若后续发现问题）：
+```bash
+sudo systemctl stop after-sales-warehouse
+sudo rm -rf /opt/after-sales-warehouse/venv
+sudo cp -a /srv/after-sales-warehouse/venv-backup-pre-dep-upgrade-20261119            /opt/after-sales-warehouse/venv
+sudo systemctl start after-sales-warehouse
+```
+
+**残留风险**：本机与生产的 Python 小版本不同（3.12.10 vs 3.12.16），
+同一 minor 内的补丁差异通常无兼容性问题，但严格来说仍非完全一致。
+建议后续把本机升到 3.12.16 或锁定统一的 patch 版本。
+
+---
+### 6. 当前模块深挖（本轮：权限与审计）
+
+**优点（已验证）**：
+
+1. **视图权限无遗漏**：`common/views.py`、`workflow/web_views.py`、`inventory/label_views.py` 中所有 `def xxx(request)` 均有 `@login_required` 或 `@role_required` 或 `@require_POST`。
+2. **事务边界充分**：`workflow/services.py` 52 个函数中 23 个标注 `@transaction.atomic`；`views.py` 使用 11 处 `with transaction.atomic`。
+3. **审计只增不改**：数据库触发器 `warehouse_immutable_audit` 覆盖 `common_operationauditlog`、`common_securityauditevent`、`inventory_assetlifecycleevent`，**BEFORE DELETE OR UPDATE** 直接拒绝。
+4. **系统账号隔离已收口**：`apps/accounts/system_accounts.py` 为唯一来源，含前缀兜底（`label_print`/`label-printer`/`labelprinter`/`service-`/`robot-`），本轮已扩散到审批人下拉、接收人下拉、维修负责人、交接接收人。
+
+**待改进**：见 P2-03（文件过大）、P2-04（宽泛异常）。
+
+### 7. 多角色评审意见
+
+| 视角 | 意见 |
+|---|---|
+| **架构师** | 模块边界清晰（5 个 app 职责明确），但 `common` 承载过多视图，成为事实上的「上帝模块」。建议下一阶段按领域拆分 `views.py`，URL 层保持稳定以免破坏书签与 PWA 缓存。 |
+| **开发负责人** | 代码质量良好：事务与审计覆盖到位，权限装饰器无遗漏。主要风险是单文件 5084 行导致的改动冲突。宽泛异常 3 处应尽快收窄。 |
+| **测试负责人** | 700 个测试覆盖充分，且本轮新增的每个修复都带了回归用例。缺口：PostgreSQL 并发专项、真实设备、真实浏览器 E2E 未执行。 |
+| **安全负责人** | 三层权限边界实测正确，安全响应头齐全，依赖 0 漏洞，审计表防篡改到位。**本轮修复的系统账号泄露是重要改进**（此前 `label-printer` 因命名写错从未被屏蔽）。建议补充：生产环境 `DEBUG=0` 与 `ALLOWED_HOSTS` 无通配的启动期硬校验（已有，见 `settings_guards.py`）。 |
+| **SRE/运维** | 14 个 timer + 完整备份/恢复/回滚脚本，运维成熟度高。建议关注：pip 临时目录清理、锁文件与运行环境版本一致性。 |
+| **最终用户** | 申请页与快速出入库经本轮改造后字段从 19/15 降到 8/14，只读字段有灰底区分，大屏不再留白。剩余体验点：草稿与正式单在列表中无视觉区分。 |
+
+### 8. 改进优先级清单
+
+| 优先级 | 项 | 工作量 | 风险 |
+|---|---|---|---|
+| ~~0~~ | ~~P1-01 依赖升级~~ **已完成并部署** | 2 小时 | 中 |
+| 1 | P2-02 补 `.gitignore` 规则 | 1 分钟 | 无 |
+| 3 | P2-04 收窄 3 处宽泛异常 | 30 分钟 | 低 |
+| 4 | P2-05 确认 sw.js 版本策略 | 20 分钟（需读代码） | 低 |
+| 5 | P2-03 拆分 `views.py` | 4–6 小时 | 中 |
+
+### 9. 尚未验证的风险和需确认事项
+
+**需确认**：
+
+1. **NUC 生产环境实时状态未复核** —— 按用户「禁止访问生产环境」要求，本轮未连接。生产 release 版本、服务状态、隧道连接数均沿用历史记录。
+2. **`sw.js` 版本号生成逻辑** —— 未读 `service_worker` 视图实现。
+3. **PostgreSQL 并发行为** —— 本机 SQLite 无法验证行锁、连接池、并发预占。
+4. **真实设备** —— DS3678 扫码枪、ZEBRA ZT610 60×40mm 走纸均未验收。
+5. **Django 5.2.9 → 5.2.19 的差异** —— 未查阅官方 release note，不确定是否有安全修复。
+
+**高概率推断**：
+
+- 生产环境 `DEBUG=0`：`settings.py:24` 默认 `0`，且 `settings_guards.py` 会在非法配置时抛 `ImproperlyConfigured`。
+- 备份可恢复：历史记录显示恢复演练曾成功（本轮未复验）。
+
+### 10. 下一阶段计划
+
+**第二轮（等用户确认后）**：
+
+1. **深挖 `common/views.py`** —— 5084 行逐段审查，重点：超大函数、重复逻辑、异常处理。
+2. **审查 `workflow/services.py`** —— 52 个函数的事务边界与状态机完整性。
+3. **核对 Django 版本差异**，确认 5.2.9 与 5.2.19 之间的安全修复。
+4. **读 `service_worker` 实现**，确认缓存版本策略。
+5. **补充并发测试用例设计**（供有 PostgreSQL 环境时执行）。
+
+**本轮已完成**：环境盘点、全局地图、静态检查、700 项测试、权限冒烟、依赖扫描。
+
+---
+
 ## 2026-11-18 第十轮配置、PWA 与页面权限复核（本轮新增）
 
 ### 1. 版本三态与执行边界

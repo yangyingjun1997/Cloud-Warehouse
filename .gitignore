@@ -39,6 +39,8 @@ backend/.test-tmp/
 pip-metadata-*/
 pip-unpack-*/
 pip-install-*/
+pip-build-tracker-*/
+pip-ephem-wheel-cache-*/
 
 # ---- 工具运行产物 ----
 artifacts/

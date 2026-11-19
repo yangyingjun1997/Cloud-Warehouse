@@ -321,9 +321,75 @@ else
     echo "Offline update requires an existing atomic release with a working virtual environment."
     exit 1
   fi
-  cp -a "$EXISTING_VENV" "$CANDIDATE_DIR/venv"
-  "$CANDIDATE_DIR/venv/bin/python" -c "import corsheaders, django, dotenv, gunicorn, openpyxl, PIL, psycopg, pypinyin, qrcode, rest_framework; print('Copied Python dependencies are available.')"
-  "$CANDIDATE_DIR/venv/bin/python" -m pip check
+  # ── venv 复用前的兼容性闸门（2026-11-19 补）────────────────────────
+  #
+  # 历史坑：离线更新直接 `cp -a` 旧 venv，导致 venv 永远不会重建。
+  # 2026-11-19 实测发现生产 venv 停留在 Python 3.10.12 + Django 5.2.17 +
+  # Pillow 12.3.0，而锁文件要求 Python >= 3.11 的 Pillow 13，累积 65 条已知漏洞。
+  # 根因就是这个分支从不校验 venv 是否仍满足当前锁文件。
+  #
+  # 现在复用前做两项检查，任一不满足就改为用 python3.12 重建：
+  #   1) venv 的解释器版本 >= 3.11（Pillow 13 的硬性要求）
+  #   2) 锁文件声明的 Python 相关包版本与 venv 实际一致
+  REUSE_VENV=1
+  VENV_PY_VERSION="$("$EXISTING_VENV/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo '0.0')"
+  if ! "$EXISTING_VENV/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    echo "现有 venv 的 Python 为 ${VENV_PY_VERSION}，低于锁文件要求的 3.11；将用 python3.12 重建。"
+    REUSE_VENV=0
+  fi
+
+  if [[ $REUSE_VENV -eq 1 ]]; then
+    # 逐项比对锁文件与已装版本，任一处不一致就重建，避免依赖长期漂移。
+    if ! "$EXISTING_VENV/bin/python" - "$CANDIDATE_DIR/backend/requirements-lock.txt" <<'PYCHECK'
+import subprocess, sys
+
+lock_path = sys.argv[1]
+locked = {}
+with open(lock_path, encoding='utf-8') as handle:
+    for line in handle:
+        line = line.strip()
+        if '==' in line and not line.startswith('#'):
+            name, version = line.split('==', 1)
+            locked[name.strip().lower()] = version.strip()
+
+out = subprocess.run(
+    [sys.executable, '-m', 'pip', 'list', '--format=freeze'],
+    capture_output=True, text=True,
+).stdout
+actual = {}
+for line in out.splitlines():
+    if '==' in line:
+        name, version = line.split('==', 1)
+        actual[name.strip().lower()] = version.strip()
+
+mismatch = [f'{k}: 锁={v} 实={actual.get(k)}' for k, v in locked.items() if actual.get(k) != v]
+if mismatch:
+    print('  依赖与锁文件不一致: ' + '; '.join(mismatch[:6]))
+    raise SystemExit(1)
+print('  依赖与锁文件一致')
+PYCHECK
+    then
+      echo "现有 venv 依赖与锁文件不一致；将用 python3.12 重建。"
+      REUSE_VENV=0
+    fi
+  fi
+
+  if [[ $REUSE_VENV -eq 1 ]]; then
+    cp -a "$EXISTING_VENV" "$CANDIDATE_DIR/venv"
+    "$CANDIDATE_DIR/venv/bin/python" -c "import corsheaders, django, dotenv, gunicorn, openpyxl, PIL, psycopg, pypinyin, qrcode, rest_framework; print('Copied Python dependencies are available.')"
+    "$CANDIDATE_DIR/venv/bin/python" -m pip check
+  else
+    # 重建需要能访问 PyPI 或本地 wheel 缓存；离线环境若失败则明确报错，不静默降级。
+    python3.12 -m venv "$CANDIDATE_DIR/venv"
+    "$CANDIDATE_DIR/venv/bin/python" -m pip install --quiet --upgrade pip
+    if ! "$CANDIDATE_DIR/venv/bin/python" -m pip install \
+         -r "$CANDIDATE_DIR/backend/requirements-linux.txt"; then
+      echo "用 python3.12 重建 venv 时安装依赖失败。" >&2
+      echo "请确认该主机可访问 PyPI，或把 wheel 放入本地目录后用 --find-links 安装。" >&2
+      exit 1
+    fi
+    "$CANDIDATE_DIR/venv/bin/python" -m pip check
+  fi
 fi
 
 DB_PASSWORD="$(openssl rand -base64 36 | tr -d '\n')"
