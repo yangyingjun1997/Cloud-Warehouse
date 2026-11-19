@@ -47,13 +47,64 @@ if ! systemctl is-active --quiet "$SERVICE"; then
   sleep 15
 fi
 
-# 2) 读真实连接数
+# 2) 先查 DNS：cloudflared 依赖解析 argotunnel.com 才能连边缘。
+#    2026-11-19 的实际故障是 systemd-resolved 报 "server misbehaving"，
+#    隧道反复崩溃重启（NRestarts=26），metrics 端口时有时无——
+#    旧逻辑「metrics 读不到就跳过」正好漏掉这种场景。所以 DNS 单独判定。
+DNS_OK=1
+if ! timeout 6 getent ahostsv4 region1.v2.argotunnel.com >/dev/null 2>&1; then
+  DNS_OK=0
+  echo "DNS 无法解析 region1.v2.argotunnel.com，判定为异常。"
+fi
+
+# 3) 读真实连接数
 CONNECTIONS="$(read_connections)"
 
+if [[ "$DNS_OK" == "0" ]]; then
+  # DNS 坏了，重启 cloudflared 没用，要重启解析服务并清缓存。
+  echo "尝试修复 DNS（重启 systemd-resolved 并清缓存）。"
+  systemctl restart systemd-resolved || true
+  sleep 4
+  resolvectl flush-caches 2>/dev/null || true
+  sleep 3
+  if timeout 6 getent ahostsv4 region1.v2.argotunnel.com >/dev/null 2>&1; then
+    echo "DNS 已恢复，重启 cloudflared 重新建立连接。"
+    systemctl restart "$SERVICE" || true
+    sleep 18
+    RECOVERED_DNS="$(read_connections)"
+    if [[ "$RECOVERED_DNS" != "-1" && "$RECOVERED_DNS" -gt 0 ]]; then
+      echo "恢复完成：${RECOVERED_DNS} 条连接。"
+      rm -f "$STATE_FILE"
+      notify '售后仓库 DNS 故障已自动修复' "主机：$(hostname)  \n时间：$(date --iso-8601=seconds)  \n检测到无法解析 argotunnel.com，重启 systemd-resolved 后恢复 ${RECOVERED_DNS} 条隧道连接。  \n若反复出现，建议给服务器配置可靠的 DNS 上游或改用固定 resolv.conf。"
+      exit 0
+    fi
+    echo "DNS 已恢复但隧道仍未连上，交回下一次检查。"
+    exit 0
+  fi
+  # DNS 仍不可用：累计失败次数，连续 3 次告警
+  FAILS_DNS=0
+  [[ -f "$STATE_FILE" ]] && FAILS_DNS="$(cat "$STATE_FILE" 2>/dev/null || echo 0)"
+  FAILS_DNS=$((FAILS_DNS + 1))
+  echo "$FAILS_DNS" > "$STATE_FILE"
+  echo "DNS 仍不可用（连续 ${FAILS_DNS} 次）。"
+  if [[ "$FAILS_DNS" -ge 3 ]]; then
+    notify '售后仓库 DNS 持续故障' "主机：$(hostname)  \n时间：$(date --iso-8601=seconds)  \n连续 ${FAILS_DNS} 次无法解析 argotunnel.com，域名访问会中断。  \n\n排查：\n\`resolvectl status\`\n\`systemctl status systemd-resolved\`\n\`getent ahostsv4 region1.v2.argotunnel.com\`\n\n内网 IP 访问不受影响。"
+  fi
+  exit 0
+fi
+
 if [[ "$CONNECTIONS" == "-1" ]]; then
-  # metrics 取不到：可能是进程刚起还没监听，也可能是 metrics 端口没开。
-  # 这种情况不做重启判断——宁可漏判也不能再次误杀。
-  echo "无法读取 metrics 端点（$METRICS_URL），本次跳过自愈判断。"
+  # metrics 取不到但 DNS 正常：可能是进程刚起还没监听。
+  # 仍然计一次失败——连续多次读不到本身就说明进程不稳定。
+  FAILS_M=0
+  [[ -f "$STATE_FILE" ]] && FAILS_M="$(cat "$STATE_FILE" 2>/dev/null || echo 0)"
+  FAILS_M=$((FAILS_M + 1))
+  echo "$FAILS_M" > "$STATE_FILE"
+  echo "无法读取 metrics 端点（连续 ${FAILS_M} 次），本次不重启。"
+  if [[ "$FAILS_M" -ge 3 ]]; then
+    echo "连续 ${FAILS_M} 次读不到 metrics，重启 cloudflared。"
+    systemctl restart "$SERVICE" || true
+  fi
   exit 0
 fi
 
