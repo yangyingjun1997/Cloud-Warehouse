@@ -11,8 +11,10 @@
 
 import re
 
-# 服务账号：不参与强度校验
-EXEMPT_USERNAMES = frozenset({'admin', 'label_print'})
+# 服务账号：不参与强度校验。
+# 注意线上真实账号是 label-printer（连字符）。早期这里写成 label_print（下划线），
+# 与实际账号名不符，豁免从未生效。统一从 system_accounts 取，避免再次写错。
+from apps.accounts.system_accounts import SYSTEM_ACCOUNT_USERNAMES as EXEMPT_USERNAMES
 
 MIN_LENGTH = 8
 MAX_LENGTH = 128

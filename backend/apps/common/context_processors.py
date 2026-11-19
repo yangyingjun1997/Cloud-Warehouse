@@ -83,10 +83,15 @@ def _incomplete_profile_count():
     """
     user_model = get_user_model()
     try:
+        # 用统一的维护账号清单，而不是再写一遍字面量。
+        # 早期这里写的是 'label_print'（下划线），线上实际账号为 'label-printer'
+        # （连字符），导致打印账号一直被算进「缺中文名」的提醒里。
+        from apps.accounts.system_accounts import exclude_system_accounts
+
         return (
-            user_model.objects.filter(is_active=True, first_name='')
-            .exclude(username__in=['admin', 'label_print'])
-            .count()
+            exclude_system_accounts(
+                user_model.objects.filter(is_active=True, first_name='')
+            ).count()
         )
     except Exception:
         return 0
