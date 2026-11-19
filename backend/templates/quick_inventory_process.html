@@ -5,6 +5,23 @@
 {% block crumb %}仓库管理 / 快速出入库{% endblock %}
 
 {% block content %}
+  <style>
+    /* 与新建申请保持一致：用途开关、日期快捷、原因快捷 */
+    .usage-scope-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .usage-scope-option { display: inline-flex; align-items: center; gap: 7px; padding: 9px 13px;
+      color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 6px;
+      font-size: 12px; font-weight: 500; cursor: pointer; }
+    .usage-scope-option:has(input:checked) { color: var(--teal); background: var(--teal-soft); border-color: var(--teal); font-weight: 650; }
+    .usage-scope-option input { width: auto; margin: 0; }
+    .date-quick-picks { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+    .date-quick { padding: 3px 8px; color: var(--teal); background: var(--teal-soft); border: 1px solid transparent;
+      border-radius: 4px; font-size: 10px; cursor: pointer; }
+    .date-quick:hover { border-color: var(--teal); }
+    .reason-quick-picks { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 7px; }
+    .reason-quick { padding: 4px 10px; color: #40585d; background: #f2f5f5; border: 1px solid var(--line);
+      border-radius: 12px; font-size: 11px; cursor: pointer; }
+    .reason-quick:hover, .reason-quick.is-picked { color: var(--teal); background: var(--teal-soft); border-color: var(--teal); }
+  </style>
   <div class="page-heading">
     <div><h1>快速出入库</h1><p class="page-copy">用于现场、电话或钉钉确认后的仓库代办；可批量选择物品，提交后立即生效并生成出入库台账。</p></div>
     <a class="button button-secondary" href="{% url 'warehouse_management' %}">返回仓库管理</a>
@@ -68,25 +85,33 @@
       <div id="selection-warning" class="selection-warning" hidden>红色物品与当前出入库类型不匹配，请移除或切换类型后再执行。</div>
 
       <div class="form-grid request-form-grid">
+        {% comment %}用途开关：与新建申请保持一致。日常出入库不需要挂项目/工单/客户，选了才展开，避免 19 个字段一次性铺满。{% endcomment %}
+        <div class="form-field full">
+          <label>用途 <span class="required">*</span></label>
+          <div class="usage-scope-row">
+            <label class="usage-scope-option"><input type="radio" name="usage_scope" value="daily" {% if request.POST.usage_scope != 'project' %}checked{% endif %}> 日常使用（补发、内部借用、归还等）</label>
+            <label class="usage-scope-option"><input type="radio" name="usage_scope" value="project" {% if request.POST.usage_scope == 'project' %}checked{% endif %}> 项目 / 客户（需要挂项目、工单、客户）</label>
+          </div>
+        </div>
         <div class="form-field" data-types="borrow,issue,sale" data-required-types="borrow,issue,sale"><label for="recipient_select">实际使用人/接收人 <span class="required">*</span></label><select id="recipient_select" name="recipient_id"><option value="">请选择系统内账号</option>{% for person in recipient_choices %}<option value="{{ person.id }}" {% if request.POST.recipient_id == person.id|stringformat:'s' %}selected{% endif %}>{{ person|person_label }}</option>{% endfor %}</select></div>
         {# 勾选框独立成行，避免撑高同一网格行里的姓名/电话字段 #}
         <div class="form-field checkbox-row" data-types="borrow,issue,sale"><label class="checkbox-inline"><input type="checkbox" id="recipient_external" name="is_external_recipient" value="1" {% if request.POST.is_external_recipient %}checked{% endif %}> 接收人不在系统内（改为手工填写姓名）</label></div>
         <div class="form-field" data-types="borrow,issue,sale" data-required-types="borrow,issue,sale" id="recipient-name-field" hidden><label for="recipient_name">接收人姓名 <span class="required">*</span></label><input id="recipient_name" name="recipient_name" value="{{ request.POST.recipient_name }}" maxlength="120"></div>
         <div class="form-field" data-types="borrow,issue,sale" data-required-types="borrow,issue,sale"><label for="recipient_phone">联系电话 <span class="required">*</span></label><input id="recipient_phone" name="recipient_phone" type="tel" value="{{ request.POST.recipient_phone }}" maxlength="32"></div>
-        <div class="form-field" data-types="borrow,issue,sale"><label for="customer_ref">客户资料</label><select id="customer_ref" name="customer_ref"><option value="">未选择客户资料</option>{% for customer in customers %}<option value="{{ customer.id }}" data-name="{{ customer.name }}" {% if request.POST.customer_ref == customer.id|stringformat:'s' %}selected{% endif %}>{{ customer.name }}（{{ customer.code }}）</option>{% endfor %}</select></div>
-        <div class="form-field" data-types="borrow,issue,sale"><label for="recipient_company">使用部门/客户单位</label><input id="recipient_company" name="recipient_company" value="{{ request.POST.recipient_company }}" maxlength="120" placeholder="未建档时可手工填写"></div>
-        <div class="form-field" data-types="borrow,issue,sale" data-required-types="borrow,issue,sale"><label for="usage_location">使用/交付地点 <span class="required">*</span></label><input id="usage_location" name="usage_location" value="{{ request.POST.usage_location }}" maxlength="160"></div>
-        <div class="form-field" data-types="borrow" data-required-types="borrow"><label for="expected_return_date">预计归还日期 <span class="required">*</span></label><input id="expected_return_date" name="expected_return_date" type="date" value="{{ default_expected_return_date }}"></div>
+        <div class="form-field" data-types="borrow,issue,sale" data-required-types="borrow,issue,sale"><label for="usage_location">使用/交付地点 <span class="required">*</span></label><input id="usage_location" name="usage_location" list="quick-usage-location-options" value="{{ request.POST.usage_location }}" maxlength="160" placeholder="如：售后仓库、客户现场"><datalist id="quick-usage-location-options"><option value="售后仓库"><option value="客户现场"><option value="办公室"><option value="实验室"></datalist></div>
+        <div class="form-field" data-types="borrow" data-required-types="borrow"><label for="expected_return_date">预计归还日期 <span class="required">*</span></label><input id="expected_return_date" name="expected_return_date" type="date" value="{{ default_expected_return_date }}"><div class="date-quick-picks"><button type="button" class="date-quick" data-days="7">+7 天</button><button type="button" class="date-quick" data-days="15">+15 天</button><button type="button" class="date-quick" data-days="30">+30 天</button></div></div>
         <div class="form-field" data-types="return,transfer" data-required-types="return,transfer"><label for="target_warehouse">目标仓库 <span class="required">*</span></label><select id="target_warehouse" name="target_warehouse"><option value="">请选择仓库</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}" {% if request.POST.target_warehouse == warehouse.id|stringformat:'s' %}selected{% endif %}>{{ warehouse.name }}</option>{% endfor %}</select></div>
         <div class="form-field" data-types="return,transfer" data-required-types="return,transfer"><label for="target_location">目标库位 <span class="required">*</span></label><select id="target_location" name="target_location"><option value="">请选择库位</option>{% for location in locations %}<option value="{{ location.id }}" data-warehouse="{{ location.warehouse_id }}" {% if request.POST.target_location == location.id|stringformat:'s' %}selected{% endif %}>{{ location.warehouse.name }} / {{ location.code }} {{ location.name }}</option>{% endfor %}</select></div>
-        <div class="form-field"><label for="project_ref">项目资料</label><select id="project_ref" name="project_ref"><option value="">未选择项目资料</option>{% for project in projects %}<option value="{{ project.id }}" data-code="{{ project.code }}" data-customer="{{ project.customer_id|default:'' }}" {% if request.POST.project_ref == project.id|stringformat:'s' %}selected{% endif %}>{{ project.name }}（{{ project.code }}）</option>{% endfor %}</select></div>
-        <div class="form-field"><label for="project_code">项目编号</label><input id="project_code" name="project_code" value="{{ request.POST.project_code }}" maxlength="80" placeholder="未建档时可手工填写"></div>
-        <div class="form-field"><label for="work_order_ref">工单资料</label><select id="work_order_ref" name="work_order_ref"><option value="">未选择工单资料</option>{% for work_order in work_orders %}<option value="{{ work_order.id }}" data-code="{{ work_order.code }}" data-project="{{ work_order.project_id|default:'' }}" data-customer="{{ work_order.customer_id|default:'' }}" {% if request.POST.work_order_ref == work_order.id|stringformat:'s' %}selected{% endif %}>{{ work_order.name }}（{{ work_order.code }}）</option>{% endfor %}</select></div>
-        <div class="form-field"><label for="work_order_no">工单编号</label><input id="work_order_no" name="work_order_no" value="{{ request.POST.work_order_no }}" maxlength="80" placeholder="未建档时可手工填写"></div>
+        <div class="form-field usage-project-field" data-scope="project" data-types="borrow,issue,sale" hidden><label for="customer_ref">客户资料</label><select id="customer_ref" name="customer_ref"><option value="">未选择客户资料</option>{% for customer in customers %}<option value="{{ customer.id }}" data-name="{{ customer.name }}" {% if request.POST.customer_ref == customer.id|stringformat:'s' %}selected{% endif %}>{{ customer.name }}（{{ customer.code }}）</option>{% endfor %}</select></div>
+        <div class="form-field usage-project-field" data-scope="project" data-types="borrow,issue,sale" hidden><label for="recipient_company">使用部门/客户单位</label><input id="recipient_company" name="recipient_company" value="{{ request.POST.recipient_company }}" maxlength="120" placeholder="未建档时可手工填写"></div>
+        <div class="form-field usage-project-field" data-scope="project" hidden><label for="project_ref">项目资料</label><select id="project_ref" name="project_ref"><option value="">未选择项目资料</option>{% for project in projects %}<option value="{{ project.id }}" data-code="{{ project.code }}" data-customer="{{ project.customer_id|default:'' }}" {% if request.POST.project_ref == project.id|stringformat:'s' %}selected{% endif %}>{{ project.name }}（{{ project.code }}）</option>{% endfor %}</select></div>
+        <div class="form-field usage-project-field" data-scope="project" hidden><label for="project_code">项目编号</label><input id="project_code" name="project_code" value="{{ request.POST.project_code }}" maxlength="80" placeholder="未建档时可手工填写"></div>
+        <div class="form-field usage-project-field" data-scope="project" hidden><label for="work_order_ref">工单资料</label><select id="work_order_ref" name="work_order_ref"><option value="">未选择工单资料</option>{% for work_order in work_orders %}<option value="{{ work_order.id }}" data-code="{{ work_order.code }}" data-project="{{ work_order.project_id|default:'' }}" data-customer="{{ work_order.customer_id|default:'' }}" {% if request.POST.work_order_ref == work_order.id|stringformat:'s' %}selected{% endif %}>{{ work_order.name }}（{{ work_order.code }}）</option>{% endfor %}</select></div>
+        <div class="form-field usage-project-field" data-scope="project" hidden><label for="work_order_no">工单编号</label><input id="work_order_no" name="work_order_no" value="{{ request.POST.work_order_no }}" maxlength="80" placeholder="未建档时可手工填写"></div>
         <div class="form-field"><label for="transaction_date">出入库日期 <span class="required">*</span></label><input id="transaction_date" name="transaction_date" type="date" value="{{ default_transaction_date }}" required></div>
         <div class="form-field"><label for="contact_source">沟通来源 <span class="required">*</span></label><select id="contact_source" name="contact_source" required><option value="现场" {% if request.POST.contact_source == '现场' %}selected{% endif %}>现场</option><option value="电话" {% if request.POST.contact_source == '电话' %}selected{% endif %}>电话</option><option value="钉钉" {% if request.POST.contact_source == '钉钉' %}selected{% endif %}>钉钉</option><option value="售后工单" {% if request.POST.contact_source == '售后工单' %}selected{% endif %}>售后工单</option><option value="其他" {% if request.POST.contact_source == '其他' %}selected{% endif %}>其他</option></select></div>
         <div class="form-field"><label for="comment">执行备注</label><input id="comment" name="comment" value="{{ request.POST.comment }}" maxlength="255"></div>
-        <div class="form-field full"><label for="reason"><span data-reason-label>处理原因</span> <span class="required">*</span></label><textarea id="reason" name="reason" required placeholder="例如：客户现场紧急更换、电话确认补发">{{ request.POST.reason }}</textarea></div>
+        <div class="form-field full"><label for="reason"><span data-reason-label>处理原因</span> <span class="required">*</span></label><div class="reason-quick-picks">{% for preset in quick_reason_presets %}<button type="button" class="reason-quick" data-reason="{{ preset }}">{{ preset }}</button>{% endfor %}</div><textarea id="reason" name="reason" required placeholder="选择上方快捷原因，或直接填写">{{ request.POST.reason }}</textarea></div>
       </div>
       <div class="form-actions"><a class="button button-secondary" href="{% url 'warehouse_management' %}">取消</a><button class="button button-primary" name="action" value="queue_quick_process" type="submit">确认执行</button></div>
     </form>
@@ -372,6 +397,52 @@
       // 「接收人不在系统内」勾选变化统一走 refresh()，
       // 保证姓名框与下拉框的显示/禁用只由一处逻辑决定。
       if (externalBox) externalBox.addEventListener('change', refresh);
+
+      // ── 用途开关：日常只留基础字段，项目/客户才展开客户与项目信息 ──
+      const scopeRadios = document.querySelectorAll('input[name="usage_scope"]');
+      const projectFields = document.querySelectorAll('.usage-project-field');
+      const syncScope = () => {
+        const picked = document.querySelector('input[name="usage_scope"]:checked');
+        const isProject = picked?.value === 'project';
+        projectFields.forEach((field) => {
+          field.hidden = !isProject;
+          field.querySelectorAll('input, select, textarea').forEach((input) => {
+            input.disabled = !isProject;
+          });
+        });
+      };
+      scopeRadios.forEach((radio) => radio.addEventListener('change', syncScope));
+      syncScope();
+
+      // ── 预计归还日期快捷按钮 ──
+      const returnDateInput = document.getElementById('expected_return_date');
+      const txDateInput = document.getElementById('transaction_date');
+      document.querySelectorAll('.date-quick').forEach((button) => {
+        button.addEventListener('click', () => {
+          if (!returnDateInput) return;
+          const base = txDateInput?.value ? new Date(txDateInput.value) : new Date();
+          base.setDate(base.getDate() + Number(button.dataset.days || 7));
+          const pad = (n) => String(n).padStart(2, '0');
+          returnDateInput.value = `${base.getFullYear()}-${pad(base.getMonth() + 1)}-${pad(base.getDate())}`;
+        });
+      });
+
+      // ── 处理原因快捷选项 ──
+      const reasonInput = document.getElementById('reason');
+      document.querySelectorAll('.reason-quick').forEach((button) => {
+        button.addEventListener('click', () => {
+          if (!reasonInput) return;
+          const value = button.dataset.reason || '';
+          if (reasonInput.value.trim() === value) {
+            reasonInput.value = '';
+            button.classList.remove('is-picked');
+          } else {
+            reasonInput.value = value;
+            document.querySelectorAll('.reason-quick').forEach((b) => b.classList.remove('is-picked'));
+            button.classList.add('is-picked');
+          }
+        });
+      });
       queryInput.addEventListener('keydown', async (event) => {
         if (event.key !== 'Enter' && event.key !== 'Tab') return;
         if (event.key === 'Tab' && !queryInput.value.trim()) return;

@@ -4092,6 +4092,14 @@ def quick_inventory_process(request):
             customer_ref = _get_by_uuid(Customer, request.POST.get('customer_ref'))
             project_ref = _get_by_uuid(Project, request.POST.get('project_ref'))
             work_order_ref = _get_by_uuid(WorkOrder, request.POST.get('work_order_ref'))
+            # 用途为「日常」时前端会禁用项目相关字段，浏览器不提交这些值。
+            # 这里再兜一层：即使有人手工构造请求，也不让日常单挂上项目/工单/客户，
+            # 否则按项目统计时会把普通补发算进项目。
+            _is_project_scope = request.POST.get('usage_scope', 'daily') == 'project'
+            if not _is_project_scope:
+                customer_ref = None
+                project_ref = None
+                work_order_ref = None
             if request_type not in dict(WorkflowRequest.RequestType.choices):
                 raise WorkflowError('请选择有效的出入库类型。')
             if request_type == WorkflowRequest.RequestType.PURCHASE_RECEIPT:
@@ -4158,8 +4166,9 @@ def quick_inventory_process(request):
                     recipient_company=request.POST.get('recipient_company', '').strip(),
                     recipient_phone=recipient_phone, usage_location=usage_location,
                     customer_ref=customer_ref, project_ref=project_ref, work_order_ref=work_order_ref,
-                    project_code=request.POST.get('project_code', '').strip(),
-                    work_order_no=request.POST.get('work_order_no', '').strip(),
+                    # 与上面一致：日常用途不保留手填的项目/工单编号
+                    project_code=request.POST.get('project_code', '').strip() if _is_project_scope else '',
+                    work_order_no=request.POST.get('work_order_no', '').strip() if _is_project_scope else '',
                     application_date=transaction_date,
                     expected_return_date=expected_return_date,
                     transaction_date=transaction_date,
@@ -4236,6 +4245,12 @@ def quick_inventory_process(request):
         'recipient_choices': exclude_system_accounts(
             User.objects.filter(is_active=True)
         ).order_by('first_name', 'username'),
+        # 快速出入库的处理原因快捷选项：偏向「补发/更换/临时借出」这类现场场景，
+        # 与新建申请的申请类短语区分开。
+        'quick_reason_presets': (
+            '客户现场紧急更换', '电话确认补发', '现场临时借用',
+            '测试验证', '内部调拨', '归还入库',
+        ),
         'user_can_use_admin': is_system_administrator(request.user), 'user_is_operator': True,
         'user_is_system_admin': is_system_administrator(request.user),
         'user_role_label': _user_role_label(request.user, True, is_system_administrator(request.user)),
