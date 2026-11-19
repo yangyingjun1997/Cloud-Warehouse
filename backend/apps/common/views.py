@@ -3959,8 +3959,23 @@ def _filter_request_queryset(queryset, params):
 
 @login_required
 def request_list(request):
+    # 默认只看自己的申请（隐私）。管理员可通过 scope=all 查看全部，
+    # 用于代查历史、处理他人提交的单据；接收人也应能看到自己名下的单。
+    is_admin = is_system_administrator(request.user)
+    scope = request.GET.get('scope', '').strip()
+    show_all = is_admin and scope == 'all'
+
+    base = WorkflowRequest.objects.all()
+    if show_all:
+        queryset = base
+    else:
+        # 申请人本人 + 作为接收人被指定的（跨人代提时仍能追溯）。
+        queryset = base.filter(
+            Q(applicant=request.user) | Q(recipient=request.user),
+        ).filter(is_hidden_by_applicant=False)
+
     requests = _filter_request_queryset(
-        WorkflowRequest.objects.filter(applicant=request.user, is_hidden_by_applicant=False),
+        queryset,
         request.GET,
     ).prefetch_related('lines__asset', 'lines__stock_item').order_by('-application_date', '-created_at')
     return render(request, 'request_list.html', {
@@ -3975,6 +3990,9 @@ def request_list(request):
         'application_end': request.GET.get('application_end', ''),
         'return_start': request.GET.get('return_start', ''),
         'return_end': request.GET.get('return_end', ''),
+        # 管理员的全量视图开关
+        'show_all_requests': show_all,
+        'can_view_all_requests': is_admin,
         'request_types': [choice for choice in WorkflowRequest.RequestType.choices if choice[0] != WorkflowRequest.RequestType.PURCHASE_RECEIPT],
         'status_choices': WorkflowRequest.Status.choices,
         'warehouses': Warehouse.objects.filter(is_active=True).order_by('name'),
@@ -4569,20 +4587,30 @@ def request_create(request, request_id=None):
         reason = request.POST.get('reason', '').strip()
         recipient_name = request.POST.get('recipient_name', '').strip()
         is_external_recipient = request.POST.get('is_external_recipient') == '1'
-        # 接收人二选一：系统内账号走外键，外部人员只留姓名并打标记。
-        recipient_user = None
-        if not is_external_recipient:
-            recipient_user = User.objects.filter(
-                pk=request.POST.get('recipient_id') or None, is_active=True,
-            ).first()
-            if recipient_user:
-                # 姓名以账号为准，避免 recipient_name 里存成拼音或与账号脱节。
-                recipient_name = recipient_user.get_full_name().strip() or recipient_user.get_username()
-            elif recipient_name:
-                # 兼容直接填写姓名的调用（含历史表单与 API）：视为非系统用户。
-                is_external_recipient = True
-        recipient_company = request.POST.get('recipient_company', '').strip()
-        recipient_phone = request.POST.get('recipient_phone', '').strip()
+        # ── 接收人简化为「申请人本人」（2026-11-19 与用户确认）──────────
+        # 员工自助申请只允许给自己提，接收人恒为申请人。
+        # 原因：原来的「代他人申请」引入了三处不一致——
+        #   1) 出库时 current_holder 记的是 applicant（services.py:767），
+        #      接收人填 B 结果资产登记在 A 名下；
+        #   2) 外部接收人的判定依赖 is_quick_process，普通申请填了外部姓名也走不进去；
+        #   3) 申请列表只按 applicant 过滤，接收人 B 看不到别人替他提的单。
+        # 转手场景改为「库管先归还再借出」，不再需要代申请。
+        # 需要指定实际使用人时统一走快速出入库（库管有该权限）。
+        recipient_user = request.user
+        recipient_name = request.user.get_full_name().strip() or request.user.get_username()
+        is_external_recipient = False
+        recipient_company = ''
+        # 电话优先取账号资料（UserProfile.phone）；账号没登记时允许沿用表单里填的值，
+        # 这样老表单、离线队列和 API 调用仍然可用。注意 phone 在 UserProfile 上而不是 User 上。
+        _profile = getattr(request.user, 'profile', None)
+        recipient_phone = (
+            (getattr(_profile, 'phone', '') or '').strip()
+            or request.POST.get('recipient_phone', '').strip()
+        )
+        # 归还单不记录接收人（资产是回到仓库，不是交给某人），下方赋值处同样会清空。
+        if request_type == WorkflowRequest.RequestType.RETURN:
+            recipient_user = None
+            recipient_name = ''
         usage_location = request.POST.get('usage_location', '').strip()
         application_date_text = request.POST.get('application_date', '').strip()
         expected_return_text = request.POST.get('expected_return_date', '').strip()
@@ -4666,8 +4694,12 @@ def request_create(request, request_id=None):
                 }:
                     if not recipient_name:
                         raise WorkflowError('请填写实际使用人或接收人。')
+                    # 接收人恒为申请人本人后，联系电话优先取账号资料；
+                    # 账号没登记时页面会提示去补，也允许表单临时带上（兼容旧调用）。
                     if not recipient_phone:
-                        raise WorkflowError('请填写联系电话。')
+                        raise WorkflowError(
+                            '缺少联系电话。请先在「账号资料」登记手机号，或通过快速出入库办理。'
+                        )
                     if not usage_location:
                         raise WorkflowError('请填写使用地点。')
                 if request_type == WorkflowRequest.RequestType.BORROW and not expected_return_date:

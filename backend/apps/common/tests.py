@@ -886,6 +886,11 @@ class DashboardAndAdminTests(TestCase):
         self.assertContains(request_response, 'request-row is-closed')
 
     def test_request_form_requires_traceability_fields(self):
+        """缺少可追溯信息时不允许提交。
+
+        接收人简化为「申请人本人」后（2026-11-19），不再有「请填写实际使用人」的
+        校验；改为校验联系电话与使用地点。这里去掉电话与地点，验证仍被拦下。
+        """
         self.client.force_login(self.employee)
         response = self.client.post('/requests/new/', {
             'request_type': WorkflowRequest.RequestType.ISSUE,
@@ -895,7 +900,12 @@ class DashboardAndAdminTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, '请填写实际使用人或接收人。')
+        # 应提示缺少的是联系信息或使用地点之一，而不是接收人
+        content = response.content.decode('utf-8')
+        self.assertTrue(
+            '联系电话' in content or '使用地点' in content,
+            '缺少电话/地点时应有明确提示',
+        )
         self.assertFalse(WorkflowRequest.objects.filter(reason='缺少交接信息的测试').exists())
 
     def test_employee_can_save_and_continue_request_draft(self):

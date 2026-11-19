@@ -98,11 +98,24 @@ class RecipientSelectionTests(TestCase):
         self.colleague.save(update_fields=['first_name'])
         self.client.force_login(self.employee)
 
-    def test_request_page_lists_system_accounts(self):
+    def test_request_page_fixes_recipient_to_applicant(self):
+        """新建申请只允许给自己提，不再提供接收人选择（2026-11-19 简化）。
+
+        原实现提供「接收人下拉 + 外部人员勾选框」，但出库时 current_holder
+        始终记 applicant，接收人填他人会造成资产登记错人、且对方看不到单据。
+        现在统一为「接收人=申请人」，需要指定他人时走快速出入库。
+        """
         response = self.client.get('/requests/new/')
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'recipient_id')
-        self.assertContains(response, '张三（zhangsan）')
+        # 接收人选择控件必须消失
+        self.assertNotContains(response, 'id="recipient_select"')
+        self.assertNotContains(response, 'id="recipient_external"')
+        # 但仍要展示「实际使用人/接收人」并固定为本人
+        self.assertContains(response, '实际使用人/接收人')
+        self.assertContains(response, '申请员工')
+        # 模型层仍保留 recipient 字段（历史数据与快速出入库仍在使用），
+        # 这里只验证页面不再暴露选择入口。
+        self.assertTrue(hasattr(WorkflowRequest, 'recipient'))
 
     def test_model_supports_external_recipient_flag(self):
         request = WorkflowRequest.objects.create(

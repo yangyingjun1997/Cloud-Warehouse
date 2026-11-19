@@ -1,93 +1,85 @@
-"""回归：新建申请页不能同时显示「接收人下拉框」和「接收人姓名框」。
+"""新建申请页的接收人字段回归。
 
-历史 bug：`recipient-name-field` 同时带 `data-types` 和 `hidden`。
-`refresh()` 遍历 `[data-types]` 时无条件执行 `field.hidden = !visible`，
-把「外部接收人」勾选状态覆盖掉。初始加载时 refresh 还没跑，所以看起来正常；
-一旦选中物品触发 refresh，姓名框就无条件冒出来，和下拉框重复。
+设计变更（2026-11-19 与用户确认）：
+员工自助申请只允许给自己提，接收人恒为申请人。原本的「接收人下拉 + 外部人员
+勾选框 + 手工姓名框」三件套已移除，替换为只读展示。
+
+此文件早期版本验证的是「勾选框控制姓名框显隐」，那套逻辑随简化一并删除。
+现在改为验证：控件确实消失、页面仍展示本人信息、并给出改走快速出入库的提示。
 """
-
-import re
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.test import TestCase
 
+from apps.accounts.models import UserProfile
+
 User = get_user_model()
 
 
-class RecipientFieldVisibilityTests(TestCase):
+class RecipientFieldRemovedTests(TestCase):
     def setUp(self):
-        admin = User.objects.create_user(username='recipient_admin', password='Pw#2026aa')
-        admin.is_staff = True
-        admin.groups.add(Group.objects.get_or_create(name='warehouse_admin')[0])
-        self.client.force_login(admin)
+        self.employee = User.objects.create_user(
+            username='recipient_probe', password='Pw#2026aa', first_name='员工乙',
+        )
+        UserProfile.objects.create(user=self.employee, phone='13900139000')
+        self.client.force_login(self.employee)
 
     def _page(self):
         response = self.client.get('/requests/new/')
         self.assertEqual(response.status_code, 200)
         return response.content.decode('utf-8')
 
-    def test_name_field_hidden_by_default(self):
+    def test_recipient_controls_removed(self):
+        """下拉框、外部勾选框、手工姓名框都必须不再出现。"""
         html = self._page()
-        match = re.search(r'<div[^>]*id="recipient-name-field"[^>]*>', html)
-        self.assertIsNotNone(match, '未渲染接收人姓名框')
-        self.assertIn('hidden', match.group(0), '姓名框模板必须默认隐藏')
+        for element_id in (
+            'id="recipient_select"',
+            'id="recipient_external"',
+            'id="recipient-name-field"',
+            'id="recipient_name"',
+        ):
+            with self.subTest(element=element_id):
+                self.assertNotIn(element_id, html)
 
-    def test_single_source_of_visibility(self):
-        """不能再有两份互相覆盖的 show/hide 逻辑。"""
+    def test_shows_applicant_as_recipient_readonly(self):
+        """仍要展示「实际使用人/接收人」，但固定为申请人本人且只读。"""
         html = self._page()
-        # 旧的末端 IIFE 用 nameField.hidden 直接控制，必须已移除
-        self.assertNotIn('nameField.hidden', html,
-                         '仍有独立逻辑直接改 nameField.hidden，会与 refresh() 冲突')
-        # 统一由 refresh 里的 recipientNameField 判断负责
-        self.assertIn('recipientNameField', html)
-        self.assertIn('field === recipientNameField', html)
+        self.assertIn('实际使用人/接收人', html)
+        self.assertIn('员工乙', html)
 
-    def test_refresh_respects_external_checkbox(self):
+    def test_shows_phone_from_profile(self):
+        """电话取自 UserProfile，不是 User。"""
         html = self._page()
-        # refresh 必须先读勾选状态，再决定姓名框是否可见
-        self.assertIn('wantsExternalRecipient', html)
-        self.assertIn('recipientExternal', html)
+        self.assertIn('13900139000', html)
 
-    def test_checkbox_triggers_refresh(self):
+    def test_hints_quick_process_for_others(self):
+        """需要替他人或客户办理时，页面要指向快速出入库。"""
         html = self._page()
-        # 勾选变化必须触发统一刷新，而不是走另一套逻辑
-        self.assertIn('warehouse:recipient-changed', html)
-        self.assertIn("recipientExternal.addEventListener('change', refresh)", html)
+        self.assertIn('快速出入库', html)
 
-    def test_mutually_exclusive_required(self):
-        """外部接收人时禁用下拉框；否则禁用姓名框。两者不能同时 required。"""
+    def test_no_stale_recipient_js(self):
+        """清理后不应残留指向已删除元素的脚本引用。"""
         html = self._page()
-        self.assertIn('recipientSelect.disabled', html)
-        self.assertIn('recipientSelect.required', html)
-        self.assertIn('recipientNameInput.required', html)
+        for token in (
+            'recipientExternal',
+            'recipientNameField',
+            'warehouse:recipient-changed',
+        ):
+            with self.subTest(token=token):
+                self.assertNotIn(token, html)
 
-    def test_only_one_recipient_selector_element(self):
-        """页面上只能有一个接收人下拉框和一个姓名输入框。"""
-        html = self._page()
-        self.assertEqual(html.count('id="recipient_select"'), 1)
-        self.assertEqual(html.count('id="recipient_name"'), 1)
 
-    def test_external_checkbox_is_own_row(self):
-        """勾选框必须独立成行。
+class RecipientModelStillSupportedTests(TestCase):
+    """模型层保留 recipient 字段：快速出入库与历史数据仍在使用。"""
 
-        历史问题：把 checkbox-inline 塞进带 select 的 form-field 后，该网格行
-        多出一行高度，同一行的「接收人姓名」「联系电话」被一起撑大，
-        表现为字段高度不一致、画幅不协调。
-        """
-        html = self._page()
-        self.assertIn('form-field checkbox-row', html)
+    def test_model_keeps_recipient_fields(self):
+        from apps.workflow.models import WorkflowRequest
 
-        # 接收人 select 所在的 form-field 内不能再出现勾选框
-        match = re.search(
-            r'<div class="form-field"[^>]*>(?:(?!</div>).)*?id="recipient_select"(?:(?!</div>).)*?</div>',
-            html, re.S,
-        )
-        self.assertIsNotNone(match, '未找到接收人下拉框容器')
-        self.assertNotIn('checkbox-inline', match.group(0),
-                         '勾选框仍在接收人 select 的 form-field 内，会撑高该行')
-
-    def test_checkbox_row_style_defined(self):
-        """校验行样式必须存在，否则独立出来仍然是普通 form-field 高度。"""
-        html = self._page()
-        self.assertIn('form-field.checkbox-row', html)
+        for field in ('recipient', 'recipient_name', 'recipient_phone',
+                      'recipient_company', 'is_external_recipient'):
+            with self.subTest(field=field):
+                self.assertTrue(
+                    any(f.name == field for f in WorkflowRequest._meta.get_fields()),
+                    f'模型应保留 {field} 字段（快速出入库依赖）',
+                )

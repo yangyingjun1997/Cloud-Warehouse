@@ -474,6 +474,13 @@ def submit_request(request_obj: WorkflowRequest, actor, comment=''):
             raise WorkflowError(f'资产 {line.asset.asset_code} 不在库，无法调拨。')
         if line.asset and request_obj.request_type in {WorkflowRequest.RequestType.REPAIR, WorkflowRequest.RequestType.DAMAGE, WorkflowRequest.RequestType.RETURN_TO_VENDOR, WorkflowRequest.RequestType.SCRAP} and line.asset.status in TERMINAL_ASSET_STATUSES:
             raise WorkflowError(f'资产 {line.asset.asset_code} 已处于最终状态，不能重复处理。')
+        # 维修要求资产已收回在库：否则会出现「状态是维修中，东西还在员工手上」的矛盾，
+        # 维修完成后也无从判断该回到哪个库位。库管可直接用快速出入库处理在途设备。
+        if line.asset and request_obj.request_type == WorkflowRequest.RequestType.REPAIR and line.asset.status != Asset.Status.IN_STOCK:
+            raise WorkflowError(
+                f'资产 {line.asset.asset_code} 当前为{line.asset.get_status_display()}，'
+                '维修申请要求资产已归还入库。请先办理归还，或由库管在快速出入库中处理。'
+            )
         if (
             line.stock_item
             and request_obj.request_type == WorkflowRequest.RequestType.RETURN
