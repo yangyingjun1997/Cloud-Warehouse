@@ -765,26 +765,55 @@ def _process_asset(request_obj, line, actor, comment, *, return_received=True):
             )
         ):
             raise WorkflowError(f'资产 {asset.asset_code or asset.name} 已不在库，无法出库。')
+        # ── 持有人归属（2026-11-20 修复）──────────────────────────────
+        #
+        # 旧逻辑：只要 is_quick_process 且填了接收人文本，就无条件把
+        # current_holder 置空、把接收人存成 external_holder_* 文本。
+        # 后果：库管代借时即使「接收人」选的是系统内账号，也会走外部文本分支，
+        # 资产 current_holder 变成空——实际借用人既看不到设备，也查不到单据，
+        # 系统里没有任何人能追溯设备去向（实测确认）。
+        #
+        # 新逻辑按「接收人是什么」分流，而不是按「是不是快速出入库」分流：
+        #   1) 有 recipient 外键（系统账号）→ current_holder 落外键
+        #   2) 只有文本（外部客户/工程师）→ current_holder 置空，存 external_*
+        #   3) 都没有（回仓类/处置类，或申请人是实际使用人）→ 落申请人
+        #
+        # 注意：只有「真正出库到人」的类型才设持有人；归还/调拨/维修/报损/
+        # 报废/退供应商不设，避免把报废设备挂到某个人名下。
+        _HOLDER_TYPES = {
+            WorkflowRequest.RequestType.BORROW,
+            WorkflowRequest.RequestType.ISSUE,
+            WorkflowRequest.RequestType.SALE,
+        }
+        if request_obj.request_type in _HOLDER_TYPES:
+            if request_obj.recipient_id:
+                # 系统账号接收人：落外键，让「我的借用」和资产详情都能解析到人
+                asset.current_holder = request_obj.recipient
+                asset.department = getattr(
+                    getattr(request_obj.recipient, 'profile', None), 'department', None,
+                )
+                asset.external_holder_name = asset.external_holder_company = asset.external_holder_phone = ''
+            elif request_obj.recipient_name or request_obj.recipient_company or request_obj.recipient_phone:
+                # 外部接收人：没有账号，只能留文本
+                asset.current_holder, asset.department = None, None
+                asset.external_holder_name, asset.external_holder_company, asset.external_holder_phone = _recipient_snapshot(request_obj)
+            else:
+                # 没指定接收人：默认就是申请人本人
+                asset.current_holder, asset.department = request_obj.applicant, request_obj.department
+                asset.external_holder_name = asset.external_holder_company = asset.external_holder_phone = ''
+
+        # 售出时若「持有人单位」精确匹配到已有客户档案，顺手把资产的客户关联补上，
+        # 便于将来按客户维度查设备去向。匹配不到或同名多条都不关联（只保留文本），
+        # 避免自动建档产出重复脏数据——这是与用户确认过的取舍。
         if (
             request_obj.request_type == WorkflowRequest.RequestType.SALE
-            or request_obj.is_quick_process
-        ) and (request_obj.recipient_name or request_obj.recipient_company or request_obj.recipient_phone):
-            asset.current_holder, asset.department = None, None
-            asset.external_holder_name, asset.external_holder_company, asset.external_holder_phone = _recipient_snapshot(request_obj)
-            # 售出时若「持有人单位」精确匹配到已有客户档案，顺手把资产的客户关联补上，
-            # 便于将来按客户维度查设备去向。匹配不到或同名多条都不关联（只保留文本），
-            # 避免自动建档产出重复脏数据——这是与用户确认过的取舍。
-            if (
-                request_obj.request_type == WorkflowRequest.RequestType.SALE
-                and not asset.customer_ref_id
-                and asset.external_holder_company
-            ):
-                matched, status = match_customer_by_name(asset.external_holder_company)
+            and not asset.customer_ref_id
+        ):
+            _company = asset.external_holder_company or request_obj.recipient_company
+            if _company:
+                matched, status = match_customer_by_name(_company)
                 if matched is not None:
                     asset.customer_ref = matched
-        else:
-            asset.current_holder, asset.department = request_obj.applicant, request_obj.department
-            asset.external_holder_name = asset.external_holder_company = asset.external_holder_phone = ''
         asset.status = {WorkflowRequest.RequestType.BORROW: Asset.Status.BORROWED, WorkflowRequest.RequestType.ISSUE: Asset.Status.ISSUED, WorkflowRequest.RequestType.SALE: Asset.Status.SOLD}[request_obj.request_type]
     elif request_obj.request_type == WorkflowRequest.RequestType.RETURN:
         if asset.status not in RETURNABLE_ASSET_STATUSES:

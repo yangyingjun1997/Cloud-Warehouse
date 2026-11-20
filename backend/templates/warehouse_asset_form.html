@@ -30,7 +30,7 @@
     <div class="cell"><span>质量 / 处置</span><strong>{{ asset.get_quality_state_display|default:'—' }}{% if asset.disposition_state %} / {{ asset.get_disposition_state_display }}{% endif %}</strong></div>
     <div class="cell cell-holder">
       <span>当前持有人</span>
-      <strong>{% if asset.current_holder %}{{ asset.current_holder.get_full_name|default:asset.current_holder.username }}（系统账号：{{ asset.current_holder.username }}）{% elif asset.external_holder_name %}{{ asset.external_holder_name }}{% if asset.external_holder_company %}（{{ asset.external_holder_company }}）{% endif %}{% if asset.external_holder_phone %} · {{ asset.external_holder_phone }}{% endif %}{% else %}无{% endif %}</strong>
+      <strong>{% if asset.current_holder %}{{ asset.current_holder.get_full_name|default:asset.current_holder.username }}（系统账号：{{ asset.current_holder.username }}）{% elif asset.external_holder_name %}{{ asset.external_holder_name }}{% if asset.external_holder_company %}（{{ asset.external_holder_company }}）{% endif %}{% if asset.external_holder_phone %} · {{ asset.external_holder_phone }}{% endif %}{% else %}无{% endif %} <a class="text-action" href="{% url 'asset_lifecycle' asset.id %}">详情与关联单据</a></strong>
       <div class="holder-actions">
         {% if holder_registrable and can_correct_state %}
           <button type="button" class="button button-secondary" id="holder-toggle">{% if asset.current_holder or asset.external_holder_name %}修改持有人{% else %}登记持有人{% endif %}</button>

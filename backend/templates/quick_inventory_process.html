@@ -93,12 +93,12 @@
             <label class="usage-scope-option"><input type="radio" name="usage_scope" value="project" {% if request.POST.usage_scope == 'project' %}checked{% endif %}> 项目 / 客户（需要挂项目、工单、客户）</label>
           </div>
         </div>
-        <div class="form-field" data-types="borrow,issue,sale" data-required-types="borrow,issue,sale"><label for="recipient_select">实际使用人/接收人 <span class="required">*</span></label><select id="recipient_select" name="recipient_id"><option value="">请选择系统内账号</option>{% for person in recipient_choices %}<option value="{{ person.id }}" {% if request.POST.recipient_id == person.id|stringformat:'s' %}selected{% endif %}>{{ person|person_label }}</option>{% endfor %}</select></div>
+        <div class="form-field" data-recipient-block data-types="borrow,issue,sale" data-required-types="borrow,issue,sale"><label for="recipient_select">实际使用人/接收人 <span class="required">*</span></label><select id="recipient_select" name="recipient_id"><option value="">请选择系统内账号</option>{% for person in recipient_choices %}<option value="{{ person.id }}" {% if request.POST.recipient_id == person.id|stringformat:'s' %}selected{% endif %}>{{ person|person_label }}</option>{% endfor %}</select></div>
         {# 勾选框独立成行，避免撑高同一网格行里的姓名/电话字段 #}
-        <div class="form-field checkbox-row" data-types="borrow,issue,sale"><label class="checkbox-inline"><input type="checkbox" id="recipient_external" name="is_external_recipient" value="1" {% if request.POST.is_external_recipient %}checked{% endif %}> 接收人不在系统内（改为手工填写姓名）</label></div>
-        <div class="form-field" data-types="borrow,issue,sale" data-required-types="borrow,issue,sale" id="recipient-name-field" hidden><label for="recipient_name">接收人姓名 <span class="required">*</span></label><input id="recipient_name" name="recipient_name" value="{{ request.POST.recipient_name }}" maxlength="120"></div>
-        <div class="form-field" data-types="borrow,issue,sale" data-required-types="borrow,issue,sale"><label for="recipient_phone">联系电话 <span class="required">*</span></label><input id="recipient_phone" name="recipient_phone" type="tel" value="{{ request.POST.recipient_phone }}" maxlength="32"></div>
-        <div class="form-field" data-types="borrow,issue,sale" data-required-types="borrow,issue,sale"><label for="usage_location">使用/交付地点 <span class="required">*</span></label><input id="usage_location" name="usage_location" list="quick-usage-location-options" value="{{ request.POST.usage_location }}" maxlength="160" placeholder="如：售后仓库、客户现场"><datalist id="quick-usage-location-options"><option value="售后仓库"><option value="客户现场"><option value="办公室"><option value="实验室"></datalist></div>
+        <div class="form-field checkbox-row" data-recipient-block data-types="borrow,issue,sale"><label class="checkbox-inline"><input type="checkbox" id="recipient_external" name="is_external_recipient" value="1" {% if request.POST.is_external_recipient %}checked{% endif %}> 接收人不在系统内（改为手工填写姓名）</label></div>
+        <div class="form-field" data-recipient-block data-types="borrow,issue,sale" data-required-types="borrow,issue,sale" id="recipient-name-field" hidden><label for="recipient_name">接收人姓名 <span class="required">*</span></label><input id="recipient_name" name="recipient_name" value="{{ request.POST.recipient_name }}" maxlength="120"></div>
+        <div class="form-field" data-recipient-block data-types="borrow,issue,sale" data-required-types="borrow,issue,sale"><label for="recipient_phone">联系电话 <span class="required">*</span></label><input id="recipient_phone" name="recipient_phone" type="tel" value="{{ request.POST.recipient_phone }}" maxlength="32"></div>
+        <div class="form-field" data-recipient-block data-types="borrow,issue,sale" data-required-types="borrow,issue,sale"><label for="usage_location">使用/交付地点 <span class="required">*</span></label><input id="usage_location" name="usage_location" list="quick-usage-location-options" value="{{ request.POST.usage_location }}" maxlength="160" placeholder="如：售后仓库、客户现场"><datalist id="quick-usage-location-options"><option value="售后仓库"><option value="客户现场"><option value="办公室"><option value="实验室"></datalist></div>
         <div class="form-field" data-types="borrow" data-required-types="borrow"><label for="expected_return_date">预计归还日期 <span class="required">*</span></label><input id="expected_return_date" name="expected_return_date" type="date" value="{{ default_expected_return_date }}"><div class="date-quick-picks"><button type="button" class="date-quick" data-days="7">+7 天</button><button type="button" class="date-quick" data-days="15">+15 天</button><button type="button" class="date-quick" data-days="30">+30 天</button></div></div>
         <div class="form-field" data-types="return,transfer" data-required-types="return,transfer"><label for="target_warehouse">目标仓库 <span class="required">*</span></label><select id="target_warehouse" name="target_warehouse"><option value="">请选择仓库</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}" {% if request.POST.target_warehouse == warehouse.id|stringformat:'s' %}selected{% endif %}>{{ warehouse.name }}</option>{% endfor %}</select></div>
         <div class="form-field" data-types="return,transfer" data-required-types="return,transfer"><label for="target_location">目标库位 <span class="required">*</span></label><select id="target_location" name="target_location"><option value="">请选择库位</option>{% for location in locations %}<option value="{{ location.id }}" data-warehouse="{{ location.warehouse_id }}" {% if request.POST.target_location == location.id|stringformat:'s' %}selected{% endif %}>{{ location.warehouse.name }} / {{ location.code }} {{ location.name }}</option>{% endfor %}</select></div>
@@ -399,19 +399,74 @@
       if (externalBox) externalBox.addEventListener('change', refresh);
 
       // ── 用途开关：日常只留基础字段，项目/客户才展开客户与项目信息 ──
+      //
+      // 额外的类型约束（2026-11-20 按业务语义修正）：
+      //   出售 → 必须挂客户，用途强制为「项目/客户」并锁定，避免用户选「日常」
+      //          导致客户字段被禁用、customer_ref 永远关联不上。
+      //   归还 / 调拨 → 设备回仓或换仓，没有「接收人」，整个接收人区块隐藏。
+      //   维修 / 报损 / 报废 / 退供应商 → 设备不再交给人，同样隐藏接收人。
       const scopeRadios = document.querySelectorAll('input[name="usage_scope"]');
       const projectFields = document.querySelectorAll('.usage-project-field');
+      const scopeWrap = document.querySelector('.usage-scope-row');
+
+      // 这些类型不把设备交给某个人，接收人区块应整体隐藏
+      const NO_RECIPIENT_TYPES = new Set([
+        'return', 'transfer', 'repair', 'damage', 'scrap', 'return_to_vendor',
+      ]);
+
       const syncScope = () => {
         const picked = document.querySelector('input[name="usage_scope"]:checked');
-        const isProject = picked?.value === 'project';
+        const currentType = type.value;
+        const mustBeProject = currentType === 'sale';
+
+        // 出售时强制切到项目/客户，并锁住单选避免被改回日常
+        if (mustBeProject && picked?.value !== 'project') {
+          const projectRadio = document.querySelector('input[name="usage_scope"][value="project"]');
+          if (projectRadio) projectRadio.checked = true;
+        }
+        scopeRadios.forEach((radio) => {
+          radio.disabled = mustBeProject && radio.value === 'daily';
+        });
+        if (scopeWrap) {
+          scopeWrap.title = mustBeProject
+            ? '出售必须挂客户，用途固定为「项目/客户」'
+            : '';
+        }
+
+        const isProject = document.querySelector('input[name="usage_scope"]:checked')?.value === 'project';
         projectFields.forEach((field) => {
           field.hidden = !isProject;
           field.querySelectorAll('input, select, textarea').forEach((input) => {
             input.disabled = !isProject;
           });
         });
+
+        // 客户单位在出售时必填
+        const companyInput = document.getElementById('recipient_company');
+        if (companyInput) {
+          const companyField = companyInput.closest('.usage-project-field');
+          if (companyField) companyField.hidden = false;
+          companyInput.disabled = false;
+          companyInput.required = mustBeProject;
+          if (mustBeProject) {
+            companyInput.placeholder = '出售必填：客户或接收人所在公司';
+          }
+        }
+
+        // 回仓类与处置类不把设备交给个人：隐藏整个接收人区块，
+        // 同时禁用其字段，避免把上一类型填过的内容带进本次提交。
+        const hideRecipient = NO_RECIPIENT_TYPES.has(currentType);
+        document.querySelectorAll('[data-recipient-block]').forEach((field) => {
+          field.hidden = hideRecipient;
+          field.querySelectorAll('input, select').forEach((input) => {
+            if (input.type === 'checkbox') return;
+            input.disabled = hideRecipient;
+          });
+        });
       };
       scopeRadios.forEach((radio) => radio.addEventListener('change', syncScope));
+      // 类型变化时既要刷新字段可见性，也要重新套用场景约束
+      type.addEventListener('change', syncScope);
       syncScope();
 
       // ── 预计归还日期快捷按钮 ──

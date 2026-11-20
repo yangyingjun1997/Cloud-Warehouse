@@ -3396,6 +3396,29 @@ def asset_lifecycle(request, asset_id):
     if asset.current_holder_id:
         holder_name = asset.current_holder.get_full_name() or asset.current_holder.get_username()
 
+    # 当前资产的「在途出库单」：用于从资产直接跳到对应申请单。
+    # 只取最近一条已完成、且仍处于借出/领用状态的出库单据（借用/领用/出售）。
+    # 库管代借场景下 applicant 是库管、recipient 是实际使用人，
+    # 所以这里不按 applicant 过滤，只按资产与类型过滤，保证任何来源都能跳转。
+    current_outbound_request = (
+        WorkflowRequestLine.objects
+        .select_related('request', 'request__applicant', 'request__recipient')
+        .filter(
+            asset=asset,
+            request__request_type__in=[
+                WorkflowRequest.RequestType.BORROW,
+                WorkflowRequest.RequestType.ISSUE,
+                WorkflowRequest.RequestType.SALE,
+            ],
+            request__status=WorkflowRequest.Status.DONE,
+        )
+        .order_by('-request__transaction_date', '-request__created_at')
+        .first()
+    )
+    current_outbound_request = (
+        current_outbound_request.request if current_outbound_request else None
+    )
+
     maintenance_create_form = MaintenanceCreateForm(prefix='create-repair')
     maintenance_update_form = None
     maintenance_finish_form = None
@@ -3658,6 +3681,8 @@ def asset_lifecycle(request, asset_id):
     return render(request, 'asset_lifecycle.html', {
         'asset': asset,
         'holder_name': holder_name,
+        # 资产当前对应的出库单据，供详情页跳转
+        'current_outbound_request': current_outbound_request,
         'holder_form': holder_form,
         # 只有「已离开仓库」的状态才显示登记表单；在库资产不该有持有人
         'holder_registrable': asset.status in HOLDER_REGISTRABLE_STATUSES,
@@ -4112,6 +4137,11 @@ def quick_inventory_process(request):
                 WorkflowRequest.RequestType.SALE,
             } and (not recipient_name or not recipient_phone or not usage_location):
                 raise WorkflowError('该出库类型必须填写接收人、联系电话和使用或交付地点。')
+            # 出售必须有客户单位：出售的对象是公司/客户，不是个人。
+            # 早期允许只填接收人姓名（个人），导致客户关联无从建立，
+            # 「这台设备卖给了谁」只能靠自由文本。这里强制单位必填。
+            if request_type == WorkflowRequest.RequestType.SALE and not request.POST.get('recipient_company', '').strip():
+                raise WorkflowError('出售必须填写客户单位（接收人所在公司或客户名称）。')
             expected_return_date = None
             if expected_return_text:
                 expected_return_date = _query_date(expected_return_text)
@@ -5038,11 +5068,16 @@ def my_loans(request):
         status=Asset.Status.BORROWED,
     ).order_by('name', 'asset_code'))
     for asset in assets:
+        # 单据可能不是本人提的：库管代借时 applicant 是库管、recipient 才是本人。
+        # 早期这里硬性要求 request__applicant=request.user，导致代借的设备虽然
+        # current_holder 指向本人，也找不到对应单据（还期、审批状态全看不到）。
+        # 现在同时接受「本人申请」与「本人是接收人」两种来源。
         line = WorkflowRequestLine.objects.select_related('request').filter(
             asset=asset,
-            request__applicant=request.user,
             request__request_type=WorkflowRequest.RequestType.BORROW,
             request__status=WorkflowRequest.Status.DONE,
+        ).filter(
+            Q(request__applicant=request.user) | Q(request__recipient=request.user)
         ).order_by('-request__transaction_date', '-created_at').first()
         asset.loan_request = line.request if line else None
         asset.loan_due_date = line.request.expected_return_date if line else None

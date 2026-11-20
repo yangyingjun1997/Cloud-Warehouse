@@ -10,7 +10,7 @@
 
   <section class="asset-lifecycle-summary">
     <div><span>当前状态</span><strong class="status-badge">{{ asset.get_status_display }}</strong></div>
-    <div><span>当前持有人</span><strong>{{ holder_name|default:'无' }}</strong></div>
+    <div><span>当前持有人</span><strong>{{ holder_name|default:'无' }}{% if current_outbound_request %} <a class="text-action" href="{% url 'workflow_detail' current_outbound_request.id %}">（{{ current_outbound_request.request_no }}）</a>{% endif %}</strong></div>
     <div><span>仓库 / 库位</span><strong>{{ asset.warehouse|default:'未分配' }} / {{ asset.location|default:'未分配' }}</strong></div>
     <div><span>质保到期</span><strong>{{ asset.warranty_until|date:'Y-m-d'|default:'未填写' }}</strong></div>
     <div><span>累计维修</span><strong>{{ maintenance_records|length }} 次</strong></div>
