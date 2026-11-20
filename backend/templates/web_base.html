@@ -99,6 +99,9 @@
       .button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
     }
     .button-primary { color: #fff; background: var(--teal); }
+    /* 提交中的按钮：视觉上明确「已点，正在处理」，避免用户重复点击 */
+    .button.is-pending { opacity: .72; cursor: progress; }
+    .button.is-pending:disabled { cursor: progress; }
     .button-secondary { color: var(--teal); background: #fff; border-color: #a7cbc7; }
     .button-secondary.is-disabled { color: var(--muted); border-color: var(--line); background: var(--canvas); cursor: default; }
     /* 指标卡：列数随可用宽度增长（4 → 5 → 6…），不再固定 4 列。
@@ -289,7 +292,43 @@
     .form-field input.is-readonly:focus { outline-color: #cfdbdc; }
     .form-field input[readonly]::placeholder,
     .form-field input.is-readonly::placeholder { color: #8fa3a8; }
-    .form-field input[type="checkbox"], .form-field input[type="radio"] { width: auto; min-height: 0; padding: 0; }
+    /* ── 复选框 / 单选框统一（2026-11-20）──────────────────────────────
+       问题：表单用 `{{ field }}` 直出时，Django 渲染出的是
+         <div class="form-field"><label>是否启用</label><input type="checkbox"></div>
+       label 是块级元素会独占一行，复选框被挤到下一行；加上下面这条过去的
+       min-height:0，复选框退回浏览器默认的 13px 左右，触屏几乎点不中。
+       修复：把「只包含一个 checkbox/radio 的 form-field」变成 flex 行，
+       让标签与控件同排垂直居中，并把控件放大到 18px 触控友好尺寸。
+       采用 :has() 直接命中，无需改动 6 个模板的 {{ field }} 直出写法。 */
+    .form-field:has(> input[type="checkbox"]),
+    .form-field:has(> input[type="radio"]) {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      min-height: 35px;
+    }
+    .form-field:has(> input[type="checkbox"]) > label,
+    .form-field:has(> input[type="radio"]) > label {
+      margin: 0;
+      cursor: pointer;
+    }
+    .form-field input[type="checkbox"],
+    .form-field input[type="radio"] {
+      width: 18px;
+      height: 18px;
+      min-height: 18px;
+      padding: 0;
+      margin: 0;
+      flex: 0 0 auto;
+      accent-color: var(--teal);
+      cursor: pointer;
+    }
+    /* 复选框后面紧跟的字段错误提示要换行，避免和控件挤在一行 */
+    .form-field:has(> input[type="checkbox"]) > .field-error,
+    .form-field:has(> input[type="radio"]) > .field-error {
+      flex: 1 0 100%;
+    }
     /* iOS/Safari 的日期控件带原生外观和内边距，比文本框高出一截，
        会让同一行的日期输入与下拉框、按钮对不齐。这里只统一行高与图标间距，
        不重置 appearance，否则部分浏览器会丢掉日期选择器图标。 */
@@ -1417,6 +1456,55 @@
       // 点击背板关闭：dialog 本身覆盖整屏，事件目标是 dialog 时才视为点背板
       dialog.addEventListener('click', (event) => {
         if (event.target === dialog) dialog.close();
+      });
+    });
+  })();
+</script>
+<script>
+  // 提交反馈（2026-11-20）：保存后要整页跳回列表，用户点完看不到任何变化，
+  // 会以为没点上而重复点击。这里在表单提交时把提交按钮改成「保存中…」并禁用，
+  // 给出即时反馈，同时顺便防重复提交。
+  //
+  // 注意：只处理会真实跳转的表单（method=post），并跳过带 target 的（如打印预览）。
+  (() => {
+    document.querySelectorAll('form[method="post"], form[method="POST"]').forEach((form) => {
+      if (form.target && form.target !== '_self') return;
+      // 已标记跳过的不处理（例如某些表单自己管理提交状态）
+      if (form.dataset.skipPendingState !== undefined) return;
+
+      form.addEventListener('submit', (event) => {
+        // 表单校验未通过时浏览器会阻止提交，此时不应改按钮文案
+        if (event.defaultPrevented) return;
+        if (!form.checkValidity()) return;
+
+        const submitter = event.submitter
+          || form.querySelector('button[type="submit"], input[type="submit"]');
+        if (!submitter) return;
+
+        const label = submitter.textContent ? submitter.textContent.trim() : '';
+        // 记住原文案，便于校验失败或页面未跳转时恢复
+        submitter.dataset.originalLabel = label || submitter.value || '';
+        if (submitter.tagName === 'INPUT') {
+          submitter.value = '处理中…';
+        } else {
+          submitter.textContent = '处理中…';
+        }
+        submitter.disabled = true;
+        submitter.classList.add('is-pending');
+
+        // 兜底：若浏览器因故没有跳转（例如文件下载或不支持导航），
+        // 3 秒后恢复，避免按钮永久卡在禁用态
+        window.setTimeout(() => {
+          if (!submitter.isConnected) return;
+          submitter.disabled = false;
+          submitter.classList.remove('is-pending');
+          const original = submitter.dataset.originalLabel || '';
+          if (submitter.tagName === 'INPUT') {
+            submitter.value = original;
+          } else {
+            submitter.textContent = original;
+          }
+        }, 3000);
       });
     });
   })();
