@@ -108,7 +108,7 @@
         <div class="form-field" data-types="borrow,issue"><label>联系电话</label><input class="is-readonly" value="{{ request.user.profile.phone|default:'当前账号未登记手机号，请先在账号资料补充' }}" readonly><small class="field-help">取自账号资料，修改请到「账号资料」。</small></div>
         <div class="form-field" data-types="borrow,issue" data-required-types="borrow,issue"><label for="usage_location">使用地点 <span class="required">*</span></label><input id="usage_location" name="usage_location" list="usage-location-options" value="{{ form_values.usage_location }}" maxlength="160" placeholder="如：售后仓库、客户现场"><datalist id="usage-location-options"><option value="售后仓库"><option value="客户现场"><option value="办公室"><option value="实验室"></datalist></div>
         <div class="form-field usage-project-field" data-scope="project" hidden><label for="customer_ref">客户资料</label><select id="customer_ref" name="customer_ref"><option value="">未选择客户资料</option>{% for customer in customers %}<option value="{{ customer.id }}" data-name="{{ customer.name }}" {% if form_values.customer_ref == customer.id|stringformat:'s' %}selected{% endif %}>{{ customer.name }}（{{ customer.code }}）</option>{% endfor %}</select></div>
-        <div class="form-field usage-project-field" data-scope="project" hidden><label for="recipient_company">使用部门/单位</label><input id="recipient_company" name="recipient_company" value="{{ form_values.recipient_company }}" maxlength="120" placeholder="未建档时可手工填写"></div>
+        <div class="form-field usage-project-field" data-scope="project" hidden><label for="recipient_company">接收人单位</label><input id="recipient_company" name="recipient_company" value="{{ form_values.recipient_company }}" maxlength="120" placeholder="选择客户资料后自动带出，或填未建档单位"></div>
         <div class="form-field usage-project-field" data-scope="project" hidden><label for="project_ref">项目资料</label><select id="project_ref" name="project_ref"><option value="">未选择项目资料</option>{% for project in projects %}<option value="{{ project.id }}" data-code="{{ project.code }}" data-customer="{{ project.customer_id|default:'' }}" {% if form_values.project_ref == project.id|stringformat:'s' %}selected{% endif %}>{{ project.name }}（{{ project.code }}）</option>{% endfor %}</select></div>
         <div class="form-field usage-project-field" data-scope="project" hidden><label for="project_code">项目编号</label><input id="project_code" name="project_code" value="{{ form_values.project_code }}" maxlength="80" placeholder="未建档时可手工填写"></div>
         <div class="form-field usage-project-field" data-scope="project" hidden><label for="work_order_ref">工单资料</label><select id="work_order_ref" name="work_order_ref"><option value="">未选择工单资料</option>{% for work_order in work_orders %}<option value="{{ work_order.id }}" data-code="{{ work_order.code }}" data-project="{{ work_order.project_id|default:'' }}" data-customer="{{ work_order.customer_id|default:'' }}" {% if form_values.work_order_ref == work_order.id|stringformat:'s' %}selected{% endif %}>{{ work_order.name }}（{{ work_order.code }}）</option>{% endfor %}</select></div>
@@ -388,6 +388,17 @@
       };
       scopeRadios.forEach((radio) => radio.addEventListener('change', syncScope));
       syncScope();
+
+      // 选择客户资料后自动把客户名带进「接收人单位」，避免两处重复填同一单位名
+      const customerSelectEl = document.getElementById('customer_ref');
+      const companyInputEl = document.getElementById('recipient_company');
+      if (customerSelectEl && companyInputEl) {
+        customerSelectEl.addEventListener('change', () => {
+          const picked = customerSelectEl.selectedOptions[0];
+          const name = picked?.dataset?.name || '';
+          if (name) companyInputEl.value = name;
+        });
+      }
 
       // ── 预计归还日期快捷按钮 ──
       const returnDateInput = document.getElementById('expected_return_date');

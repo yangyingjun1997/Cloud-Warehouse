@@ -201,7 +201,11 @@ class HolderPageRenderingTests(TestCase):
     def setUp(self):
         user = User.objects.create_user(username='page_actor', password='Pw#2026aa')
         user.is_staff = True
+        # 「登记当前持有人」是历史台账补录，属于台账校正类操作。
+        # 2026-11-20 收紧后 can_correct_asset_state 只认 warehouse_state_correction，
+        # 不再因 warehouse_admin 自动放行，所以这里显式授予该组。
         user.groups.add(Group.objects.get_or_create(name='warehouse_admin')[0])
+        user.groups.add(Group.objects.get_or_create(name='warehouse_state_correction')[0])
         self.client.force_login(user)
 
         self.warehouse = Warehouse.objects.create(name='页面仓', code='PAGE-WH')

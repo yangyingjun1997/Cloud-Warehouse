@@ -85,6 +85,17 @@ class WorkflowRequest(UUIDModel, TimeStampedModel):
         blank=True,
         related_name='workflow_requests',
     )
+    # 退货给供应商时指向具体供应商档案。
+    # 与 customer_ref 同构：留空表示不涉及（借用、归还、报废等类型）。
+    # 存外键而非纯文本，是为了能按供应商对账与追溯退货历史。
+    supplier_ref = models.ForeignKey(
+        'inventory.Supplier',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='workflow_requests',
+        verbose_name='供应商',
+    )
     project_ref = models.ForeignKey(
         Project,
         on_delete=models.SET_NULL,
@@ -130,6 +141,10 @@ class WorkflowRequest(UUIDModel, TimeStampedModel):
             self.work_order_no = self.work_order_ref.code
         if self.customer_ref_id and not self.recipient_company:
             self.recipient_company = self.customer_ref.name
+        # 退货给供应商：选了供应商时把名称落到接收人单位，
+        # 让单据详情与资产的外部持有人都能直接看到退给了谁。
+        if self.supplier_ref_id and not self.recipient_company:
+            self.recipient_company = self.supplier_ref.name
         update_fields = kwargs.get('update_fields')
         if update_fields is not None:
             kwargs['update_fields'] = set(update_fields) | {'project_code', 'work_order_no', 'recipient_company'}

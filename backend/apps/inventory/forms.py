@@ -574,8 +574,18 @@ class AssetStateCorrectionForm(forms.ModelForm):
         from .state_services import (
             ADMIN_CORRECTION_TARGET_STATUSES,
             CORRECTION_TARGET_STATUSES,
+            SUPERADMIN_CORRECTION_TARGET_STATUSES,
         )
-        allowed = ADMIN_CORRECTION_TARGET_STATUSES if is_system_administrator(user) else CORRECTION_TARGET_STATUSES
+
+        # 与 state_services.correct_asset_states 的判定保持一致：只有 superuser
+        # 才在表单里看到三个终态选项。早期这里用 is_system_administrator 判断，
+        # 而它包含 warehouse_admin 组，导致仓库管理员能把资产直接改成「已报废」。
+        if getattr(user, 'is_superuser', False):
+            allowed = SUPERADMIN_CORRECTION_TARGET_STATUSES
+        elif is_system_administrator(user):
+            allowed = ADMIN_CORRECTION_TARGET_STATUSES
+        else:
+            allowed = CORRECTION_TARGET_STATUSES
         self.fields['to_status'].choices = [
             (status, dict(Asset.Status.choices)[status]) for status in Asset.Status.values if status in allowed
         ]

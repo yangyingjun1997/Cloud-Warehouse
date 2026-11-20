@@ -32,24 +32,41 @@ TERMINAL_ASSET_STATUSES = frozenset({
     Asset.Status.DISABLED,
 })
 
+# 「通过业务单据才能产生」的最终状态。
+#
+# 这三个状态各有对应的申请单（出售单 / 退货给供应商单 / 报废审批），
+# 走审批流才有完整的申请、审批日志和生命周期轨迹。若允许通过台账校正直接写入，
+# 相当于绕开审批，事后无法回答「谁批准的报废」。
+#
+# 例外：仅 is_superuser 可用台账校正直接写入，用于历史数据补录
+# （例如系统上线前的旧设备要标记为已报废，但当年没有单据）。
+TERMINAL_CORRECTION_STATUSES = frozenset({
+    Asset.Status.SOLD,
+    Asset.Status.RETURNED_TO_VENDOR,
+    Asset.Status.SCRAPPED,
+})
+
 CORRECTION_TARGET_STATUSES = frozenset({
     Asset.Status.IN_STOCK,
     Asset.Status.PENDING_INSPECTION,
 })
 
-# 管理员状态调整范围：仍排除仍在流程中的状态（待出库、待归还验收、已组装、
-# 已转耗材），这些必须走各自业务单据，不能靠改字段绕过。
+# 仓库管理员（warehouse_admin 组或持有 warehouse_state_correction 的角色）
+# 可通过台账校正到达的状态。刻意排除三个终态：它们必须走业务单据，
+# 只有 is_superuser 能作为例外直接写入。
 ADMIN_CORRECTION_TARGET_STATUSES = frozenset({
     Asset.Status.IN_STOCK,
     Asset.Status.PENDING_INSPECTION,
     Asset.Status.MAINTENANCE,
     Asset.Status.REPAIRING,
-    Asset.Status.SOLD,
-    Asset.Status.RETURNED_TO_VENDOR,
-    Asset.Status.SCRAPPED,
     Asset.Status.DAMAGED,
     Asset.Status.LOST,
 })
+
+# 超级管理员（is_superuser）的例外通道：在管理员范围之上再加三个终态。
+SUPERADMIN_CORRECTION_TARGET_STATUSES = (
+    ADMIN_CORRECTION_TARGET_STATUSES | TERMINAL_CORRECTION_STATUSES
+)
 
 MAX_CORRECTION_BATCH_SIZE = 50
 
@@ -82,8 +99,32 @@ def correct_asset_states(*, assets, to_status, reason, actor, warehouse=None, lo
         raise AssetStateCorrectionError('请至少选择一件资产。')
     if len(asset_ids) > MAX_CORRECTION_BATCH_SIZE:
         raise AssetStateCorrectionError(f'单次最多校正 {MAX_CORRECTION_BATCH_SIZE} 件资产。')
+    # 三层权限，按「能改到哪一步」递进：
+    #   1. 普通持有 warehouse_state_correction 的角色 → 仅「在库 / 待质检」
+    #   2. warehouse_admin 组 → 加上维修中 / 损坏 / 丢失（非终态）
+    #   3. is_superuser → 例外通道，可用台账校正直接写入三个终态
+    #
+    # 终态（已售出 / 已退供应商 / 已报废）默认必须通过对应业务单据审批产生。
+    # 早期这里用 is_system_administrator 判断，而它把 warehouse_admin 组也算作
+    # 「系统管理员」，导致仓库管理员可以直接把资产改成已报废，绕过报废审批。
+    is_superadmin = bool(actor and getattr(actor, 'is_superuser', False))
     is_admin = is_system_administrator(actor)
-    allowed_statuses = ADMIN_CORRECTION_TARGET_STATUSES if is_admin else CORRECTION_TARGET_STATUSES
+
+    if is_superadmin:
+        allowed_statuses = SUPERADMIN_CORRECTION_TARGET_STATUSES
+    elif is_admin:
+        allowed_statuses = ADMIN_CORRECTION_TARGET_STATUSES
+    else:
+        allowed_statuses = CORRECTION_TARGET_STATUSES
+
+    # 终态单独拦一道，即使将来有人误把终态加进管理员清单也仍然生效。
+    if to_status in TERMINAL_CORRECTION_STATUSES and not is_superadmin:
+        raise AssetStateCorrectionError(
+            '已售出、已退供应商、已报废属于最终状态，'
+            '必须通过对应的出售单、退货单或报废审批产生；'
+            '仅系统超级管理员可在历史数据补录时通过台账校正直接写入。'
+        )
+
     if to_status not in allowed_statuses:
         if is_admin:
             raise AssetStateCorrectionError('管理员状态调整不支持该目标状态，请走对应业务单据。')

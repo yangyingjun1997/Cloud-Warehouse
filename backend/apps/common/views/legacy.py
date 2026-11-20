@@ -4146,9 +4146,16 @@ def quick_inventory_process(request):
                 raise WorkflowError('该出库类型必须填写接收人、联系电话和使用或交付地点。')
             # 出售必须有客户单位：出售的对象是公司/客户，不是个人。
             # 早期允许只填接收人姓名（个人），导致客户关联无从建立，
-            # 「这台设备卖给了谁」只能靠自由文本。这里强制单位必填。
-            if request_type == WorkflowRequest.RequestType.SALE and not request.POST.get('recipient_company', '').strip():
-                raise WorkflowError('出售必须填写客户单位（接收人所在公司或客户名称）。')
+            # 「这台设备卖给了谁」只能靠自由文本。
+            # 现在允许两种表达方式：选了「客户资料」下拉，或手工填「接收人单位」。
+            if request_type == WorkflowRequest.RequestType.SALE:
+                _has_customer_record = bool(request.POST.get('customer_ref', '').strip())
+                _has_company_text = bool(request.POST.get('recipient_company', '').strip())
+                if not _has_customer_record and not _has_company_text:
+                    raise WorkflowError(
+                        '出售必须指定客户：请选择「客户资料」，'
+                        '或填写「接收人单位」（未建档客户）。'
+                    )
             expected_return_date = None
             if expected_return_text:
                 expected_return_date = _query_date(expected_return_text)
@@ -4161,6 +4168,13 @@ def quick_inventory_process(request):
                 WorkflowRequest.RequestType.TRANSFER,
             } and (not target_warehouse or not target_location):
                 raise WorkflowError('归还或调拨必须选择目标仓库和目标库位。')
+            # 退货给供应商必须指明退给谁：这是后续对账与责任追溯的依据。
+            if request_type == WorkflowRequest.RequestType.RETURN_TO_VENDOR:
+                _supplier_ref = request.POST.get('supplier_ref', '').strip()
+                if not _supplier_ref:
+                    raise WorkflowError('退货给供应商必须选择供应商。')
+                if not Supplier.objects.filter(pk=_supplier_ref, is_active=True).exists():
+                    raise WorkflowError('所选供应商不存在或已停用，请重新选择。')
             if target_location and target_warehouse and target_location.warehouse_id != target_warehouse.id:
                 raise WorkflowError('目标库位不属于所选目标仓库。')
             if transaction_date_text:
@@ -4203,6 +4217,12 @@ def quick_inventory_process(request):
                     recipient_company=request.POST.get('recipient_company', '').strip(),
                     recipient_phone=recipient_phone, usage_location=usage_location,
                     customer_ref=customer_ref, project_ref=project_ref, work_order_ref=work_order_ref,
+                # 退货给供应商时记录具体供应商；其它类型留空。
+                supplier_ref=(
+                    _get_by_uuid(Supplier, request.POST.get('supplier_ref'))
+                    if request_type == WorkflowRequest.RequestType.RETURN_TO_VENDOR
+                    else None
+                ),
                     # 与上面一致：日常用途不保留手填的项目/工单编号
                     project_code=request.POST.get('project_code', '').strip() if _is_project_scope else '',
                     work_order_no=request.POST.get('work_order_no', '').strip() if _is_project_scope else '',
@@ -4275,6 +4295,8 @@ def quick_inventory_process(request):
         'warehouses': Warehouse.objects.filter(is_active=True).order_by('name'),
         'locations': Location.objects.filter(is_active=True).select_related('warehouse').order_by('warehouse__name', 'code'),
         'customers': Customer.objects.filter(is_active=True).order_by('name'),
+        # 退货给供应商需要选供应商；与客户下拉同源模型族，仅用于该类型。
+        'suppliers': Supplier.objects.filter(is_active=True).order_by('name'),
         'projects': Project.objects.filter(is_active=True).select_related('customer').order_by('name'),
         'work_orders': WorkOrder.objects.filter(is_active=True).select_related('project').order_by('name'),
         # 与新建申请保持一致的接收人选择：优先从系统内账号选，外部人员才手工填姓名。

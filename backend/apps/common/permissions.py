@@ -74,7 +74,20 @@ def can_print_asset_labels(user) -> bool:
 
 
 def can_correct_asset_state(user) -> bool:
-    return has_warehouse_permission(user, 'warehouse_state_correction')
+    """资产台账校正入口权限：必须显式持有 warehouse_state_correction。
+
+    刻意不继承 has_warehouse_permission 的宽泛兜底：该函数会把 warehouse_admin
+    与 warehouse_staff 也放行，等于「有仓库权限就能改台账」，与
+    warehouse_state_correction 这个细粒度组的存在意义相矛盾。
+
+    台账校正直接改资产状态、不产生业务单据，属于敏感操作。
+    因此这里只认 warehouse_state_correction（superuser 除外），
+    不因拥有 warehouse_admin 而自动获得入口。
+    """
+    return bool(user and user.is_authenticated and (
+        user.is_superuser
+        or user.groups.filter(name='warehouse_state_correction').exists()
+    ))
 
 
 def can_review_accounts(user) -> bool:
