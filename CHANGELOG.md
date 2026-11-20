@@ -4,6 +4,61 @@
 
 ## Unreleased
 
+### 2026-11-19 ~ 2026-11-20 依赖安全、权限收紧与表单语义修正
+
+- **P1-01 依赖版本三套漂移（已修复并部署）**。本机 venv 为 Django 5.2.9 / DRF 3.16.1 / Pillow 12.3.0，
+  生产为 5.2.17 / 3.18.0 / 12.3.0，锁文件为 5.2.19 / 3.18.3 / 13.0.0。OSV 实测：本机 121 条已知漏洞、
+  生产 65 条、锁文件 0 条。根因是 `install.sh` 离线更新分支直接 `cp -a` 旧 venv 从不校验，
+  导致生产 venv 停留在 Python 3.10.12，而 Pillow 13 要求 Python >= 3.11。
+  修复：本机与生产均升级到锁文件版本（生产用 python3.12 重建 venv 并原子切换），
+  `install.sh` 离线分支增加 venv 兼容性闸门（Python >= 3.11 + 锁文件逐项比对），
+  新增 `test_dependency_consistency.py` 6 例。生产验证：版本 100% 一致、公网 200、业务数据完整。
+
+- **P1-02 库管代借时资产被记成外部持有人（已修复并部署）**。实测：库管走快速出入库、
+  接收人选系统内账号时，资产 `current_holder` 为空、接收人被存成 `external_holder_name` 文本，
+  实际借用人既看不到设备也查不到单据。根因是 `services.py` 按「是否快速出入库」而非
+  「接收人是什么」分流，丢掉了 `recipient` 外键。修复：按接收人类型分流（有外键→落外键，
+  只有文本→存 external_*，都没有→落申请人），并限定只有借用/领用/出售设持有人。
+  连带修复 `my_loans` 允许按 `recipient` 查单据。新增 `test_delegated_holder.py` 8 例。
+
+- **P1-03 单据模板缺少场景约束（已修复并部署）**。出售强制客户单位（前后端双重校验）；
+  回仓类（归还/调拨）与处置类（维修/报损/报废/退供应商）隐藏接收人区块。
+
+- **P2-04 宽泛异常收窄（已修复）**。3 处 `except Exception` 改为具体异常类型 + 日志：
+  v2/v3 xlsx 嗅探改 `(BadZipFile, InvalidFileException, KeyError, OSError, ValueError)`，
+  context_processor 改 `(DatabaseError, OperationalError)`。
+
+- **P2-07 V2 导入不可撤销（已修复并部署）**。V2 不写 `ImportMutation` 快照，
+  撤销必然报「没有可逆变更账本」。修复：V2 写入 `reversible=False`、V3 写入 `True`，
+  导入页对不可撤销批次显示警示条。新增 `test_import_reversible_flag.py` 8 例。
+
+- **P2-03 views.py 拆包（方案 B）**。`apps/common/views.py`（5119 行）改为
+  `apps/common/views/{__init__.py, legacy.py}`，转发层保持 `views.xxx` 全部可用，
+  新功能可写独立模块。新增 `test_views_package.py` 7 例。
+
+- **终态校正权限收紧（安全修复）**。复核发现 `is_system_administrator` 把 `warehouse_admin`
+  组也算作系统管理员，导致仓库管理员可直接把资产改为已报废/已售出/已退供应商，绕过审批
+  （线上历史校正记录 0 条，未被利用）。修复：新增 `TERMINAL_CORRECTION_STATUSES` 与
+  `SUPERADMIN_CORRECTION_TARGET_STATUSES`，终态仅 `is_superuser` 可写；
+  `ADMIN_CORRECTION_TARGET_STATUSES` 移除三个终态；`can_correct_asset_state` 改为只认
+  `warehouse_state_correction`（不再因 warehouse_admin 自动放行）。
+
+- **表单语义修正**。「使用部门/客户单位」统一为「接收人单位」并移入接收人区块；
+  出售时隐藏整个用途区块（此前只禁用「日常」单选）；新增「供应商」下拉用于退货给供应商
+  （新增 `WorkflowRequest.supplier_ref` 外键，迁移 `0021`），后端校验必填且启用。
+
+- **运维加固（NUC）**。停止 Cloudflare 隧道与自愈 timer（改全内网 IP 访问）；
+  启用 ufw 白名单（3 网段 × 4 端口 = 12 条规则，默认 deny incoming）；
+  停止 blue-client / release-console / s1-ota-agent 三个无用服务；
+  journald 留存从 14 天延到 30 天（并消除主配置与 `conf.d` 的取值冲突）；
+  logrotate 改为 `daily + maxsize 200M + rotate 7`。
+  事故记录：曾用 `logrotate -f` 强制轮转导致 rsyslog 的 omfile 挂起、14 个日志文件消失，
+  已回滚配置、补齐文件并验证写入，业务未受影响。
+
+- **测试基线**：700 → 773 通过（跳过 8 项 SQLite 不适用项）；
+  PostgreSQL 并发测试 6/6 在 NUC 独立库验证通过。
+
+
 ### 2026-11-18
 
 - **完成第十轮配置、PWA 与页面权限复核**。缓存/Service Worker、账号评审与接收人字段专项 `33/33` 通过，Ubuntu shell 脚本语法检查通过；确认 `warehouse_setup` 登录保护、结构化日志、PostgreSQL 连接复用和动态缓存版本已在当前工作区实现。新增 **P2-12**：`.env.example` 默认 DEBUG、开发密钥、`ALLOWED_HOSTS=*` 和全 CORS，手工部署直接复制可能形成公网误配置。未修改业务代码、未连接 NUC、未部署。
