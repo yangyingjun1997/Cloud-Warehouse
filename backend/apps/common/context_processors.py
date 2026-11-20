@@ -1,8 +1,13 @@
+import logging
+
 from datetime import date
 
 from django.contrib.auth import get_user_model
+from django.db import DatabaseError, OperationalError
 
 from apps.common.models import SiteSettings
+
+logger = logging.getLogger(__name__)
 from apps.common.permissions import (
     can_approve_workflow,
     can_execute_inventory,
@@ -93,6 +98,10 @@ def _incomplete_profile_count():
                 user_model.objects.filter(is_active=True, first_name='')
             ).count()
         )
-    except Exception:
+    except (DatabaseError, OperationalError) as exc:
+        # 只兜数据库层异常：这个函数在每个页面渲染时都会跑，
+        # 数据库迁移未完成或连接中断时不该让整站 500，退化成「不显示提醒」即可。
+        # 但其它异常（例如 system_accounts 导入写错）必须冒出来，不能被伪装成「0 个」。
+        logger.warning('统计缺中文名账号数失败（本次不显示提醒）: %s', exc)
         return 0
 

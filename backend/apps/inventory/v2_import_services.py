@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+import logging
 import re
 
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
+from zipfile import BadZipFile
 
 from django.db import transaction
 from django.db.models import Q
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
+from openpyxl.utils.exceptions import InvalidFileException
 
 from apps.common.audit import record_operation
+
+logger = logging.getLogger(__name__)
 
 from .code_services import (
     SYSTEM_CODE_PATTERN, AssetCodeError, apply_asset_identity, normalize_identifier,
@@ -136,9 +141,16 @@ class AssetV2ImportError(ValueError):
 
 
 def is_asset_v2_workbook(content: bytes) -> bool:
+    """嗅探上传文件是否为 V2 资产模板。
+
+    只吞「不是合法 xlsx」这一类异常：坏 zip、非 xlsx 格式、openpyxl 无法识别。
+    早期这里捕获所有 Exception 并返回 False，会把真正的程序缺陷（如读取逻辑写错）
+    伪装成「模板不匹配」，排查时看不到任何线索。
+    """
     try:
         workbook = load_workbook(BytesIO(content), read_only=True)
-    except Exception:
+    except (BadZipFile, InvalidFileException, KeyError, OSError, ValueError) as exc:
+        logger.debug('V2 模板嗅探失败（按非目标模板处理）: %s', exc)
         return False
     return SHEET_NAME in workbook.sheetnames
 

@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import logging
+
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
+from zipfile import BadZipFile
 
 from django.db import transaction
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
+from openpyxl.utils.exceptions import InvalidFileException
 
 from apps.common.audit import record_operation
 from apps.common.utils import build_code
+
+logger = logging.getLogger(__name__)
 
 from .models import (
     Asset, ImportBatch, ImportIssue, ImportMutation, ItemType, Location, StockItem,
@@ -104,9 +110,15 @@ def _stock_issue(record, severity, code, message):
 
 
 def is_inventory_v3_workbook(content: bytes) -> bool:
+    """嗅探上传文件是否为 V3 库存模板。
+
+    只吞「不是合法 xlsx」这一类异常，理由同 v2：早期捕获所有 Exception，
+    会把真正的程序缺陷伪装成「模板不匹配」，排查时没有任何线索。
+    """
     try:
         workbook = load_workbook(BytesIO(content), read_only=True)
-    except Exception:
+    except (BadZipFile, InvalidFileException, KeyError, OSError, ValueError) as exc:
+        logger.debug('V3 模板嗅探失败（按非目标模板处理）: %s', exc)
         return False
     try:
         return {ASSET_SHEET_NAME, STOCK_SHEET_NAME}.issubset(workbook.sheetnames)

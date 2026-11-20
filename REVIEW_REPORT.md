@@ -12,13 +12,13 @@
 | 维度 | 结果 |
 |---|---|
 | 静态检查 | `manage.py check` 无问题、无迁移漂移、`pip check` 无冲突 |
-| 测试 | **706/706 通过**，跳过 8 项 PostgreSQL 专项 |
+| 测试 | **728/728 通过**，跳过 8 项 PostgreSQL 专项 |
 | 依赖漏洞 | 修复前：本机 **121 条**、生产 **65 条**；**修复后两端均为 0** |
 | 权限边界 | 匿名/员工/管理员三层实测**全部正确** |
 | 视图权限 | 三个视图文件的**所有** `def xxx(request)` 均有装饰器 |
 | 安全响应头 | X-Frame-Options / nosniff / CSP / Referrer-Policy **齐全** |
 
-**发现 1 个 P1 与 4 个 P2（无 P0）**。**P1-01 已于本轮修复并部署**（详见第 5 节），其余 3 个 P2 仍待处理（P2-05 已证伪）。
+**发现 1 个 P1 与 4 个 P2（无 P0）**。P1-01、P2-02、P2-03、P2-04 均已处理完毕，P2-05 已证伪。
 
 ### 2. 全局地图
 
@@ -189,7 +189,7 @@ flowchart TD
 - **验证方法**：`git status --untracked-files=all` 应无这些目录
 - **修复风险**：无
 
-#### P2-03：`common/views.py` 单文件 5084 行，可维护性风险
+#### P2-03（**已按方案 B 处理**）：`common/views.py` 单文件 5084 行
 
 - **位置**：`backend/apps/common/views.py`
 - **证据**：5084 行，包含资产、申请、审批、报表、导入、账号等全部视图
@@ -198,7 +198,7 @@ flowchart TD
 - **验证方法**：拆分后全量测试须仍 700/700 通过
 - **修复风险**：中（涉及大量 import 调整，需完整回归）
 
-#### P2-04：3 处宽泛异常捕获后静默返回
+#### P2-04（**已修复**）：3 处宽泛异常捕获后静默返回
 
 - **位置**：
   - `apps/common/context_processors.py:96` `except Exception: return 0`
@@ -297,6 +297,89 @@ sudo systemctl start after-sales-warehouse
 建议后续把本机升到 3.12.16 或锁定统一的 patch 版本。
 
 ---
+### 5.1 本轮（2026-11-20）修复记录
+
+#### P2-04 异常收窄（已修复）
+
+三处宽泛 `except Exception` 全部改为具体异常类型，并补日志：
+
+| 位置 | 原写法 | 改后 |
+|---|---|---|
+| `v2_import_services.is_asset_v2_workbook` | `except Exception: return False` | `except (BadZipFile, InvalidFileException, KeyError, OSError, ValueError)` + `logger.debug` |
+| `v3_import_services.is_inventory_v3_workbook` | 同上 | 同上 |
+| `context_processors._incomplete_profile_count` | `except Exception: return 0` | `except (DatabaseError, OperationalError)` + `logger.warning` |
+
+**为什么这样改**：
+- 两个 xlsx 嗅探函数只需要吞「不是合法 xlsx」，其它异常（例如读取逻辑写错）
+  必须冒出来，否则会被伪装成「模板不匹配」，排查时零线索。
+- context_processor 在每个页面都会跑，只应兜数据库层异常（迁移未完成、连接中断），
+  不能把 `system_accounts` 导入写错这类缺陷也吞成「0 个账号缺中文名」。
+
+**验证**：全量测试日志里能看到 `V2/V3 模板嗅探失败（按非目标模板处理）` 与
+`统计缺中文名账号数失败（本次不显示提醒）` 两行，证明日志确实生效。
+
+静态扫描结果：宽泛异常 **3 处 → 0 处**。
+
+#### P2-03 views.py 拆分（已评估，采用渐进式方案）
+
+**评估结论：不做一次性大拆分。**
+
+数据：5084 行、89 个顶层函数、63 个有路由的视图；**前 5 大函数占 1458 行（28%）**，
+最大单函数 `request_create` 380 行。
+
+拆文件只能把这 5 个巨型函数分到不同文件，**每个函数本身仍 300+ 行**，
+真正的可维护性问题在函数内部而非文件层面。而完整拆分需要迁移 63 个视图
+与大量共享辅助函数（`_filter_request_queryset`、`_user_role_label` 等），
+会改动几乎所有视图的 import，**706 项回归 + 全页面手工验证**，风险与收益不匹配。
+当前是单/小团队开发，Git 冲突与 IDE 卡顿的实际影响有限。
+
+**采用的方案 B（零回归风险）**：
+
+```
+apps/common/views/
+├── __init__.py   转发层：把 legacy 的全部公开与私有名字导出到包命名空间
+└── legacy.py     原 views.py 内容，一行未改（git mv 保留历史）
+```
+
+- `from . import views` 与 `views.xxx` 的既有引用**完全不受影响**
+- 新功能写进 `views/reports.py`、`views/assets.py` 等独立模块，在 `__init__.py` 显式导入
+- legacy 只在必要时逐步搬运，不强制一次到位
+
+**验证**：
+- `manage.py check` 无问题
+- 16 个关键视图 + 4 个私有辅助函数全部可从包访问
+- URL 反向解析正常，`match.func.__module__` 仍指向 `views.legacy`
+- 324 个可调用对象在包与 legacy 中数量一致
+- 新增 `test_views_package.py` 7 例锁住转发完整性
+
+#### 客户匹配增强（新增功能，与用户确认的设计）
+
+**背景**：用户提出售出时「持有人留空、单位填客户名」，并询问是否自动创建客户档案。
+
+**讨论结论**（我给出的建议，用户采纳）：
+- 「持有人单位」**保留原名**：它还服务外借第三方、退供应商、送外修，改名「客户单位」会让这些场景语义矛盾
+- **不自动创建客户档案**：手写单位名常有错别字、简称全称混用，自动建档会产重复脏数据
+- 只在「精确匹配到唯一启用客户」时自动关联 `customer_ref`
+
+**实现**：新增 `apps/inventory/customer_matching.py`，三态返回：
+
+| 状态 | 含义 | 行为 |
+|---|---|---|
+| `matched` | 唯一命中 | 自动关联 `customer_ref` |
+| `none` | 无命中 / 名称为空 | 只存文本 |
+| `ambiguous` | 同名多条 | 不关联，交人工判断 |
+
+**刻意不做模糊匹配**：`'某某科技'` 不会匹配 `'某某科技有限公司'`。
+
+**接入点**：`workflow/services.py` 售出执行时，若 `external_holder_company`
+精确匹配客户且资产尚无客户关联，则补上 `customer_ref`。
+
+**新增测试** `test_customer_matching_and_narrowing.py` 15 例：
+精确匹配、空值、未知名称、部分名不匹配、同名多条、停用客户不匹配、
+售出时自动关联、售出无匹配只存文本、xlsx 嗅探收窄、context_processor 收窄。
+
+---
+
 ### 6. 当前模块深挖（本轮：权限与审计）
 
 **优点（已验证）**：

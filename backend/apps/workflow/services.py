@@ -31,6 +31,7 @@ from apps.common.permissions import (
 from apps.common.utils import build_daily_code
 from apps.inventory.lifecycle_services import ensure_maintenance_from_workflow
 from apps.inventory.availability import is_asset_available
+from apps.inventory.customer_matching import match_customer_by_name
 from apps.inventory.models import Asset, CompositeUnit, ItemType, Location, StockItem, StockItemHolding, Warehouse
 from apps.inventory.state_services import RETURNABLE_ASSET_STATUSES
 from apps.notifications.models import Notification
@@ -770,6 +771,17 @@ def _process_asset(request_obj, line, actor, comment, *, return_received=True):
         ) and (request_obj.recipient_name or request_obj.recipient_company or request_obj.recipient_phone):
             asset.current_holder, asset.department = None, None
             asset.external_holder_name, asset.external_holder_company, asset.external_holder_phone = _recipient_snapshot(request_obj)
+            # 售出时若「持有人单位」精确匹配到已有客户档案，顺手把资产的客户关联补上，
+            # 便于将来按客户维度查设备去向。匹配不到或同名多条都不关联（只保留文本），
+            # 避免自动建档产出重复脏数据——这是与用户确认过的取舍。
+            if (
+                request_obj.request_type == WorkflowRequest.RequestType.SALE
+                and not asset.customer_ref_id
+                and asset.external_holder_company
+            ):
+                matched, status = match_customer_by_name(asset.external_holder_company)
+                if matched is not None:
+                    asset.customer_ref = matched
         else:
             asset.current_holder, asset.department = request_obj.applicant, request_obj.department
             asset.external_holder_name = asset.external_holder_company = asset.external_holder_phone = ''
