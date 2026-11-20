@@ -530,6 +530,144 @@ OK
 
 ---
 
+### 5.3 第二轮复盘：inventory 领域与并发正确性（2026-11-20）
+
+#### 代码规模与测试分布（实测）
+
+| 模块 | 文件 | 行数 |
+|---|---|---|
+| apps（全部）| 127 | 30,980 |
+| warehouse_backend | 6 | 388 |
+| **测试** | **62 个文件** | **7,960 行** |
+| 测试/代码比 | — | **0.25** |
+
+最大的非测试文件：
+
+| 行数 | 文件 |
+|---|---|
+| 5,119 | `common/views/legacy.py` |
+| 1,864 | `workflow/services.py` |
+| 1,654 | `inventory/models.py` |
+| 802 | `inventory/v2_import_services.py` |
+| 781 | `inventory/admin.py` |
+
+测试分布：`common` 33 个 / `inventory` 19 个 / `workflow` 7 个 / `notifications` 2 个 / `accounts` 1 个。
+
+#### P2-07（新发现）：V2 资产导入不可撤销
+
+**位置**：
+
+| 文件 | 行号 |
+|---|---|
+| `inventory/v2_import_services.py` | `apply_asset_v2_import` L617（**无快照**）|
+| `inventory/v3_import_services.py` | `apply_inventory_v3_import` L390（**有快照**）|
+| `inventory/import_recovery_services.py` | L169-171（依赖 mutations）|
+
+**证据（静态计数）**：
+
+| 指标 | V2 | V3 |
+|---|---|---|
+| `ImportMutation` 提及 | **0** | 7 |
+| `snapshot_instance` | **0** | 6 |
+| `record_import_mutation` | **0** | 5 |
+| `@transaction.atomic` | 1 | 1 |
+
+`rollback_import_batch` 的实现：
+
+```python
+mutations = list(batch.mutations.select_for_update().order_by('-created_at'))
+if not mutations:
+    raise ImportRecoveryError('该批次没有可逆变更账本，不能自动撤销。')
+```
+
+**V2 不写 mutation → 回滚必然抛出该错误。**
+
+**触发条件**：用 V2 模板（单件资产表）导入后尝试撤销该批次。
+
+**影响**：
+
+| 导入路径 | 事务保护 | 提交后可否撤销 |
+|---|---|---|
+| V3（资产+耗材）| ✅ 全成功/全失败 | ✅ 完整撤销 |
+| V2（单件资产）| ✅ 全成功/全失败 | ❌ **不可撤销** |
+
+**为什么定级 P2 而非 P1**：
+1. **事务保证原子性** —— 不会产生半截数据
+2. **有明确错误提示** —— 不会让人误以为已撤销
+3. **有数据库备份兜底**（34 份历史备份）
+4. **导入页只提供 V3 模板**（`views/legacy.py:2902-2907` 的 `download=template` 只构建 V3），
+   用户正常操作走的是可撤销路径
+
+**修复建议（两条，后者成本极低）**：
+
+- **A（推荐，10 分钟）**：V2 导入成功后，在 `batch.summary` 写入
+  `'reversible': False`，并在导入页与批次详情明确提示「此模板不支持撤销，请使用 V3 模板」。
+- B（30 分钟）：给 V2 补 `record_import_mutation` 调用，与 V3 对齐。
+
+**验证方法**：用 V2 模板导入一条资产，尝试撤销，确认：
+- 现状：报「没有可逆变更账本」
+- 修复后：页面提前提示不可撤销，或能正常撤销
+
+**修复风险**：A 无风险；B 需完整回归 V2 导入路径。
+
+#### 并发正确性核查（结论：良好）
+
+**唯一约束覆盖充分**：
+
+| 模型 | `UniqueConstraint` 数 |
+|---|---|
+| `inventory` | **12 个** |
+| `workflow` | **3 个** |
+
+关键约束包括：
+- `unique_product_model_code_per_asset_type`（型号代码按设备类型唯一）
+- `unique_asset_code_sequence`（编码序列唯一）
+- `normalized_value` 条件唯一（资产标识去重）
+- 主标识、装配关系、子件关系的条件唯一
+
+**关键字段唯一性**：
+
+| 字段 | 定义 |
+|---|---|
+| `system_asset_no` | `unique=True`（L483）✅ |
+| `asset_code` | `unique=True, null=True`（L486）✅ |
+| `request_no` | `unique=True` ✅ |
+
+**`IntegrityError` 兜底**：4 个文件使用（`common/utils.py`、`inventory/code_services.py`、
+`workflow/services.py`、`common/views/legacy.py`），覆盖编码生成与单号生成的并发冲突。
+
+**结论**：并发保护是「数据库唯一约束为主 + 应用层 select_for_update 为辅」的正确结构，
+不是纯应用层判断。
+
+#### 盘点模块（`check_services.py`，595 行）
+
+| 指标 | 值 |
+|---|---|
+| 函数数 | 19 |
+| `@transaction.atomic` | **8 个** |
+| `select_for_update` | **14 处** |
+
+事务覆盖所有写操作（`create_check_task`、`start_check_task`、`scan_check_value`、
+`correct_check_line`、`submit_check_task`、`reopen_check_task`、`review_check_task`、
+`cancel_check_task`），无事务的 11 个函数均为校验/查询/通知类辅助函数。
+
+**结论**：事务边界正确。
+
+#### 误报澄清（避免后续重复排查）
+
+静态扫描曾标出 7 处「先查后写」疑似并发风险，逐个核对后：
+
+| 位置 | 判定 |
+|---|---|
+| `code_services.py:339` | **误报** —— 是读取 `new_identifier` 后写审计记录，非 check-then-act |
+| `conversion_services.py:125`、`lifecycle_services.py:365/408` | 需逐个确认，但均在 `@transaction.atomic` 内且有 `select_for_update` |
+| `tests.py`、`management/commands/` | 测试与一次性脚本，非运行时路径 |
+
+「`system_asset_no` 未找到 unique」也是误报 —— 正则跨行匹配失败，
+实际定义在 `models.py:482-484`，明确 `unique=True`。
+
+---
+
 ### 6. 当前模块深挖（本轮：权限与审计）
 
 **优点（已验证）**：
