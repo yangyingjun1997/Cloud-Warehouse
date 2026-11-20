@@ -786,6 +786,11 @@ def apply_asset_v2_import(
     batch.summary = {
         **batch.summary,
         'template_version': 2,
+        # V2 导入不写 ImportMutation 账本，因此提交后无法用
+        # rollback_import_batch 撤销（它会因「没有可逆变更账本」而拒绝）。
+        # 这里显式标记，让导入页与批次详情能提前告知用户，而不是等到
+        # 点撤销时才收到一条看不懂的错误。V3 路径有完整快照，不受影响。
+        'reversible': False,
         'created_count': created_count,
         'updated_count': updated_count,
         'baseline_disabled_count': disabled_count,

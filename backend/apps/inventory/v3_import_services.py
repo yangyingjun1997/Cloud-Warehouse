@@ -491,6 +491,9 @@ def apply_inventory_v3_import(*, actor, batch, records, warning_reason=''):
     batch.summary = {
         **batch.summary,
         'template_version': TEMPLATE_VERSION,
+        # 与 V2 对齐：显式声明可撤销性。V3 全程写 ImportMutation 快照，
+        # 因此支持 rollback_import_batch 完整撤销。
+        'reversible': True,
         'asset_created_count': asset_created,
         'asset_updated_count': asset_updated,
         'created_count': asset_created + stock_created,
