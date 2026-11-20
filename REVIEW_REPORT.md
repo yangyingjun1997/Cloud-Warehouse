@@ -553,7 +553,7 @@ OK
 
 测试分布：`common` 33 个 / `inventory` 19 个 / `workflow` 7 个 / `notifications` 2 个 / `accounts` 1 个。
 
-#### P2-07（新发现）：V2 资产导入不可撤销
+#### P2-07（**已修复并部署**）：V2 资产导入不可撤销
 
 **位置**：
 
@@ -598,7 +598,7 @@ if not mutations:
 4. **导入页只提供 V3 模板**（`views/legacy.py:2902-2907` 的 `download=template` 只构建 V3），
    用户正常操作走的是可撤销路径
 
-**修复建议（两条，后者成本极低）**：
+**修复实施（2026-11-20，方案 A）**：V2 导入时在 `batch.summary` 写入 `'reversible': False`，V3 写入 `True`；导入页对 `reversible=False` 的已导入批次显示警示条，说明「不支持自动撤销，请改用 V3 模板」。撤销入口的 `mutations.exists` 条件保持不变。新增 8 例测试。**原修复建议（保留供参考）**：
 
 - **A（推荐，10 分钟）**：V2 导入成功后，在 `batch.summary` 写入
   `'reversible': False`，并在导入页与批次详情明确提示「此模板不支持撤销，请使用 V3 模板」。
@@ -665,6 +665,103 @@ if not mutations:
 
 「`system_asset_no` 未找到 unique」也是误报 —— 正则跨行匹配失败，
 实际定义在 `models.py:482-484`，明确 `unique=True`。
+
+---
+
+### 5.4 第三轮复盘：通知链路与 PWA/离线（2026-11-20）
+
+#### 通知与 outbox（结论：实现扎实）
+
+模块规模：`dingtalk.py` 167 行、`outbox.py` 134 行、`low_stock.py` 167 行、
+`return_reminders.py` 138 行。
+
+**投递机制**：
+
+| 项 | 实现 |
+|---|---|
+| 触发频率 | systemd timer **每 1 分钟**（`AccuracySec=10s`、`Persistent=true`）|
+| 抢占方式 | `_claim_due` 按 `next_attempt_at` 排序 + `lock_timeout`（10 分钟）防重复处理 |
+| 最大重试 | **8 次**（`max_attempts=8`）|
+| 重试退避 | **指数退避**：`min(60 × 2^(n-1), 6小时)`，即 60s → 2min → 4min … 封顶 6 小时 |
+| 失败处理 | 超过 8 次置 `FAILED`，`last_error` 记录原因（截断 500 字符）|
+| 异常兜底 | `except Exception` + `logger.exception` 记录完整堆栈，不中断整批 |
+| HTTP 超时 | **5 秒**（`DINGTALK_TIMEOUT_SECONDS`，可配）|
+
+**三种投递模式**（`_deliver`）：
+
+1. `GROUP` —— 群机器人，要求全部成功
+2. `PERSONAL` —— 逐人发送，要求所有活跃接收人成功
+3. 混合 —— 群成功或全部个人成功即视为送达
+
+**失败原因会保留并去重**（`sorted({result.reason ...})`），便于排查。
+
+**评价**：退避策略、锁超时、异常隔离三者齐备，属于生产级实现，无需改进。
+
+#### PWA 与离线（结论：幂等设计完整，此前 grep 误报）
+
+**Service Worker**（`views.legacy.service_worker` 动态生成）：
+
+| 能力 | 存在 |
+|---|---|
+| `install` / `activate` 钩子 | ✅ |
+| `skipWaiting` + `clients.claim` | ✅（新版本立即接管）|
+| `fetch` 拦截 | ✅ |
+| 静态资源清单 | ✅ |
+| 强制新鲜资源（`FRESH_STATIC_PATHS`）| ✅（`scanner.js`、`offline.js` 不走缓存）|
+| 缓存版本 | ✅ 按静态文件 mtime 自动派生（`_static_cache_version`）|
+
+**离线队列**（`offline.js`，362 行）：使用 IndexedDB，按 `status` 区分
+`synced` / `orphaned`，过期与已同步记录会被清理。
+
+**离线提交的幂等性（重点核实）**：
+
+`workflow/offline_services.py` 的 `receive_offline_operation` 有完整三层保护：
+
+```python
+operation, created = OfflineOperation.objects.select_for_update().get_or_create(
+    client_operation_id=operation_id,      # 1) 幂等键去重
+    defaults={...},
+)
+if operation.operator_id != operator.id:
+    raise WorkflowError('该离线操作编号已由其他账号使用。')
+if not created:
+    if operation.payload != payload or operation.client_created_at != parsed_created_at:
+        raise WorkflowError('该离线操作编号对应的原始内容不一致…')   # 2) 内容指纹校验
+    operation.retry_count += 1             # 3) 重复提交只计数，不重复入库
+    return operation, False
+```
+
+| 保护 | 作用 |
+|---|---|
+| `client_operation_id` | 同一操作重复提交只产生一条记录 |
+| **payload + 时间戳比对** | 同 ID 不同内容直接拒绝，防止客户端 bug 造成串号 |
+| `select_for_update` | 并发提交不产生两条 |
+
+**盘点扫描的幂等性**（`check_services.scan_check_value`）：
+
+```python
+if line and line.counted_quantity is not None:
+    result = InventoryCheckScan.Result.DUPLICATE   # 重复扫描标记 DUPLICATE
+elif line:
+    line.counted_quantity = 1                       # 仅首次写入
+```
+
+**重复扫描同一资产不会重复计数**，离线重放安全。
+
+**误报澄清**：本轮初期用中文关键词（`幂等键`、`客户端请求 ID`）grep，
+得到「0 次」并一度以为缺失。实际代码用的是 `client_operation_id`，
+且实现完整。**教训：审查应搜代码标识符，不要搜中文注释词。**
+
+#### 本轮总体评价
+
+| 域 | 评价 |
+|---|---|
+| 通知 / outbox | 生产级：指数退避 + 锁超时 + 异常隔离 + 失败留痕 |
+| PWA / Service Worker | 缓存版本自动派生，关键脚本强制新鲜，无手工维护风险 |
+| 离线队列 | 三层幂等保护，重放安全 |
+| 盘点扫描 | 重复扫描标记 DUPLICATE，不重复计数 |
+
+**未发现新增缺陷。**
 
 ---
 
