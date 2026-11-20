@@ -86,7 +86,11 @@
 
       <div class="form-grid request-form-grid">
         {% comment %}用途开关：与新建申请保持一致。日常出入库不需要挂项目/工单/客户，选了才展开，避免 19 个字段一次性铺满。{% endcomment %}
-        <div class="form-field full">
+        {% comment %}用途开关只在「借用/领用」显示——这两类才真正需要选「日常」还是「挂项目客户」。
+           归还、调拨、维修、报损、报废、退供应商都不涉及项目，隐藏并自动按「日常」提交。
+           出售必然挂客户：隐藏选择，由 JS 自动置为「项目/客户」并强制填客户单位，
+           避免用户选「日常」导致客户字段被禁用、customer_ref 永远关联不上。{% endcomment %}
+        <div class="form-field full" data-types="borrow,issue,sale">
           <label>用途 <span class="required">*</span></label>
           <div class="usage-scope-row">
             <label class="usage-scope-option"><input type="radio" name="usage_scope" value="daily" {% if request.POST.usage_scope != 'project' %}checked{% endif %}> 日常使用（补发、内部借用、归还等）</label>

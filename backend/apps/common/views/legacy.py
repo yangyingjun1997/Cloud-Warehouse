@@ -4120,7 +4120,14 @@ def quick_inventory_process(request):
             # 用途为「日常」时前端会禁用项目相关字段，浏览器不提交这些值。
             # 这里再兜一层：即使有人手工构造请求，也不让日常单挂上项目/工单/客户，
             # 否则按项目统计时会把普通补发算进项目。
-            _is_project_scope = request.POST.get('usage_scope', 'daily') == 'project'
+            #
+            # 出售例外：出售必然有客户，前端已隐藏用途开关并自动置为 project。
+            # 若开关被隐藏导致 usage_scope 未提交，这里按出售语义强制视为 project，
+            # 否则会把客户信息整体丢弃（下一步的「必须填客户单位」校验也会失去意义）。
+            if request_type == WorkflowRequest.RequestType.SALE:
+                _is_project_scope = True
+            else:
+                _is_project_scope = request.POST.get('usage_scope', 'daily') == 'project'
             if not _is_project_scope:
                 customer_ref = None
                 project_ref = None
@@ -4677,6 +4684,8 @@ def request_create(request, request_id=None):
         # 用途为「日常」时，前端会把项目相关字段禁用，浏览器不提交这些值。
         # 这里再兜一层：即使有人手工构造请求，也不让日常单挂上项目/工单/客户，
         # 否则报表按项目统计时会把普通借用算进项目。
+        # 注意：归还/报修页面上不显示用途开关，此时 POST 里没有 usage_scope，
+        # 默认按 'daily' 处理——这正是这两类单据应有的语义。
         if request.POST.get('usage_scope', 'daily') != 'project':
             customer_ref = None
             project_ref = None
