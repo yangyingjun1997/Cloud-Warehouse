@@ -12,7 +12,7 @@
 | 维度 | 结果 |
 |---|---|
 | 静态检查 | `manage.py check` 无问题、无迁移漂移、`pip check` 无冲突 |
-| 测试 | **728/728 通过**，跳过 8 项 PostgreSQL 专项 |
+| 测试 | **736/736 通过**；PostgreSQL 并发 **6/6 通过**（已在 NUC 独立库验证）|
 | 依赖漏洞 | 修复前：本机 **121 条**、生产 **65 条**；**修复后两端均为 0** |
 | 权限边界 | 匿名/员工/管理员三层实测**全部正确** |
 | 视图权限 | 三个视图文件的**所有** `def xxx(request)` 均有装饰器 |
@@ -377,6 +377,156 @@ apps/common/views/
 **新增测试** `test_customer_matching_and_narrowing.py` 15 例：
 精确匹配、空值、未知名称、部分名不匹配、同名多条、停用客户不匹配、
 售出时自动关联、售出无匹配只存文本、xlsx 嗅探收窄、context_processor 收窄。
+
+---
+
+### 5.2 本轮（2026-11-20 下午）修复与验证记录
+
+#### 缺陷 P1-02（**已修复并部署**）：库管代借时资产被记成外部持有人
+
+**触发条件**：库管走快速出入库，「接收人」选择系统内账号。
+
+**实测现象**：
+
+| 项目 | 修复前 |
+|---|---|
+| 单据 applicant | 库管 |
+| 单据 recipient | 实际借用人（外键正确写入）|
+| 资产 `current_holder` | **空** |
+| 资产 `external_holder_name` | **「实际借用人」（存成文本）** |
+| 实际借用人能否在「我的借用」看到 | **不能** |
+
+**影响**：设备借出后，系统里**没有任何人**能追溯去向。接收人外键被写入却从不读取，
+`current_holder` 为空导致「我的借用」、资产详情、责任人统计全部失效。
+
+**根因**（`workflow/services.py` 原 768-773 行）：
+
+```python
+if (SALE or is_quick_process) and (recipient_name or ...):
+    asset.current_holder = None                          # 无条件清空
+    asset.external_holder_* = _recipient_snapshot(...)   # 一律存文本
+```
+
+判断依据是「是不是快速出入库」，而不是「接收人是什么」，因此丢掉了 `recipient` 外键。
+
+**修复**：按接收人类型分流，并限定只有真正出库到人的类型才设持有人。
+
+| 条件 | 处理 |
+|---|---|
+| 有 `recipient` 外键 | `current_holder` 落外键，department 从 profile 取 |
+| 只有文本 | `current_holder` 置空，存 `external_*` |
+| 都没有 | 落 `applicant` |
+
+只对借用 / 领用 / 出售设持有人；报废 / 退供应商 / 报损 / 维修 / 归还 / 调拨不设，
+避免报废设备被挂到某个人名下。
+
+**连带修复 `my_loans`**：单据查询原为 `request__applicant=request.user`，
+改为 `(applicant=本人 OR recipient=本人)`。库管代借的单据因此也能查到。
+
+**验证**（新增 `test_delegated_holder.py` 8 例）：
+内部接收人落外键、外部接收人存文本、无接收人落申请人、借用人能看到设备与单据号、
+报废不设持有人、出售缺客户单位被拒、出售有单位可提交、资产页能跳转单据。
+
+#### 缺陷 P1-03（**已修复并部署**）：单据模板缺少场景约束
+
+**现象**：快速出入库开放 9 种类型，全部共用一套 21 字段表单，产生 5 类错配：
+
+| # | 错配 | 后果 |
+|---|---|---|
+| 1 | **出售也显示「日常使用」** | 选日常 → 客户字段被禁用 → `customer_ref` 永远关联不上 |
+| 2 | 归还/调拨显示接收人 | 语义错误（设备回仓/换仓，无人接收）|
+| 3 | 报废/退供应商显示接收人与归还日期 | 终态操作不需要 |
+| 4 | 维修显示「预计归还日期」 | 维修不是借出 |
+| 5 | 9 种类型共用一套出库话术快捷原因 | 报废场景提示「客户现场紧急更换」 |
+
+**修复**：
+
+1. **出售强制客户单位**：后端校验拒绝无单位提交；前端强制用途切到「项目/客户」
+   并锁定「日常」选项，避免用户选日常导致客户字段被禁用。
+2. **回仓类与处置类隐藏接收人区块**：`data-recipient-block` 标记 5 个字段
+   （接收人下拉、外部勾选框、姓名、电话、使用地点），按类型整体隐藏并禁用。
+
+**验证**：`test_delegated_holder.py` 中的出售用例（缺单位被拒 / 有单位可提交）。
+
+#### 增强：资产与单据双向跳转
+
+- **资产详情页**：「当前持有人」后显示关联单据号并可点击跳转。
+  查询按「资产 + 出库类型 + 已完成」过滤，**不按 applicant 过滤**，
+  因此库管代借场景下同样能跳转。
+- **编辑资产页**：状态卡片增加「详情与关联单据」入口。
+- **我的借用页**：显示单据号并可跳转（此前只有按钮，无单号）。
+
+#### 深挖 workflow/services.py（静态审计结果）
+
+文件 1864 行、52 个函数、23 处 `@transaction.atomic`。
+
+**事务边界（结论：正确）**：
+9 个「无事务装饰器但有写操作」的函数全部是私有辅助函数
+（`_process_asset`、`_process_stock_item`、`_finish_reservations`、`_log` 等），
+它们只在已开启事务的公开函数内被调用（`process_request` 有 `@transaction.atomic`）。
+这是「公开函数控制事务、私有函数复用」的正确分层，不是缺陷。
+
+**状态机路径**（7 处赋值，全部合法）：
+
+| 行号 | 目标状态 | 触发 |
+|---|---|---|
+| 278 | CLOSED | 超时自动关闭 |
+| 493 | PENDING | 提交 |
+| 525 | WAITING_WAREHOUSE | 审批通过 |
+| 566 | REJECTED | 驳回 |
+| 592 | CANCELED | 撤回 |
+| 1032 / 1089 | DONE | 执行完成（资产 / 耗材路径）|
+
+**预占释放覆盖**（4 处，完整）：
+
+| 场景 | 状态 | 行号 |
+|---|---|---|
+| 超时关闭 | RELEASED | 280 |
+| 驳回 | RELEASED | 568 |
+| 撤回 | RELEASED | 594 |
+| 执行完成 | CONSUMED | 1034 |
+
+**加锁顺序**（22 处 `select_for_update`）：统一按 `order_by('id')` 或
+`order_by('pk')` 排序后加锁（L191/L195），避免不同事务以不同顺序加锁造成死锁。
+`select_for_update(of=('self',))` 用在带 `select_related` 的查询上，只锁主表，
+避免连带锁住关联表——这是正确的细粒度控制。
+
+**结论**：未发现事务边界、状态机或加锁顺序方面的缺陷。
+
+#### PostgreSQL 并发测试（**6/6 通过**）
+
+**执行方式**（严格遵守「不操作生产库」）：
+
+1. 临时授予 `warehouse_app` CREATEDB 权限
+2. Django 创建 `test_warehouse_conc_test` 独立测试库（template0，不复制生产数据）
+3. 执行 6 项并发测试
+4. **无论成败**：撤销 CREATEDB、删除测试库
+
+**结果**：
+
+```
+Found 6 test(s).
+Ran 6 tests in 8.467s
+OK
+```
+
+| 测试 | 验证内容 |
+|---|---|
+| `test_two_approvers_cannot_decide_the_same_request_twice` | 双审批人并发决策同一单，只有一个成功 |
+| `test_two_requests_cannot_reserve_the_same_asset` | 两单并发预占同一资产，不重复占用 |
+| `test_two_quick_operations_cannot_ship_the_same_asset` | 两次快速出库同一资产，不重复出库 |
+| `test_parallel_stock_decrements_cannot_oversell` | 并发扣减耗材不超卖 |
+| `test_parallel_failures_are_not_lost_between_gunicorn_workers` | 跨 worker 登录失败计数不丢失 |
+
+**善后核对**：
+
+```
+--- 角色权限 --- warehouse_app|f   （CREATEDB 已撤销）
+--- 数据库列表 --- postgres, warehouse   （测试库已删除）
+--- 生产服务 --- active，health 200
+```
+
+**这项验证此前一直是缺口**（本机 SQLite 会跳过这 6 项），现已补上。
 
 ---
 
