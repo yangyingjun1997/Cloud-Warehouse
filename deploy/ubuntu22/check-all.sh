@@ -103,6 +103,16 @@ else
   bad "存在依赖冲突"
 fi
 
+# 锁文件一致性（2026-11-23 新增）：pip check 只查已装包之间是否冲突，
+# 查不出「requirements.txt 改了范围却没重生 lock」这类漂移——
+# 那种情况本机能跑、服务器却装到不同版本。
+step "依赖锁一致性"
+if "$PY" "$BACKEND/scripts/check_requirements_consistency.py" >/dev/null 2>&1; then
+  ok "requirements 三个文件一致"
+else
+  bad "requirements 文件不一致（改范围后需重生 lock）"
+fi
+
 step "差异空白字符"
 if git -C "$REPO_ROOT" diff --check >/dev/null 2>&1; then
   ok "git diff --check"
