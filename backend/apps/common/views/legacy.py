@@ -54,7 +54,7 @@ from apps.common.settings_forms import SiteSettingsForm
 from apps.common.version import release_info
 from apps.common.middleware import CACHE_RESET_COOKIE, CACHE_RESET_VERSION
 from apps.common.permissions import (
-    PERMISSION_GROUPS, can_approve_workflow, can_change_asset_domain, can_execute_inventory,
+    PERMISSION_GROUPS, ROLE_GROUPS, can_approve_workflow, can_change_asset_domain, can_execute_inventory,
     can_import_inventory, can_manage_admin_code, can_manage_code_master, can_manage_inventory,
     can_print_asset_labels, can_correct_asset_state, can_view_financials,
     can_review_accounts,
@@ -936,6 +936,12 @@ def home(request):
             outstanding_quantity__gt=0,
             expected_return_date__lt=today,
         ).count()
+    # 质保到期统计：只有能看报表的角色才计算，普通员工的工作台不需要这个卡片。
+    warranty_stats = None
+    if can_view_reports(request.user):
+        from apps.inventory.warranty_services import warranty_summary
+
+        warranty_stats = warranty_summary()
     context = {
         'user_is_operator': user_is_operator,
         'user_is_system_admin': user_is_system_admin,
@@ -947,6 +953,10 @@ def home(request):
         'in_stock_count': Asset.objects.filter(available_asset_filter()).count(),
         'borrowed_count': status_counts.get('borrowed', 0) + status_counts.get('issued', 0),
         'low_stock_count': low_serialized_types.count() + low_stock_items.count(),
+        # 质保到期（2026-11-23 新增）：只对能看到报表的角色计算，
+        # 避免每个员工开工作台都多两次聚合查询。
+        'warranty_expiring_count': warranty_stats['expiring'] if warranty_stats else 0,
+        'warranty_expired_count': warranty_stats['expired'] if warranty_stats else 0,
         'pending_request_count': pending_requests.count(),
         'overdue_asset_count': overdue_asset_count,
         'overdue_stock_count': overdue_stock_count,
@@ -1177,7 +1187,7 @@ def permission_management(request):
     # 敏感操作的二次授权：拥有「账号开通与建号」权限可以审批申请、建号、重置密码，
     # 但删除账号和修改他人权限仍限定系统管理员，避免权限被静默放大。
     can_manage_roles = is_system_administrator(request.user)
-    group_names = [*PERMISSION_GROUPS, 'warehouse_admin']
+    group_names = [*PERMISSION_GROUPS, *ROLE_GROUPS, 'warehouse_admin']
     groups = {}
     for group_name in group_names:
         groups[group_name], _ = Group.objects.get_or_create(name=group_name)
@@ -2017,6 +2027,65 @@ def low_stock_alerts(request):
     return render(request, 'low_stock_alerts.html', {
         'alert_rows': rows,
         'user_can_manage_inventory': can_manage_inventory(request.user),
+        'user_can_use_admin': is_system_administrator(request.user),
+        'user_is_operator': True,
+        'user_is_system_admin': is_system_administrator(request.user),
+        'user_role_label': _user_role_label(request.user, True, is_system_administrator(request.user)),
+    })
+
+
+@role_required(can_view_reports, message='当前账号没有质保到期查看权限。')
+def warranty_alerts(request):
+    """资产质保到期提醒（2026-11-23 新增）。
+
+    636 件资产里带质保到期日的不少，但此前系统没有任何「即将过保」入口，
+    到期日只是一列静态数据。设备过保后维修费用从供应商承担变成自己承担，
+    属于资产管理的刚需提示。
+    """
+    from apps.inventory.warranty_services import (
+        DEFAULT_WARNING_DAYS,
+        WARRANTY_WARNING_DAYS,
+        days_left,
+        warranty_expiring_queryset,
+    )
+
+    raw_days = request.GET.get('days', '')
+    try:
+        days = int(raw_days)
+    except (TypeError, ValueError):
+        days = DEFAULT_WARNING_DAYS
+    if days not in WARRANTY_WARNING_DAYS:
+        days = DEFAULT_WARNING_DAYS
+
+    today = timezone.localdate()
+    rows = []
+    expired_count = expiring_count = 0
+    for asset in warranty_expiring_queryset(days):
+        remaining = days_left(asset)
+        if remaining is None:
+            continue
+        is_expired = remaining < 0
+        if is_expired:
+            expired_count += 1
+        else:
+            expiring_count += 1
+        rows.append({
+            'asset': asset,
+            'remaining': remaining,
+            'is_expired': is_expired,
+            'warranty_until': asset.warranty_until,
+            # 已过保按过期最久排前面，即将过保按最快到期排前面
+            'sort_key': remaining,
+        })
+    rows.sort(key=lambda row: row['sort_key'])
+
+    return render(request, 'warranty_alerts.html', {
+        'rows': rows,
+        'days': days,
+        'day_choices': WARRANTY_WARNING_DAYS,
+        'expired_count': expired_count,
+        'expiring_count': expiring_count,
+        'today': today,
         'user_can_use_admin': is_system_administrator(request.user),
         'user_is_operator': True,
         'user_is_system_admin': is_system_administrator(request.user),

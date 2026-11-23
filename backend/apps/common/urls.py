@@ -28,6 +28,7 @@ urlpatterns = [
     path('warehouse/assets.csv', views.warehouse_asset_export, name='warehouse_asset_export'),
     path('warehouse/items/new/', views.warehouse_item_create, name='warehouse_item_create'),
     path('warehouse/low-stock/', views.low_stock_alerts, name='low_stock_alerts'),
+    path('warehouse/warranty/', views.warranty_alerts, name='warranty_alerts'),
     path('warehouse/replenishment/', views.replenishment_suggestions, name='replenishment_suggestions'),
     path('warehouse/purchase-drafts/', views.purchase_draft_list, name='purchase_draft_list'),
     path('warehouse/purchase-drafts/<uuid:purchase_id>/', views.purchase_draft_detail, name='purchase_draft_detail'),

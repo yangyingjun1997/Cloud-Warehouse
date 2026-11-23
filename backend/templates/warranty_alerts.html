@@ -1,0 +1,132 @@
+{% extends "web_base.html" %}
+{% block title %}质保到期提醒 - 售后仓库管理系统{% endblock %}
+{% block crumb %}仓库管理 / 质保到期{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <h1>质保到期提醒</h1>
+    <p class="page-copy">设备过保后维修费用由供应商承担变为自行承担。按到期时间排序，已过保的排在最前。</p>
+  </div>
+  <div class="page-actions">
+    <a class="button button-secondary" href="{% url 'warehouse_management' %}">返回仓库管理</a>
+  </div>
+</div>
+
+<section class="metric-grid">
+  <article class="metric">
+    <div class="metric-label">已过保</div>
+    <div class="metric-value">{{ expired_count }}</div>
+    <div class="metric-note">维修费用需自行承担</div>
+  </article>
+  <article class="metric">
+    <div class="metric-label">{{ days }} 天内到期</div>
+    <div class="metric-value">{{ expiring_count }}</div>
+    <div class="metric-note">建议提前安排续保或采购</div>
+  </article>
+  <article class="metric">
+    <div class="metric-label">合计待关注</div>
+    <div class="metric-value">{{ rows|length }}</div>
+    <div class="metric-note">已排除报废、售出、退供应商的设备</div>
+  </article>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>提醒范围</h2>
+    <span>提前 {{ days }} 天</span>
+  </div>
+  <div class="page-actions" style="padding:10px 14px">
+    {% for choice in day_choices %}
+      <a class="text-action" {% if choice == days %}style="font-weight:700"{% endif %}
+         href="?days={{ choice }}">提前 {{ choice }} 天</a>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel table-panel standalone-table desktop-only">
+  <div class="panel-head">
+    <h2>资产质保明细</h2>
+    <span>{{ rows|length }} 项</span>
+  </div>
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>资产</th>
+          <th>质保到期日</th>
+          <th>剩余天数</th>
+          <th>当前持有人</th>
+          <th>仓库 / 库位</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>
+            <strong>{{ row.asset.name }}</strong>
+            <div class="queue-meta code">{{ row.asset.asset_code|default:row.asset.system_asset_no }}</div>
+          </td>
+          <td>{{ row.warranty_until|date:'Y-m-d' }}</td>
+          <td>
+            {% if row.is_expired %}
+              <span class="tag rejected">已过保 {{ row.remaining|slice:"1:" }} 天</span>
+            {% elif row.remaining <= 30 %}
+              <span class="tag pending">{{ row.remaining }} 天</span>
+            {% else %}
+              <span class="tag">{{ row.remaining }} 天</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.asset.current_holder %}
+              {{ row.asset.current_holder.get_full_name|default:row.asset.current_holder.username }}
+            {% elif row.asset.external_holder_name %}
+              {{ row.asset.external_holder_name }}
+            {% else %}
+              <span class="muted">无</span>
+            {% endif %}
+          </td>
+          <td>
+            {{ row.asset.warehouse.name|default:'未分配' }}
+            {% if row.asset.location %}<div class="queue-meta">{{ row.asset.location.code }}</div>{% endif %}
+          </td>
+          <td>
+            <a class="table-action" href="{% url 'asset_lifecycle' row.asset.id %}">查看资产</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6"><div class="empty-state">当前范围内没有质保到期或即将到期的资产</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel mobile-only">
+  <div class="panel-head"><h2>资产质保明细</h2><span>{{ rows|length }} 项</span></div>
+  {% for row in rows %}
+  <article class="low-stock-mobile-row">
+    <div class="low-stock-mobile-head">
+      <div>
+        <strong>{{ row.asset.name }}</strong>
+        <small>{{ row.asset.asset_code|default:row.asset.system_asset_no }}</small>
+      </div>
+      {% if row.is_expired %}
+        <span class="tag rejected">已过保</span>
+      {% elif row.remaining <= 30 %}
+        <span class="tag pending">{{ row.remaining }} 天</span>
+      {% else %}
+        <span class="tag">{{ row.remaining }} 天</span>
+      {% endif %}
+    </div>
+    <div class="low-stock-mobile-details">
+      <div><span>质保到期</span><strong>{{ row.warranty_until|date:'Y-m-d' }}</strong></div>
+      <div><span>仓库 / 库位</span><strong>{{ row.asset.warehouse.name|default:'未分配' }}</strong></div>
+    </div>
+    <a class="button button-secondary" href="{% url 'asset_lifecycle' row.asset.id %}">查看资产</a>
+  </article>
+  {% empty %}
+  <div class="empty-state">当前范围内没有质保到期或即将到期的资产</div>
+  {% endfor %}
+</section>
+{% endblock %}
