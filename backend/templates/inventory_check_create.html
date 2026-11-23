@@ -7,13 +7,13 @@
 <div class="page-heading"><div><h1>新建盘点任务</h1><p class="page-copy">创建时会保存仓库内单件资产和耗材配件的账面快照。</p></div><a class="button button-secondary" href="{% url 'inventory_check_list' %}">返回任务列表</a></div>
 <section class="panel form-panel">
   <form method="post" class="stack-form">{% csrf_token %}
-    <div class="form-field"><label for="check-name">任务名称 <span class="required-mark">*</span></label><input id="check-name" name="name" required maxlength="160" placeholder="例如：2026 年 8 月研发库存盘点"></div>
+    <div class="form-field"><label for="check-name">任务名称 <span class="required-mark">*</span></label><input id="check-name" name="name" required maxlength="160" value="{% if prefill %}{{ prefill.name }}{% endif %}" placeholder="例如：2026 年 8 月研发库存盘点"></div>
     <div class="form-grid form-grid-2">
-      <div class="form-field"><label for="check-warehouse">盘点仓库 <span class="required-mark">*</span></label><select id="check-warehouse" name="warehouse_id" required><option value="">请选择仓库</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}">{{ warehouse.name }}（{{ warehouse.code }}）</option>{% endfor %}</select></div>
-      <div class="form-field"><label for="check-location">盘点库位 <span class="field-hint">可选</span></label><select id="check-location" name="location_id"><option value="">全仓库</option>{% for location in locations %}<option value="{{ location.id }}" data-warehouse="{{ location.warehouse_id }}">{{ location.warehouse.name }} / {{ location.code }} {{ location.name }}</option>{% endfor %}</select></div>
+      <div class="form-field"><label for="check-warehouse">盘点仓库 <span class="required-mark">*</span></label><select id="check-warehouse" name="warehouse_id" required><option value="">请选择仓库</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}" {% if prefill and prefill.warehouse_id == warehouse.id|stringformat:"s" %}selected{% endif %}>{{ warehouse.name }}（{{ warehouse.code }}）</option>{% endfor %}</select></div>
+      <div class="form-field"><label for="check-location">盘点库位 <span class="field-hint">可选</span></label><select id="check-location" name="location_id"><option value="">全仓库</option>{% for location in locations %}<option value="{{ location.id }}" data-warehouse="{{ location.warehouse_id }}" {% if prefill and prefill.location_id == location.id|stringformat:"s" %}selected{% endif %}>{{ location.warehouse.name }} / {{ location.code }} {{ location.name }}</option>{% endfor %}</select></div>
     </div>
-    <div class="form-field"><label for="check-note">任务说明 <span class="field-hint">可选</span></label><textarea id="check-note" name="note" rows="4" placeholder="填写盘点负责人、现场范围或注意事项"></textarea></div>
-    <div class="notice info">创建后会按当前账面生成明细。资产按单件核对，耗材配件按总数核对；盘点开始后才能录入结果。</div>
+    <div class="form-field"><label for="check-note">任务说明 <span class="field-hint">可选</span></label><textarea id="check-note" name="note" rows="4" placeholder="填写盘点负责人、现场范围或注意事项">{% if prefill %}{{ prefill.note }}{% endif %}</textarea></div>
+    {% if prefill %}<div class="notice success">已复用盘点任务 <strong>{{ prefill.source.check_no }}</strong> 的范围（{{ prefill.source.warehouse.name }}{% if prefill.source.location %} / {{ prefill.source.location.code }}{% endif %}）。确认后可直接创建。</div>{% endif %}<div class="notice info">创建后会按当前账面生成明细。资产按单件核对，耗材配件按总数核对；盘点开始后才能录入结果。</div>
     <div class="form-actions"><button class="button button-primary" type="submit">创建并查看任务</button><a class="button button-secondary" href="{% url 'inventory_check_list' %}">取消</a></div>
   </form>
 </section>

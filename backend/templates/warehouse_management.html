@@ -37,7 +37,7 @@
     <input id="management-query" name="q" class="management-search" value="{{ query }}" placeholder="搜索编码、SN、名称或别名；支持扫码枪扫码定位，支持 ! &amp; | ()" aria-label="搜索">
     <button class="button button-primary" type="submit">搜索</button>
     {% if has_active_filters %}<a class="button button-secondary" href="?{{ asset_reset_filter_query }}" title="清空搜索词和全部筛选条件，回到当前视图的初始列表">清空</a>{% else %}<span class="button button-secondary is-disabled" aria-disabled="true" title="当前没有筛选条件">清空</span>{% endif %}
-    {% if active_tab == 'assets' %}<a class="button button-secondary" href="{% url 'warehouse_asset_export' %}?{{ asset_filter_query }}" title="按当前筛选条件导出资产台账 CSV">导出 CSV</a>{% endif %}
+    {% if active_tab == 'assets' %}<a class="button button-secondary" href="{% url 'warehouse_asset_export' %}?{{ asset_filter_query }}" title="按当前筛选条件导出资产台账 CSV">导出 CSV</a>{% if global_can_print_asset_labels %}<a class="button button-secondary" href="{% url 'warehouse_qr_labels' %}?all_filtered=1&amp;{{ asset_filter_query }}" title="按当前筛选条件打印全部资产的二维码标签（跨页，单次上限 500 张）">打印全部标签</a>{% endif %}{% endif %}
     <details class="management-advanced">
       <summary>更多筛选{% if advanced_count %}<span class="filter-badge">{{ advanced_count }}</span>{% endif %}</summary>
       <div class="management-advanced-body">

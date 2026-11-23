@@ -24,7 +24,7 @@
     <td>{{ task.line_counted }} / {{ task.line_total }} 条{% if task.line_differences %}<div class="queue-meta danger-text">{{ task.line_differences }} 项差异</div>{% endif %}</td>
     <td><span class="tag {{ task.status }}">{{ task.get_status_display }}</span></td>
     <td>{{ task.created_by|person_label|default:'-' }}<div class="queue-meta">{{ task.created_at|date:'Y-m-d H:i' }}</div></td>
-    <td><a class="table-action" href="{% url 'inventory_check_detail' task.id %}?next={{ check_return_query|urlencode }}">查看任务</a></td>
+    <td><a class="table-action" href="{% url 'inventory_check_detail' task.id %}?next={{ check_return_query|urlencode }}">查看任务</a>{% if can_create_check %} <a class="table-action" href="{% url 'inventory_check_create' %}?from_task={{ task.id }}" title="按这次盘点的范围新建一个任务，省去重选仓库与库位">复用范围</a>{% endif %}</td>
   </tr>{% empty %}<tr><td colspan="7"><div class="empty-state">暂无盘点任务</div></td></tr>{% endfor %}
   </tbody></table></div>
 </section>

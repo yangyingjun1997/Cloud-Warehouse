@@ -942,6 +942,13 @@ def home(request):
         from apps.inventory.warranty_services import warranty_summary
 
         warranty_stats = warranty_summary()
+    # 借用台账盲区：借出但没有任何持有人信息的资产（导入历史数据常见）。
+    # 这类资产无法催办，但此前系统里没有任何地方提示，管理者看不到。
+    borrower_health = None
+    if user_is_operator:
+        from apps.inventory.borrow_health import summarize_borrow_health
+
+        borrower_health = summarize_borrow_health()
     context = {
         'user_is_operator': user_is_operator,
         'user_is_system_admin': user_is_system_admin,
@@ -957,6 +964,8 @@ def home(request):
         # 避免每个员工开工作台都多两次聚合查询。
         'warranty_expiring_count': warranty_stats['expiring'] if warranty_stats else 0,
         'warranty_expired_count': warranty_stats['expired'] if warranty_stats else 0,
+        'borrow_orphan_count': borrower_health['orphan'] if borrower_health else 0,
+        'borrow_total_count': borrower_health['total'] if borrower_health else 0,
         'pending_request_count': pending_requests.count(),
         'overdue_asset_count': overdue_asset_count,
         'overdue_stock_count': overdue_stock_count,
@@ -3199,6 +3208,38 @@ def inventory_check_list(request):
     })
 
 
+def _check_prefill_from_task(request):
+    """从 ?from_task=<id> 预填盘点范围（仓库 + 库位 + 名称）。
+
+    盘点通常按固定范围重复执行（例如「每月 A 仓全盘」）。让用户每次重选
+    仓库和库位是纯重复劳动；这里复用上一次任务的范围即可，
+    不需要建模型、不需要迁移。比新增「盘点模板表」轻得多。
+    """
+    raw_id = request.GET.get('from_task', '').strip()
+    if not raw_id:
+        return None
+    normalized = _normalized_uuid(raw_id)
+    if not normalized:
+        # 非 UUID 直接忽略：?from_task=abc 这类手工拼接不应让页面 500。
+        return None
+    source = (
+        InventoryCheckTask.objects
+        .select_related('warehouse', 'location')
+        .filter(pk=normalized)
+        .first()
+    )
+    if not source:
+        return None
+    today = timezone.localdate()
+    return {
+        'source': source,
+        'name': f'{source.warehouse.name}盘点 {today:%Y-%m}',
+        'warehouse_id': str(source.warehouse_id) if source.warehouse_id else '',
+        'location_id': str(source.location_id) if source.location_id else '',
+        'note': f'复用 {source.check_no} 的盘点范围',
+    }
+
+
 @role_required(is_system_administrator, message='当前账号没有盘点任务管理权限。')
 def inventory_check_create(request):
     if request.method == 'POST':
@@ -3217,6 +3258,10 @@ def inventory_check_create(request):
     return render(request, 'inventory_check_create.html', {
         'warehouses': Warehouse.objects.filter(is_active=True).prefetch_related('locations').order_by('name'),
         'locations': Location.objects.filter(is_active=True).select_related('warehouse').order_by('warehouse__name', 'code'),
+        # 复用上次盘点范围（2026-11-23 新增）：盘点通常每月/每季一次，
+        # 每次都要重新选仓库和库位。支持 ?from_task=<id> 预填上次的范围，
+        # 比建一张「盘点模板表」轻得多，且不需要新模型与迁移。
+        'prefill': _check_prefill_from_task(request),
         'user_can_use_admin': True,
         'user_is_operator': True,
         'user_is_system_admin': True,
@@ -3978,12 +4023,42 @@ def warehouse_setup_edit(request, section, object_id=None):
 def warehouse_qr_labels(request):
     raw_asset_ids = request.POST.getlist('asset_ids') or request.GET.getlist('asset_ids')
     asset_ids = _unique_uuid_values(raw_asset_ids)
-    if not raw_asset_ids:
+
+    # 按筛选条件打印全部（2026-11-23 新增）：跨页批量打标签。
+    # 台账分页后只能勾当前页，30 件以上就要翻页重复操作；
+    # 带上 all_filtered=1 与原始筛选参数即可一次打完当前筛选结果。
+    print_all_filtered = (
+        request.POST.get('all_filtered') == '1' or request.GET.get('all_filtered') == '1'
+    )
+    if not raw_asset_ids and not print_all_filtered:
         messages.error(request, '请先勾选至少一项资产再打印二维码。')
         return redirect('warehouse_management')
-    if len(asset_ids) != len(raw_asset_ids):
+    if asset_ids and len(asset_ids) != len(raw_asset_ids):
         messages.error(request, '标签资产编号格式不正确，请重新勾选后再试。')
         return redirect('warehouse_management')
+
+    if print_all_filtered:
+        # 复用台账的筛选逻辑，保证「打印全部」与页面所见一致。
+        # _warehouse_filtered_assets 读的是 request.GET，因此批量打印入口
+        # 采用 GET 提交（携带当前筛选参数 + all_filtered=1）。
+        filtered = _warehouse_filtered_assets(request)
+        asset_ids = list(
+            filtered.exclude(system_asset_no='')
+            .order_by('system_asset_no')
+            .values_list('pk', flat=True)
+        )
+        if not asset_ids:
+            messages.error(request, '当前筛选条件下没有可打印的资产。')
+            return redirect('warehouse_management')
+        # 批量打印上限：一次最多 500 张，避免误点后生成超大 PDF。
+        max_labels = 500
+        if len(asset_ids) > max_labels:
+            messages.warning(
+                request,
+                f'当前筛选匹配 {len(asset_ids)} 件，超过单次上限 {max_labels} 件，'
+                f'已按编号顺序取前 {max_labels} 件。请缩小筛选范围后再打印剩余部分。',
+            )
+            asset_ids = asset_ids[:max_labels]
     assets = Asset.objects.select_related('item_type').filter(pk__in=asset_ids).order_by('system_asset_no')
     labels = []
     skipped = 0
