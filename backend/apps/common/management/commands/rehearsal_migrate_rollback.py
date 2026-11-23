@@ -57,6 +57,14 @@ class Command(BaseCommand):
 
         original = settings.DATABASES['default']
         rehearsal = {**original, 'NAME': db_name}
+        # 先记下生产库名，后面替换 DATABASES 后仍要用它查生产库
+        self._production_db_name = original['NAME']
+
+        # 重要：演练前后的「生产库未被触碰」证据必须由本命令自己打印。
+        # 早期版本靠外部脚本在命令之后查，但那时 Django 连接刚被替换过，
+        # 可能把演练库的迁移数（全量灌入后的 106）误报成生产库的数字。
+        self._report_production_snapshot('演练前（生产库）')
+
         # 清理旧库（可能是上次演练残留）；首次运行时库不存在，忽略即可
         try:
             self._drop_database(db_name)
@@ -66,14 +74,52 @@ class Command(BaseCommand):
 
         settings.DATABASES['default'] = rehearsal
         connections.databases['default'] = rehearsal
+        exit_code = 1
         try:
-            return self._rehearse(options['max_steps'])
+            exit_code = self._rehearse(options['max_steps'])
         finally:
             # 关闭连接后才能删库
             connections.close_all()
             settings.DATABASES['default'] = original
             connections.databases['default'] = original
-            self._drop_database(db_name)
+            try:
+                self._drop_database(db_name)
+                self.stdout.write(self.style.SUCCESS(f'演练库 {db_name} 已清理'))
+            except RuntimeError as exc:
+                self.stderr.write(self.style.ERROR(f'清理演练库失败：{exc}'))
+            self._report_production_snapshot('演练后（生产库）')
+        # BaseCommand.handle 应返回字符串；用属性记录退出码，
+        # 并在结论里明确写出，避免 'int' object has no attribute 'endswith'
+        self.exit_code = exit_code
+        if exit_code != 0:
+            self.stdout.write(self.style.WARNING(
+                '演练发现不可回退的迁移，详见上方结论。'
+            ))
+
+    def _report_production_snapshot(self, label):
+        """打印生产库的关键计数，作为「未被动过」的证据。
+
+        用生产库名直接查，不经过 Django 的 default 连接
+        （演练期间该连接已指向演练库）。
+        """
+        import subprocess
+
+        prod_name = getattr(self, '_production_db_name', '') or 'warehouse'
+
+        self.stdout.write(f'--- {label} ---')
+        for name, sql in (
+            ('tables', "select count(*) from pg_tables where schemaname='public'"),
+            ('migrations', 'select count(*) from django_migrations'),
+        ):
+            try:
+                result = subprocess.run(
+                    ['sudo', '-u', 'postgres', 'psql', '-d', prod_name, '-tAc', sql],
+                    capture_output=True, text=True, timeout=60,
+                )
+                value = result.stdout.strip() or '?'
+            except Exception:
+                value = '?'
+            self.stdout.write(f'  {name}: {value}')
 
     # ── 安全护栏 ────────────────────────────────────────────────
     def _guard(self, db_name):
