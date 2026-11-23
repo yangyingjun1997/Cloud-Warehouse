@@ -328,7 +328,10 @@ def archive_asset_attachment(*, asset, actor, **values):
     try:
         validate_attachment_upload(uploaded_file, ALLOWED_ATTACHMENT_SUFFIXES)
         if Path(uploaded_file.name or '').suffix.lower() in IMAGE_SUFFIXES:
-            values['file'] = sanitize_image_upload(uploaded_file, max_size=20 * 1024 * 1024)
+            # 图片走统一的 MAX_IMAGE_SIZE（10 MB），不再单独放宽到 20 MB。
+            # 早期这里传 max_size=20MB，与资产照片、admin 上传的 10 MB 不一致，
+            # 同一类图片在不同入口能过/不能过，用户无法预期。
+            values['file'] = sanitize_image_upload(uploaded_file)
     except ValidationError as exc:
         raise AssetLifecycleError('附件校验失败：' + ' '.join(exc.messages)) from exc
     attachment = AssetAttachment.objects.create(asset=asset, uploaded_by=actor, **values)

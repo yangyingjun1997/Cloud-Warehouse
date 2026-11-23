@@ -2,7 +2,7 @@
 {% block title %}成品设备 - 售后仓库管理系统{% endblock %}
 {% block crumb %}仓库管理 / 成品设备{% endblock %}
 {% block content %}
-<style>
+<style nonce="{{ csp_nonce }}">
   .unit-row.selected { background: var(--teal-soft, #e6f5f3); box-shadow: inset 3px 0 0 var(--teal, #1f7a70); }
   .unit-row.selected td { font-weight: 600; }
   .unit-row:hover { background: #f4f8f8; }
@@ -67,7 +67,7 @@
     <section class="panel standalone-table">
       <div class="panel-head"><h2>成品设备列表</h2><span>点击行查看组件并操作</span></div>
       <div class="table-scroll"><table class="data-table"><thead><tr><th>成品编码</th><th>名称</th><th>型号</th><th>状态</th><th>在装组件</th><th>客户</th><th>创建时间</th></tr></thead><tbody>
-        {% for unit in units %}<tr class="unit-row {% if selected and selected.id == unit.id %}selected{% endif %}" onclick="location.href='?unit={{ unit.id }}{{ unit_list_query }}'" style="cursor:pointer">
+        {% for unit in units %}<tr class="unit-row {% if selected and selected.id == unit.id %}selected{% endif %}" data-href="?unit={{ unit.id }}{{ unit_list_query }}" style="cursor:pointer">
           <td class="code">{{ unit.unit_code|default:'未赋码' }}</td><td>{{ unit.name }}</td><td>{{ unit.model|default:'—' }}</td>
           <td><span class="tag {% if unit.status == 'assembled' %}success{% elif unit.status == 'disassembled' %}neutral{% else %}warning{% endif %}">{{ unit.get_status_display }}</span></td>
           <td>{{ unit.active_component_count }}</td><td>{{ unit.customer.name|default:'—' }}</td><td>{{ unit.created_at|date:'Y-m-d H:i' }}</td>
@@ -89,13 +89,13 @@
       <td>{{ link.asset.warehouse.name|default:'未定位' }}/{{ link.asset.location.code|default:'未定位' }}</td>
       <td>{{ link.assembled_at|date:'Y-m-d H:i' }}</td>
       <td><a class="text-action" href="{% url 'asset_lifecycle' link.asset_id %}">履历</a></td>
-      <td>{% if selected.status == 'draft' or selected.status == 'assembled' %}<form method="post" style="display:inline" onsubmit="return confirm('确认把该组件拆出回到在库吗？')">{% csrf_token %}<input type="hidden" name="action" value="remove_component"><input type="hidden" name="unit_id" value="{{ selected.id }}"><input type="hidden" name="asset_id" value="{{ link.asset_id }}"><button class="text-action danger" type="submit">拆出</button></form>{% else %}—{% endif %}</td>
+      <td>{% if selected.status == 'draft' or selected.status == 'assembled' %}<form method="post" style="display:inline" data-confirm="确认把该组件拆出回到在库吗？">{% csrf_token %}<input type="hidden" name="action" value="remove_component"><input type="hidden" name="unit_id" value="{{ selected.id }}"><input type="hidden" name="asset_id" value="{{ link.asset_id }}"><button class="text-action danger" type="submit">拆出</button></form>{% else %}—{% endif %}</td>
     </tr>{% empty %}<tr><td colspan="7"><div class="empty-state">尚未装入组件</div></td></tr>{% endfor %}
   </tbody></table></div>
 
   {% if inactive_links %}
   <div style="margin-top:12px">
-    <span class="history-toggle" onclick="var el=document.getElementById('history-links');el.style.display=el.style.display==='none'?'':'none';this.querySelector('b').textContent=el.style.display==='none'?'▸':'▾'"><b>▸</b> 历史组件履历（{{ inactive_links|length }} 条，曾装入后拆出）</span>
+    <span class="history-toggle" data-action="toggle-history"><b>▸</b> 历史组件履历（{{ inactive_links|length }} 条，曾装入后拆出）</span>
     <div id="history-links" style="display:none;margin-top:8px">
       <div class="table-scroll"><table class="data-table"><thead><tr><th>资产编码</th><th>名称</th><th>SN</th><th>装入时间</th><th>拆出时间</th><th>备注</th><th>履历</th></tr></thead><tbody>
         {% for link in inactive_links %}<tr>
@@ -132,13 +132,13 @@
   {% endif %}
 
   {% if selected.status == 'draft' or selected.status == 'assembled' %}
-  <form method="post" style="margin-top:16px" onsubmit="return confirm('确认拆散整台成品设备吗？全部组件将回到在库，成品编码作废。')">{% csrf_token %}<input type="hidden" name="action" value="disassemble"><input type="hidden" name="unit_id" value="{{ selected.id }}">
+  <form method="post" style="margin-top:16px" data-confirm="确认拆散整台成品设备吗？全部组件将回到在库，成品编码作废。">{% csrf_token %}<input type="hidden" name="action" value="disassemble"><input type="hidden" name="unit_id" value="{{ selected.id }}">
     <div class="inline-filter-form"><div class="form-field"><label>拆散原因（选填）</label><input name="reason" placeholder="将写入审计"></div><button class="button button-secondary" type="submit">拆散整机</button></div>
   </form>
   {% endif %}
 
   {% if selected.status == 'draft' or selected.status == 'disassembled' %}
-  <form method="post" style="margin-top:12px" onsubmit="return confirm('确认删除该成品设备吗？此操作不可恢复，会写入操作审计。')">{% csrf_token %}<input type="hidden" name="action" value="delete"><input type="hidden" name="unit_id" value="{{ selected.id }}">
+  <form method="post" style="margin-top:12px" data-confirm="确认删除该成品设备吗？此操作不可恢复，会写入操作审计。">{% csrf_token %}<input type="hidden" name="action" value="delete"><input type="hidden" name="unit_id" value="{{ selected.id }}">
     <div class="inline-filter-form"><div class="form-field"><label>删除原因（选填）</label><input name="reason" placeholder="将写入审计"></div><button class="text-action danger" type="submit" style="padding-bottom:9px">删除该成品</button></div>
   </form>
   {% else %}
@@ -147,7 +147,7 @@
 
   {% if can_force_delete %}
   <div class="danger-zone">
-    <form method="post" onsubmit="return confirm('管理员强制删除：将删除该成品及全部组件履历，仍在装的组件会释放回在库，关联申请单保留但解除关联。确定继续吗？')">{% csrf_token %}<input type="hidden" name="action" value="delete"><input type="hidden" name="unit_id" value="{{ selected.id }}"><input type="hidden" name="force" value="1">
+    <form method="post" data-confirm="管理员强制删除：将删除该成品及全部组件履历，仍在装的组件会释放回在库，关联申请单保留但解除关联。确定继续吗？">{% csrf_token %}<input type="hidden" name="action" value="delete"><input type="hidden" name="unit_id" value="{{ selected.id }}"><input type="hidden" name="force" value="1">
       <div class="inline-filter-form"><div class="form-field"><label style="color:#a33">管理员专区 · 强制删除原因（建议填写，将写入审计）</label><input name="reason"></div><button class="text-action danger" type="submit" style="padding-bottom:9px">强制删除（含履历）</button></div>
     </form>
   </div>

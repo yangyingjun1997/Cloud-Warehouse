@@ -17,7 +17,7 @@
     <div class="form-actions"><button class="button button-primary" type="submit">创建并查看任务</button><a class="button button-secondary" href="{% url 'inventory_check_list' %}">取消</a></div>
   </form>
 </section>
-<script>
+<script nonce="{{ csp_nonce }}">
   (() => {
     const warehouse = document.getElementById('check-warehouse');
     const location = document.getElementById('check-location');

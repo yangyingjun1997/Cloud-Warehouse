@@ -183,3 +183,51 @@ class RestoreDrillFormatTests(SimpleTestCase):
     def test_drill_refuses_production_database(self):
         self.assertIn('warehouse_restore_drill', self.drill)
         self.assertIn('不能是生产数据库', self.drill)
+
+
+class DeployScriptsShippedTests(SimpleTestCase):
+    """release 目录必须包含 deploy/，否则部署后无法用本版本脚本复核。
+
+    历史缺陷：install.sh 只 rsync backend/，release 里没有 deploy，
+    导致 security-check.sh / check-all.sh / rollback.sh 只在 /tmp 临时目录存在，
+    /tmp 一清理就丢失，无法在服务器上按「这台机器正在跑的那个版本」做门禁复核。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.repository_root = Path(__file__).resolve().parents[3]
+        cls.install_script = (
+            cls.repository_root / 'deploy' / 'ubuntu22' / 'install.sh'
+        ).read_text(encoding='utf-8')
+
+    def test_install_syncs_deploy_directory(self):
+        self.assertIn('$REPO_ROOT/deploy', self.install_script,
+                      'install.sh 未把 deploy/ 同步进 release')
+        self.assertIn('$CANDIDATE_DIR/deploy', self.install_script,
+                      'install.sh 未创建 release 内的 deploy 目录')
+
+    def test_deploy_sync_happens_before_service_restart(self):
+        """deploy/ 必须在正常上线路径上就位。
+
+        注意：脚本里第一处 `systemctl restart after-sales-warehouse` 位于
+        deployment_failed() 错误处理函数（回滚路径），不是正常上线顺序，
+        因此这里比对「最后一处」restart 之前必须已同步 deploy/。
+        """
+        sync_at = self.install_script.index('$CANDIDATE_DIR/deploy')
+        restart_at = self.install_script.rindex('systemctl restart after-sales-warehouse')
+        self.assertLess(sync_at, restart_at)
+
+    def test_deploy_sync_outside_failure_handler(self):
+        """同步动作应在失败处理函数定义之后、正常流程中，而非只在回滚里。"""
+        failure_handler_at = self.install_script.index('deployment_failed() {')
+        sync_at = self.install_script.index('$CANDIDATE_DIR/deploy')
+        self.assertGreater(sync_at, failure_handler_at,
+                           'deploy/ 同步应位于正常部署流程，而非失败处理函数内')
+
+    def test_scripts_referenced_by_release_exist_in_source(self):
+        """release 内会被调用的脚本必须在仓库中存在。"""
+        deploy_dir = self.repository_root / 'deploy' / 'ubuntu22'
+        for name in ('install.sh', 'rollback.sh', 'check-all.sh', 'security-check.sh'):
+            with self.subTest(script=name):
+                self.assertTrue((deploy_dir / name).exists(), f'{name} 缺失')

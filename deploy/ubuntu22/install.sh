@@ -316,6 +316,16 @@ trap deployment_failed ERR
 install -d -o "$APP_USER" -g "$APP_GROUP" -m 755 "$CANDIDATE_DIR/backend"
 rsync -a --delete --exclude '.env' --exclude 'db.sqlite3' --exclude '__pycache__' --exclude '*.pyc' "$SOURCE_BACKEND/" "$CANDIDATE_DIR/backend/"
 
+# 把 deploy/ 一并放进 release。
+# 历史缺陷：过去只同步 backend/，release 目录里没有 deploy，导致部署后无法在
+# 服务器上用「本 release 自己的」安全检查与门禁脚本复核——只能依赖 /tmp 里的
+# 临时解压目录，升级一次就丢失。同时 rollback.sh 需要读取目标 release 的
+# 迁移元数据，脚本与 release 同源也更可控。deploy/ 体积很小，不影响发布速度。
+if [[ -d "$REPO_ROOT/deploy" ]]; then
+  install -d -o "$APP_USER" -g "$APP_GROUP" -m 755 "$CANDIDATE_DIR/deploy"
+  rsync -a --delete --exclude '__pycache__' "$REPO_ROOT/deploy/" "$CANDIDATE_DIR/deploy/"
+fi
+
 if [[ $OFFLINE_UPDATE -eq 0 ]]; then
   python3.12 -m venv "$CANDIDATE_DIR/venv"
   "$CANDIDATE_DIR/venv/bin/python" -m pip install --upgrade pip

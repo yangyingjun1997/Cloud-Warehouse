@@ -19,7 +19,7 @@
   {% if can_correct_state and holder_registrable %}
   <details class="holder-register-box">
     <summary>登记当前持有人（历史台账补录）</summary>
-    <style>
+    <style nonce="{{ csp_nonce }}">
       .holder-register-box { margin-top: 14px; border: 1px solid #c5ded9; border-radius: 6px; background: #f7fbfa; }
       .holder-register-box > summary { padding: 12px 14px; color: var(--teal); cursor: pointer; font-size: 12px; font-weight: 650; list-style: none; }
       .holder-register-box > summary::-webkit-details-marker { display: none; }
@@ -112,7 +112,7 @@
   {% elif tab == 'attachments' %}
     <div class="lifecycle-layout">
       <section class="panel lifecycle-scroll"><div class="panel-head"><h2>归档资料</h2><span>{{ attachments|length }} 个附件</span></div><div class="attachment-list">{% for attachment in attachments %}<a class="attachment-row" href="{% url 'asset_attachment_download' attachment.id %}"><div><strong>{{ attachment.display_name }}</strong><small>{{ attachment.get_category_display }} · {{ attachment.created_at|date:'Y-m-d H:i' }}{% if attachment.uploaded_by %} · {{ attachment.uploaded_by|person_label }}{% endif %}</small></div><span>下载</span></a>{% empty %}<div class="empty-state">该资产暂无归档附件。</div>{% endfor %}</div></section>
-      <section class="panel lifecycle-scroll form-panel"><div class="panel-head"><h2>上传并归档</h2><span>单个文件最大 20 MB</span></div>{% if can_manage_lifecycle %}<form method="post" enctype="multipart/form-data">{% csrf_token %}<input type="hidden" name="action" value="archive_attachment"><div class="lifecycle-form-grid">{% for field in attachment_form %}<div class="form-field {% if field.name == 'note' %}full{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <b>*</b>{% endif %}</label>{{ field }}{% if field.help_text %}<small class="field-help">{{ field.help_text }}</small>{% endif %}{% for error in field.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>{% endfor %}</div><div class="form-actions"><button class="button button-primary" type="submit">上传并归档</button></div></form>{% else %}<div class="empty-state">当前账号没有附件归档权限。</div>{% endif %}</section>
+      <section class="panel lifecycle-scroll form-panel"><div class="panel-head"><h2>上传并归档</h2><span>图片 ≤10 MB，其它附件 ≤100 MB</span></div>{% if can_manage_lifecycle %}<form method="post" enctype="multipart/form-data">{% csrf_token %}<input type="hidden" name="action" value="archive_attachment"><div class="lifecycle-form-grid">{% for field in attachment_form %}<div class="form-field {% if field.name == 'note' %}full{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <b>*</b>{% endif %}</label>{{ field }}{% if field.help_text %}<small class="field-help">{{ field.help_text }}</small>{% endif %}{% for error in field.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>{% endfor %}</div><div class="form-actions"><button class="button button-primary" type="submit">上传并归档</button></div></form>{% else %}<div class="empty-state">当前账号没有附件归档权限。</div>{% endif %}</section>
     </div>
   {% else %}
     <div class="lifecycle-layout">

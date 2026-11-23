@@ -5,7 +5,7 @@
 {% block crumb %}仓库管理 / 快速出入库{% endblock %}
 
 {% block content %}
-  <style>
+  <style nonce="{{ csp_nonce }}">
     /* 与新建申请保持一致：用途开关、日期快捷、原因快捷 */
     .usage-scope-row { display: flex; flex-wrap: wrap; gap: 8px; }
     .usage-scope-option { display: inline-flex; align-items: center; gap: 7px; padding: 9px 13px;
@@ -137,7 +137,7 @@
 
   <script src="{% static 'warehouse/vendor/zxing-browser-0.1.5.min.js' %}"></script>
   <script src="{% static 'warehouse/scanner.js' %}?v=20261116-1"></script>
-  <script>
+  <script nonce="{{ csp_nonce }}">
     (() => {
       const requestForm = document.getElementById('request-form');
       const searchForm = document.getElementById('candidate-search-form');

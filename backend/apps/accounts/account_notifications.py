@@ -36,11 +36,21 @@ def notify_account_request_submitted(account_request, *, requested_by=None):
         return 0
 
     title = '新的账号开通申请'
+    # 站内通知保留完整信息：只有具备账号审批权限的人能看到，且需要登录。
     content = (
         f'{account_request.real_name} 提交了账号开通申请。\n'
         f'联系电话：{account_request.phone or "未填写"}\n'
         f'申请说明：{account_request.reason or "未填写"}\n'
         f'请登录「账号与权限」页面核对后建号或驳回。'
+    )
+
+    # 钉钉只发概要，不带手机号与自由文本说明（2026-11-23，P2-16）。
+    # 原因：钉钉消息会经过钉钉服务器，且可能落在群会话里被更多成员看到；
+    # 手机号属于个人敏感信息，申请人填写时并未预期它会被转发到第三方 IM。
+    # 审批人收到概要后点进系统即可看到完整信息，业务上不需要在钉钉里看手机号。
+    dingtalk_content = (
+        f'{account_request.real_name} 提交了账号开通申请。\n'
+        f'请登录「账号与权限」页面查看联系方式与申请说明，核对后建号或驳回。'
     )
 
     Notification.objects.bulk_create([
@@ -58,7 +68,7 @@ def notify_account_request_submitted(account_request, *, requested_by=None):
     enqueue_users_or_group(
         reviewers,
         title,
-        content,
+        dingtalk_content,
         idempotency_key=outbox_key('account_request', account_request.id, title),
     )
     return len(reviewers)

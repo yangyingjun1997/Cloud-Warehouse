@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-title" content="售后仓库">
   <script src="{% static 'warehouse/vendor/htmx-2.0.4.min.js' %}" defer></script>
   <title>{% block title %}售后仓库管理系统{% endblock %}</title>
-  <style>
+  <style nonce="{{ csp_nonce }}">
     :root { --canvas: #f2f5f5; --surface: #ffffff; --ink: #1c2d34; --muted: #6e8086; --line: #d9e3e4; --nav: #173239; --nav-muted: #a9bec1; --teal: #18736e; --teal-soft: #e3f2ef; --blue: #3d70cf; --blue-soft: #eaf0ff; --amber: #bf781c; --amber-soft: #fff1d9; --coral: #c95f50; --coral-soft: #ffebe7;
     /* 表单容器宽度：撑满父容器，不再设像素上限。
        可读性由内层 .form-grid 的 auto-fit 多列保证——宽屏自动加到 4~6 列，
@@ -1171,7 +1171,7 @@
     {% if global_user_is_operator %}<a class="mobile-nav-link {% if module_tasks %}active{% endif %}" href="{% if global_can_approve_workflow or global_can_execute_inventory %}{% url 'approval_queue' %}{% else %}{% url 'inventory_check_list' %}{% endif %}"><span class="mobile-nav-symbol">✓</span><span>任务</span></a><a class="mobile-nav-link {% if module_inventory %}active{% endif %}" href="{% url 'warehouse_management' %}"><span class="mobile-nav-symbol">▦</span><span>库存</span></a>{% endif %}
     {% if global_can_manage_inventory or global_can_execute_inventory or global_can_view_reports %}<a class="mobile-nav-link {% if module_purchase %}active{% endif %}" href="{% if global_can_manage_inventory %}{% url 'purchase_draft_list' %}{% elif global_can_execute_inventory %}{% url 'purchase_order_list' %}{% else %}{% url 'report_dashboard' %}{% endif %}"><span class="mobile-nav-symbol">表</span><span>采购报表</span></a>{% endif %}
   </nav>
-  <script>
+  <script nonce="{{ csp_nonce }}">
     (() => {
       const bell = document.getElementById('notification-bell');
       if (!bell) return;
@@ -1262,10 +1262,11 @@
       });
     })();
   </script>
-  <script src="{% static 'warehouse/offline.js' %}"></script>
+  <script src="{% static 'warehouse/ui-actions.js' %}"></script>
+<script src="{% static 'warehouse/offline.js' %}"></script>
   {# 全局扫码：页面空闲时捕获扫码枪；业务输入框由各页面自行累加处理 #}
   <script src="{% static 'warehouse/scanner.js' %}?v=20261105-3"></script>
-  <script>
+  <script nonce="{{ csp_nonce }}">
     (() => {
       if (!window.WarehouseScanner?.watchGlobalScan) return;
 
@@ -1427,7 +1428,7 @@
       });
     })();
   </script>
-<script>
+<script nonce="{{ csp_nonce }}">
   // 权限胶囊：勾选后立即变色，避免用户看不出当前选中状态。
   (() => {
     document.querySelectorAll('.permission-chip input[type="checkbox"]').forEach((box) => {
@@ -1460,7 +1461,7 @@
     });
   })();
 </script>
-<script>
+<script nonce="{{ csp_nonce }}">
   // 提交反馈（2026-11-20）：保存后要整页跳回列表，用户点完看不到任何变化，
   // 会以为没点上而重复点击。这里在表单提交时把提交按钮改成「保存中…」并禁用，
   // 给出即时反馈，同时顺便防重复提交。

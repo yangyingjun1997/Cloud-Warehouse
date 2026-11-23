@@ -2491,8 +2491,36 @@ def supplier_price_history(request):
         .values_list('supplier_snapshot', flat=True)
         .distinct().order_by('supplier_snapshot')
     )
+    # 分页（2026-11-23，P2-04）。
+    # 分组维度是「供应商 + 物品」，行数由不重复的供应商×物品组合决定；
+    # 但每组内部的 entries 会持有该组合的全部采购明细，未分页时
+    # 一次请求会把所有明细对象拉进内存并渲染成表格，数据量大时明显变慢。
+    # 这里对分组结果分页，并给每组的 entries 设置展示上限（最新在前）。
+    # 导出接口不受影响，仍导出完整数据。
+    from django.core.paginator import Paginator
+
+    page_number = request.GET.get('page', '1')
+    per_page = request.GET.get('page_size', '50')
+    try:
+        per_page_value = int(per_page)
+    except (TypeError, ValueError):
+        per_page_value = 50
+    if per_page_value not in (20, 50, 100, 200):
+        per_page_value = 50
+
+    paginator = Paginator(grouped, per_page_value)
+    page_obj = paginator.get_page(page_number)
+    # 每组最多展示最近 20 条价格记录，避免单组把页面撑爆；完整历史走导出。
+    for row in page_obj.object_list:
+        row['entries_shown'] = row['entries'][-20:]
+        row['entries_truncated'] = len(row['entries']) > 20
+
     return render(request, 'supplier_price_history.html', {
-        'grouped': grouped,
+        'grouped': page_obj.object_list,
+        'page_obj': page_obj,
+        'paginator': paginator,
+        'page_size': per_page_value,
+        'page_size_choices': (20, 50, 100, 200),
         'suppliers': suppliers,
         'selected_supplier': supplier_text,
         'item_query': item_text,

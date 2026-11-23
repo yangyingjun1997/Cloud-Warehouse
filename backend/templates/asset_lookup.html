@@ -87,7 +87,7 @@
   </section>
   <script src="{% static 'warehouse/vendor/zxing-browser-0.1.5.min.js' %}"></script>
   <script src="{% static 'warehouse/scanner.js' %}?v=20261105-3"></script>
-  <script>
+  <script nonce="{{ csp_nonce }}">
     (() => {
       const scanButton = document.getElementById('mobile-scan-button');
       const closeButton = document.getElementById('mobile-scan-close');

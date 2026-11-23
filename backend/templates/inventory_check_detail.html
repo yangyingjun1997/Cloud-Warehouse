@@ -23,5 +23,5 @@
 
 <section class="panel table-panel"><div class="panel-head"><h2>最近扫描记录</h2><span>最多显示 30 条</span></div><div class="table-scroll"><table class="data-table"><thead><tr><th>时间</th><th>扫描内容</th><th>识别结果</th><th>对应对象</th><th>操作人</th></tr></thead><tbody>{% for scan in scans %}<tr><td>{{ scan.created_at|date:'Y-m-d H:i:s' }}</td><td class="code">{{ scan.scanned_value }}</td><td><span class="tag {{ scan.result }}">{{ scan.get_result_display }}</span></td><td>{% if scan.asset %}{{ scan.asset.asset_code }}{% elif scan.stock_item %}{{ scan.stock_item.name }}{% else %}-{% endif %}</td><td>{{ scan.operator|person_label|default:'-' }}</td></tr>{% empty %}<tr><td colspan="5"><div class="empty-state">暂无扫描记录</div></td></tr>{% endfor %}</tbody></table></div></section>
 
-{% if can_cancel %}<div class="page-actions"><form method="post">{% csrf_token %}<button class="button button-danger" name="action" value="cancel" onclick="return confirm('确认取消该盘点任务吗？已记录的扫描不会删除。')">取消盘点任务</button></form></div>{% endif %}
+{% if can_cancel %}<div class="page-actions"><form method="post">{% csrf_token %}<button class="button button-danger" name="action" value="cancel" data-confirm="确认取消该盘点任务吗？已记录的扫描不会删除。">取消盘点任务</button></form></div>{% endif %}
 {% endblock %}

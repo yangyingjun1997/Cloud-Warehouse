@@ -4,7 +4,7 @@
 {% block content %}
 <div class="page-heading">
   <div><p class="eyebrow">账号安全</p><h1>登录设备</h1><p class="page-copy">查看当前账号仍然有效的浏览器会话，并退出不再使用的设备。</p></div>
-  {% if account_sessions|length > 1 %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="revoke_others"><button class="button button-danger" type="submit" onclick="return confirm('确认退出当前设备之外的所有登录？')">退出其他设备</button></form>{% endif %}
+  {% if account_sessions|length > 1 %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="revoke_others"><button class="button button-danger" type="submit" data-confirm="确认退出当前设备之外的所有登录？">退出其他设备</button></form>{% endif %}
 </div>
 
 <section class="panel">

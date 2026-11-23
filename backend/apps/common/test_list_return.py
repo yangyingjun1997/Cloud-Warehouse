@@ -18,7 +18,11 @@ class PreservedQueryTests(TestCase):
         self.client.force_login(self.user)
 
     def test_composite_unit_row_link_keeps_filters(self):
-        """成品设备点击行必须带回筛选条件。"""
+        """成品设备点击行必须带回筛选条件。
+
+        2026-11-23 CSP nonce 改造后，内联 onclick="location.href=..." 已改为
+        声明式 data-href，由 ui-actions.js 统一处理，因此断言目标同步调整。
+        """
         CompositeUnit.objects.create(name='回跳测试单元', status='assembled')
 
         response = self.client.get(
@@ -27,7 +31,7 @@ class PreservedQueryTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         body = response.content.decode('utf-8')
-        self.assertIn('location.href=', body)
+        self.assertIn('data-href=', body)
         if 'unit=' in body:
             self.assertIn('status=assembled', body)
 

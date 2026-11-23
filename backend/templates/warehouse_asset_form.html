@@ -9,7 +9,7 @@
   {% if asset %}
   {% comment %}实时状态卡片：编辑页原本只放静态属性（编码/型号/采购），而最需要一眼看到的「当前状态 + 持有人 + 库位」却只在生命周期页。这里把状态置顶成只读卡片，并提供就地登记持有人的入口。{% endcomment %}
   <section class="asset-status-card">
-    <style>
+    <style nonce="{{ csp_nonce }}">
       .asset-status-card { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px 22px;
         /* 与资产身份标签、下方表单同宽，统一引用 --form-max-width。 */
         width: 100%;
@@ -57,7 +57,7 @@
       {% endif %}
     </div>
   </section>
-  <script>
+  <script nonce="{{ csp_nonce }}">
     (() => {
       const toggle = document.getElementById('holder-toggle');
       const form = document.getElementById('holder-inline-form');

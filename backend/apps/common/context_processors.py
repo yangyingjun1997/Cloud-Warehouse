@@ -52,11 +52,21 @@ def _domain_expiry_alert(site_settings):
 def web_navigation(request):
     site_settings = SiteSettings.load()
     domain_alert = _domain_expiry_alert(site_settings)
+    # CSP nonce 由 SecurityHeadersMiddleware 挂在 request 上。
+    # 这里转发给模板，供内联 <script nonce="..."> / <style nonce="..."> 使用。
+    # 取不到时留空字符串，模板里的 nonce="" 会被浏览器视为无效，
+    # 相当于该内联脚本不执行——这是 fail-closed，不是 fail-open。
+    base_context = {'csp_nonce': getattr(request, 'csp_nonce', '')}
     if not request.user.is_authenticated:
-        return {'global_site_settings': site_settings, 'global_domain_alert': domain_alert}
+        return {
+            **base_context,
+            'global_site_settings': site_settings,
+            'global_domain_alert': domain_alert,
+        }
     display_name = request.user.get_full_name().strip() or request.user.get_username()
     is_admin = is_system_administrator(request.user)
     return {
+        **base_context,
         'global_site_settings': site_settings,
         'global_domain_alert': domain_alert,
         # 只有管理员需要处理「账号资料不全」，普通用户看到只会困惑
