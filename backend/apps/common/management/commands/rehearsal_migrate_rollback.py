@@ -57,8 +57,11 @@ class Command(BaseCommand):
 
         original = settings.DATABASES['default']
         rehearsal = {**original, 'NAME': db_name}
-        # 清理旧库（可能是上次演练残留）
-        self._drop_database(db_name)
+        # 清理旧库（可能是上次演练残留）；首次运行时库不存在，忽略即可
+        try:
+            self._drop_database(db_name)
+        except RuntimeError as exc:
+            self.stderr.write(self.style.WARNING(f'清理旧演练库失败（可忽略）：{exc}'))
         self._create_database(db_name)
 
         settings.DATABASES['default'] = rehearsal
@@ -85,39 +88,42 @@ class Command(BaseCommand):
             raise CommandError('演练库名不能与生产库同名。')
 
     # ── 库管理 ──────────────────────────────────────────────────
-    def _admin_connection(self):
-        import psycopg
-        from django.conf import settings
+    #
+    # 应用账号（warehouse）刻意没有 CREATEDB 权限——这是正确的生产配置，
+    # 不应为了演练而放开。建库/删库改用 `sudo -u postgres psql`：
+    # 本机 pg_hba 对 local 连接用 peer 认证，postgres 系统用户免密即可管理。
+    # 这样既不需要把超级用户密码写进环境变量或代码，也不需要放宽应用权限。
+    def _run_psql_admin(self, sql):
+        import subprocess
 
-        config = settings.DATABASES['default']
-        return psycopg.connect(
-            dbname='postgres',
-            user=config['USER'],
-            password=config['PASSWORD'],
-            host=config['HOST'] or 'localhost',
-            port=config['PORT'] or 5432,
+        result = subprocess.run(
+            ['sudo', '-u', 'postgres', 'psql', '-v', 'ON_ERROR_STOP=1', '-tAc', sql],
+            capture_output=True, text=True, timeout=120,
         )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f'psql 执行失败（{sql[:60]}）：{result.stderr.strip()[:300]}'
+            )
+        return result.stdout.strip()
 
     def _drop_database(self, db_name):
         try:
-            with self._admin_connection() as conn:
-                conn.autocommit = True
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                        "WHERE datname = %s AND pid <> pg_backend_pid()",
-                        (db_name,),
-                    )
-                    cursor.execute(f'DROP DATABASE IF EXISTS "{db_name}"')
-        except Exception as exc:
-            self.stderr.write(self.style.WARNING(f'删除旧演练库失败（可忽略）：{exc}'))
+            self._run_psql_admin(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                f"WHERE datname = '{db_name}' AND pid <> pg_backend_pid()"
+            )
+            self._run_psql_admin(f'DROP DATABASE IF EXISTS "{db_name}"')
+        except RuntimeError as exc:
+            # 库不存在时 DROP IF EXISTS 不会报错；报错通常是权限或连接占用，
+            # 交给调用方决定是否致命。
+            raise RuntimeError(str(exc)) from exc
 
     def _create_database(self, db_name):
-        with self._admin_connection() as conn:
-            conn.autocommit = True
-            with conn.cursor() as cursor:
-                cursor.execute(f'CREATE DATABASE "{db_name}"')
-        self.stdout.write(self.style.SUCCESS(f'已创建演练库 {db_name}'))
+        from django.conf import settings
+
+        app_user = settings.DATABASES['default']['USER']
+        self._run_psql_admin(f'CREATE DATABASE "{db_name}" OWNER "{app_user}"')
+        self.stdout.write(self.style.SUCCESS(f'已创建演练库 {db_name}（属主 {app_user}）'))
 
     # ── 演练主体 ────────────────────────────────────────────────
     def _list_plan(self):
