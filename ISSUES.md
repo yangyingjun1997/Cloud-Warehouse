@@ -33,16 +33,16 @@
 
 | 出现日期 | 真正含义 | 定义出处 | 当前状态 |
 |---|---|---|---|
-| 2026-11-19 | 依赖版本三套漂移（本机 121 条漏洞 / 生产 65 条） | `REVIEW_REPORT.md:295` | **已部署** |
-| 2026-11-20 | 成本导出越权（表头隐藏但数据行仍写 `cost_amount`） | `REVIEW_REPORT.md:135` | **已部署** |
-| 2026-11-23 | 主数据删除可绕过 ViewSet 守卫（admin/ORM 路径） | `REVIEW_REPORT_1.md:166` | **已部署** |
+| 2026-11-19 | 依赖版本三套漂移（本机 121 条漏洞 / 生产 65 条） | `REVIEW_REPORT.md:335` | **已部署** |
+| 2026-11-20 | 成本导出越权（表头隐藏但数据行仍写 `cost_amount`） | `REVIEW_REPORT.md:175` | **已部署** |
+| 2026-11-23 | 主数据删除可绕过 ViewSet 守卫（admin/ORM 路径） | `REVIEW_REPORT.md:2500` | **已部署** |
 
 ### P1-02 —— 两个不同的问题
 
 | 出现日期 | 真正含义 | 定义出处 | 当前状态 |
 |---|---|---|---|
 | 2026-11-19 | 库管代借时资产被记成外部持有人 | `CHANGELOG.md:162` | **已部署** |
-| 2026-11-23 | 删除主数据致资产静默脱仓（CASCADE/SET_NULL） | `REVIEW_REPORT.md:136` | **已部署** |
+| 2026-11-23 | 删除主数据致资产静默脱仓（CASCADE/SET_NULL） | `REVIEW_REPORT.md:176` | **已部署** |
 
 **注意**：`PROJECT_STATUS.md:138` 曾把「主数据删除模型层风险」从 P1-02 强行改登记为 P1-01，导致两者混淆。
 
@@ -51,21 +51,21 @@
 | 出现日期 | 真正含义 | 定义出处 | 当前状态 |
 |---|---|---|---|
 | 2026-11-20 | 单据模板缺少场景约束（出售可填「日常」） | `CHANGELOG.md:169` | **已部署** |
-| 2026-11-23 | 采购到货无幂等键，重放二次入库 | `REVIEW_REPORT.md:137` | **已部署** |
+| 2026-11-23 | 采购到货无幂等键，重放二次入库 | `REVIEW_REPORT.md:177` | **已部署** |
 
 ### P2-01 —— 两个不同的问题
 
 | 出现日期 | 真正含义 | 定义出处 | 当前状态 |
 |---|---|---|---|
-| 2026-11-18 | iPhone PWA 缺 PNG 图标与 iOS meta | `REVIEW_REPORT.md:1708` | 待确认 |
-| 2026-11-23 | 资产履历 API 越权（任意员工可读完整履历） | `REVIEW_REPORT.md:139` | **已部署** |
+| 2026-11-18 | iPhone PWA 缺 PNG 图标与 iOS meta | `REVIEW_REPORT.md:1748` | 待确认 |
+| 2026-11-23 | 资产履历 API 越权（任意员工可读完整履历） | `REVIEW_REPORT.md:179` | **已部署** |
 
 ### P2-04 —— 两个不同的问题
 
 | 出现日期 | 真正含义 | 定义出处 | 当前状态 |
 |---|---|---|---|
-| 2026-11-20 | 3 处宽泛异常捕获后静默返回 | `REVIEW_REPORT.md:383` | **已部署** |
-| 2026-11-23 | 报表与供应商历史全量物化，无分页 | `REVIEW_REPORT.md:148` | **已部署** |
+| 2026-11-20 | 3 处宽泛异常捕获后静默返回 | `REVIEW_REPORT.md:423` | **已部署** |
+| 2026-11-23 | 报表与供应商历史全量物化，无分页 | `REVIEW_REPORT.md:188` | **已部署** |
 
 ---
 
@@ -75,63 +75,63 @@
 
 | 编号 | 含义 | 定义出处 | 状态 |
 |---|---|---|---|
-| P1-01 | 主数据删除跨入口破坏完整性 | `REVIEW_REPORT_1.md:166` | 已部署 |
-| P2-13 | 数据库迁移与代码回滚兼容性未验证 | `REVIEW_REPORT_1.md:537` | 已部署 |
-| P2-14 | CSP 仍允许 `unsafe-inline` | `REVIEW_REPORT_1.md:690` | 已部署 |
-| P2-15 | 附件大小提示与实际限制不一致 | `REVIEW_REPORT_1.md:750` | 已部署 |
-| P2-16 | 账号申请通知向第三方群外发个人信息 | `REVIEW_REPORT_1.md:793` | 已部署 |
+| P1-01 | 主数据删除跨入口破坏完整性 | `REVIEW_REPORT.md:2500` | 已部署 |
+| P2-13 | 数据库迁移与代码回滚兼容性未验证 | `REVIEW_REPORT.md:2334` | 已部署 |
+| P2-14 | CSP 仍允许 `unsafe-inline` | `REVIEW_REPORT.md:3024` | 已部署 |
+| P2-15 | 附件大小提示与实际限制不一致 | `REVIEW_REPORT.md:3084` | 已部署 |
+| P2-16 | 账号申请通知向第三方群外发个人信息 | `REVIEW_REPORT.md:3127` | 已部署 |
 
 ### 2026-11-20 第十二轮
 
 | 编号 | 含义 | 定义出处 | 状态 |
 |---|---|---|---|
-| P1-01 | 成本导出越权 | `REVIEW_REPORT.md:135` | 已部署 |
-| P1-02 | 删除主数据致资产脱仓 | `REVIEW_REPORT.md:136` | 已部署 |
-| P1-03 | 采购到货重放双记库存 | `REVIEW_REPORT.md:137` | 已部署 |
-| P1-04 | 恢复演练依赖废弃 `media.tar.gz` | `REVIEW_REPORT.md:138` | 已部署 |
-| P2-01 | 履历 API 越权 | `REVIEW_REPORT.md:139` | 已部署 |
-| P2-02 | 停用仓库/库位仍可写入 | `REVIEW_REPORT.md:140` | 已部署 |
-| P2-03 | 删除抛 500 且留孤儿审计 | `REVIEW_REPORT.md:141` | 已部署 |
-| P2-04 | 报表全量物化 | `REVIEW_REPORT.md:148` | 已部署 |
-| P2-06 | `check-all.sh` 未纳入安全门禁 | `REVIEW_REPORT.md:149` | 已部署 |
-| P2-09 | SQLite 导入写公共临时目录 | `REVIEW_REPORT.md:1228` | 已部署 |
+| P1-01 | 成本导出越权 | `REVIEW_REPORT.md:175` | 已部署 |
+| P1-02 | 删除主数据致资产脱仓 | `REVIEW_REPORT.md:176` | 已部署 |
+| P1-03 | 采购到货重放双记库存 | `REVIEW_REPORT.md:177` | 已部署 |
+| P1-04 | 恢复演练依赖废弃 `media.tar.gz` | `REVIEW_REPORT.md:178` | 已部署 |
+| P2-01 | 履历 API 越权 | `REVIEW_REPORT.md:179` | 已部署 |
+| P2-02 | 停用仓库/库位仍可写入 | `REVIEW_REPORT.md:180` | 已部署 |
+| P2-03 | 删除抛 500 且留孤儿审计 | `REVIEW_REPORT.md:181` | 已部署 |
+| P2-04 | 报表全量物化 | `REVIEW_REPORT.md:188` | 已部署 |
+| P2-06 | `check-all.sh` 未纳入安全门禁 | `REVIEW_REPORT.md:189` | 已部署 |
+| P2-09 | SQLite 导入写公共临时目录 | `REVIEW_REPORT.md:1268` | 已部署 |
 
 ### 2026-11-19 第十一轮
 
 | 编号 | 含义 | 定义出处 | 状态 |
 |---|---|---|---|
-| P1-01 | 依赖版本三套漂移 | `REVIEW_REPORT.md:295` | 已部署 |
-| P2-02 | 顶层残留 pip 临时目录 | `REVIEW_REPORT.md:365` | 已修复 |
-| P2-03 | `common/views.py` 单文件 5084 行 | `REVIEW_REPORT.md:374` | 已处理（方案 B）|
-| P2-04 | 3 处宽泛异常捕获 | `REVIEW_REPORT.md:383` | 已部署 |
-| P2-05 | Service Worker 缓存版本 | `REVIEW_REPORT.md:396` | **已证伪** |
-| P2-07 | V2 资产导入不可撤销 | `REVIEW_REPORT.md:738` | 已部署 |
+| P1-01 | 依赖版本三套漂移 | `REVIEW_REPORT.md:335` | 已部署 |
+| P2-02 | 顶层残留 pip 临时目录 | `REVIEW_REPORT.md:405` | 已修复 |
+| P2-03 | `common/views.py` 单文件 5084 行 | `REVIEW_REPORT.md:414` | 已处理（方案 B）|
+| P2-04 | 3 处宽泛异常捕获 | `REVIEW_REPORT.md:423` | 已部署 |
+| P2-05 | Service Worker 缓存版本 | `REVIEW_REPORT.md:436` | **已证伪** |
+| P2-07 | V2 资产导入不可撤销 | `REVIEW_REPORT.md:778` | 已部署 |
 
 ### 2026-11-18 及更早（历史批次）
 
 | 编号 | 含义 | 定义出处 | 状态 |
 |---|---|---|---|
-| P0-01 | 申请单 API 可绕过流程硬删除 | `REVIEW_REPORT.md:2012` | 已部署 |
-| P1-02 | 受保护附件可绕过授权下载 | `REVIEW_REPORT.md:2034` | 已部署 |
-| P1-03 | 财务成本字段通过只读 API 泄露 | `REVIEW_REPORT.md:2045` | 已部署 |
-| P1-04 | 部署前快照失败仍继续 | `REVIEW_REPORT.md:2056` | 已部署 |
-| P1-05 | 审计不可变性可被 ORM 批量操作绕过 | `REVIEW_REPORT.md:2067` | 已部署 |
-| P1-06 | 发布代码携带清空全部数据入口 | `REVIEW_REPORT.md:2078` | 已部署 |
-| P1-07 | 钉钉请求同步占用 Gunicorn worker | `REVIEW_REPORT.md:2089` | 已部署 |
-| P1-08 | Workflow API 创建未显式原子化 | `REVIEW_REPORT.md:2100` | 已部署 |
-| P1-09 | 备份格式切换但演练仍依赖旧文件 | `REVIEW_REPORT.md:1209` | 已部署 |
-| P1-11 | 采购到货登记没有幂等键 | `REVIEW_REPORT.md:1247` | 已部署（同 11-23 P1-03）|
-| P2-01 | iPhone PWA 缺图标与 meta | `REVIEW_REPORT.md:1708` | 待确认 |
-| P2-02 | `warehouse_setup` 未登录重定向绕行 | `REVIEW_REPORT.md:1719` | 已部署 |
-| P2-03 | `check --deploy` HTTPS 警告缺说明 | `REVIEW_REPORT.md:1730` | 待确认 |
-| P2-04 | 离线队列明文持久化个人信息 | `REVIEW_REPORT.md:2144` | 待确认 |
-| P2-05 | 测试缺真实浏览器与 PostgreSQL 结论 | `REVIEW_REPORT.md:2155` | 待确认 |
-| P2-07 | `legacy.py` 4,891 行单文件 | `REVIEW_REPORT.md:150` | 已处理（方案 B）|
-| P2-08 | 批量审批吞异常无日志 | `REVIEW_REPORT.md:151` | 待确认 |
-| P2-09 | 4 用例依赖 `tempfile` 默认清理 | `REVIEW_REPORT.md:152` | 待确认 |
-| P2-10 | 资产照片经公开 `/media/` 可匿名访问 | `REVIEW_REPORT.md:153` | **保持现状（已评估）** |
-| P2-11 | 报表无上限 Python 物化 | `REVIEW_REPORT.md:202` | 已部署（同 11-23 P2-04）|
-| P2-12 | `.env.example` 默认不安全配置 | `REVIEW_REPORT.md:195` | 待确认 |
+| P0-01 | 申请单 API 可绕过流程硬删除 | `REVIEW_REPORT.md:2052` | 已部署 |
+| P1-02 | 受保护附件可绕过授权下载 | `REVIEW_REPORT.md:2074` | 已部署 |
+| P1-03 | 财务成本字段通过只读 API 泄露 | `REVIEW_REPORT.md:2085` | 已部署 |
+| P1-04 | 部署前快照失败仍继续 | `REVIEW_REPORT.md:2096` | 已部署 |
+| P1-05 | 审计不可变性可被 ORM 批量操作绕过 | `REVIEW_REPORT.md:2107` | 已部署 |
+| P1-06 | 发布代码携带清空全部数据入口 | `REVIEW_REPORT.md:2118` | 已部署 |
+| P1-07 | 钉钉请求同步占用 Gunicorn worker | `REVIEW_REPORT.md:2129` | 已部署 |
+| P1-08 | Workflow API 创建未显式原子化 | `REVIEW_REPORT.md:2140` | 已部署 |
+| P1-09 | 备份格式切换但演练仍依赖旧文件 | `REVIEW_REPORT.md:1249` | 已部署 |
+| P1-11 | 采购到货登记没有幂等键 | `REVIEW_REPORT.md:1287` | 已部署（同 11-23 P1-03）|
+| P2-01 | iPhone PWA 缺图标与 meta | `REVIEW_REPORT.md:1748` | 待确认 |
+| P2-02 | `warehouse_setup` 未登录重定向绕行 | `REVIEW_REPORT.md:1759` | 已部署 |
+| P2-03 | `check --deploy` HTTPS 警告缺说明 | `REVIEW_REPORT.md:1770` | 待确认 |
+| P2-04 | 离线队列明文持久化个人信息 | `REVIEW_REPORT.md:2184` | 待确认 |
+| P2-05 | 测试缺真实浏览器与 PostgreSQL 结论 | `REVIEW_REPORT.md:2195` | 待确认 |
+| P2-07 | `legacy.py` 4,891 行单文件 | `REVIEW_REPORT.md:190` | 已处理（方案 B）|
+| P2-08 | 批量审批吞异常无日志 | `REVIEW_REPORT.md:191` | 待确认 |
+| P2-09 | 4 用例依赖 `tempfile` 默认清理 | `REVIEW_REPORT.md:192` | 待确认 |
+| P2-10 | 资产照片经公开 `/media/` 可匿名访问 | `REVIEW_REPORT.md:193` | **保持现状（已评估）** |
+| P2-11 | 报表无上限 Python 物化 | `REVIEW_REPORT.md:1169` | 已部署（同 11-23 P2-04）|
+| P2-12 | `.env.example` 默认不安全配置 | `REVIEW_REPORT.md:83` | 待确认 |
 
 ---
 

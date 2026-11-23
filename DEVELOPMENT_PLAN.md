@@ -83,7 +83,7 @@ Status: done（2026-11-18）。用户决策：备份策略同时采用 A、B、C
 
 ## M19 Review remediation and release gate hardening
 
-Status: in progress. 用户已于 2026-11-23 明确允许开始修改。P1-01 已完成本地代码实现和 SQLite 自动化验收，现场 PostgreSQL 验收与部署仍未完成。范围来自 `REVIEW_REPORT_1.md` 第 19 节，先处理已实证的数据完整性问题，再处理发布安全和低风险体验问题。
+Status: in progress. 用户已于 2026-11-23 明确允许开始修改。P1-01 已完成本地代码实现和 SQLite 自动化验收，现场 PostgreSQL 验收与部署仍未完成。范围来自 `REVIEW_REPORT.md` 第二部分第 19 节，先处理已实证的数据完整性问题，再处理发布安全和低风险体验问题。
 
 ### 实施顺序
 
