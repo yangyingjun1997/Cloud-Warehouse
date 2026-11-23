@@ -96,5 +96,11 @@
 
 - 当前交付：响应式 Web/PWA + Django + PostgreSQL + Nginx + systemd。
 - 微信小程序不在当前开发清单，不因 Web 改动同步开发小程序。
-- 当前优先级：① 遗留 P2（`warehouse_setup` 缺 `@login_required`、`/me` 权限谓词不一致、无 `LOGGING`、`CONN_MAX_AGE=0`、SW 版本号硬编码、前缀白名单不一致、7 个页面同类布局）；② 邮件摘要（免费 SMTP 方案，待用户确认服务商）；③ 依赖锁统一；④ 现场验收（iPhone Safari 主屏幕、DS3678、ZT610 60×40 mm 走纸）与 PostgreSQL 并发专项。
+- 当前优先级：① 资产数据治理（261 件在外资产无持有人信息，待用户 Excel 母版）；
+  ② 依赖锁统一；③ 真实 PostgreSQL 并发专项与回切演练。
+- 已实现（2026-11-23 核实，勿重复开发）：`warehouse_setup` 的 `@login_required`、
+  `LOGGING`、`CONN_MAX_AGE` 环境变量、SW 版本号按静态文件 mtime 动态生成、
+  PWA PNG 图标（180/192/512/maskable）、低库存站内+钉钉推送与每日汇总定时任务、
+  借用到期催办定时任务、CSP nonce（无 `unsafe-inline`）、质保到期提醒、
+  二维码按筛选批量打印、盘点范围复用、权限组 4 角色聚合。
 - 新功能若不属于 `DEVELOPMENT_PLAN.md` 当前阶段，先记录到 `PROJECT_STATUS.md` 的候选项并与用户确认。
