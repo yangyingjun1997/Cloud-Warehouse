@@ -2,7 +2,7 @@
 
 {% block extrastyle %}
   {{ block.super }}
-  <style>
+  <style nonce="{{ csp_nonce }}">
     /* 版式按需求固定：LOGO 左上，二维码右上，下方两行编码信息。
        尺寸默认按 60mm × 40mm 标签，仓管可在浏览器的打印预览里缩放。 */
     .label-toolbar { display: flex; gap: 10px; align-items: center; margin: 0 0 18px; flex-wrap: wrap; }
@@ -48,7 +48,7 @@
 {% block content %}
   <div id="content-main">
     <div class="label-toolbar">
-      <button class="default" type="button" onclick="window.print()">直接打印（浏览器）</button>
+      <button class="default" type="button" data-action="print">直接打印（浏览器）</button>
       <button class="button" type="button" id="send-to-printer">发送到贴纸打印机</button>
       <span class="hint">共 {{ labels|length }} 张 · 尺寸 60mm × 40mm</span>
     </div>
@@ -75,7 +75,7 @@
     </div>
   </div>
 
-  <script>
+  <script nonce="{{ csp_nonce }}">
     (function () {
       const button = document.getElementById('send-to-printer');
       if (!button) return;

@@ -38,7 +38,7 @@
           </div>
           <div class="page-actions">
             {% if operation.status == 'pending' or operation.status == 'conflict' %}
-              <form method="post" onsubmit="return confirm('将按服务器当前库存重新校验并执行，确认继续吗？')">{% csrf_token %}<input type="hidden" name="operation_id" value="{{ operation.id }}"><button class="button button-primary" name="action" value="apply" type="submit">复核并执行</button></form>
+              <form method="post" data-confirm="将按服务器当前库存重新校验并执行，确认继续吗？">{% csrf_token %}<input type="hidden" name="operation_id" value="{{ operation.id }}"><button class="button button-primary" name="action" value="apply" type="submit">复核并执行</button></form>
               <form method="post" class="inline-reject-form">{% csrf_token %}<input type="hidden" name="operation_id" value="{{ operation.id }}"><input name="reason" required maxlength="255" placeholder="拒绝原因"><button class="button button-danger" name="action" value="reject" type="submit">拒绝</button></form>
             {% endif %}
           </div>
@@ -49,7 +49,7 @@
     </div>
   </section>
 
-  <script>
+  <script nonce="{{ csp_nonce }}">
     (() => {
       const list = document.getElementById('local-offline-list');
       const summary = document.getElementById('local-offline-summary');

@@ -55,14 +55,55 @@
     }
   };
 
-  /* 点击类：确认 -> 动作 -> 跳转 */
+  /* 必填校验：data-require-field 指向同一表单内必须非空的字段名。
+     替代过去 `onclick="return this.form.xxx.value.trim() ? ... : (alert(...), false)"` 的写法。 */
+  const checkRequiredField = (element, event) => {
+    const fieldName = element.getAttribute('data-require-field');
+    if (!fieldName) return true;
+    const form = element.form || element.closest('form');
+    if (!form) return true;
+    const field = form.elements[fieldName];
+    const value = field && typeof field.value === 'string' ? field.value.trim() : '';
+    if (value) return true;
+    const message = element.getAttribute('data-require-message') || '请先填写必填字段。';
+    window.alert(message);
+    if (event) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+    if (field && typeof field.focus === 'function') field.focus();
+    return false;
+  };
+
+  /* 转发到页面内已定义的函数：data-call="函数名" [data-call-arg="参数"]。
+     这些函数原本由内联 onclick 调用，去掉 unsafe-inline 后需经委托转发。 */
+  const callPageFunction = (element) => {
+    const name = element.getAttribute('data-call');
+    if (!name) return false;
+    const fn = window[name];
+    if (typeof fn !== 'function') return false;
+    const arg = element.getAttribute('data-call-arg');
+    if (arg !== null) {
+      fn(arg);
+    } else {
+      fn();
+    }
+    return true;
+  };
+
+  /* 点击类：必填校验 -> 确认 -> 页面函数 -> 动作 -> 跳转 */
   document.addEventListener('click', (event) => {
     const el = findActionElement(event.target, 'data-confirm')
       || findActionElement(event.target, 'data-action')
-      || findActionElement(event.target, 'data-href');
+      || findActionElement(event.target, 'data-href')
+      || findActionElement(event.target, 'data-call')
+      || findActionElement(event.target, 'data-require-field');
     if (!el) return;
 
+    if (!checkRequiredField(el, event)) return;
     if (!confirmThen(el, event)) return;
+
+    if (callPageFunction(el)) return;
 
     const href = el.getAttribute('data-href');
     if (href) {
@@ -73,27 +114,33 @@
     runAction(el);
   }, true);
 
-  /* 表单提交类：带 data-confirm 的表单或提交按钮需要二次确认 */
+  /* 表单提交类：带 data-confirm / data-require-field 的表单或提交按钮需要校验 */
   document.addEventListener('submit', (event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
-    /* 提交按钮上的 data-confirm 优先于表单上的 */
     const submitter = event.submitter;
-    const holder = (submitter && submitter.getAttribute('data-confirm'))
+    const holder = (submitter && (submitter.getAttribute('data-confirm')
+      || submitter.getAttribute('data-require-field')))
       ? submitter
-      : (form.getAttribute('data-confirm') ? form : null);
+      : ((form.getAttribute('data-confirm') || form.getAttribute('data-require-field')) ? form : null);
     if (!holder) return;
+    if (!checkRequiredField(holder, event)) return;
     confirmThen(holder, event);
   }, true);
 
-  /* 自动提交类：原 onchange="this.form.submit()" */
+  /* 自动提交与 change 类 */
   document.addEventListener('change', (event) => {
     const el = findActionElement(event.target, 'data-auto-submit')
-      || findActionElement(event.target, 'data-action');
+      || findActionElement(event.target, 'data-action')
+      || findActionElement(event.target, 'data-call');
     if (!el) return;
     if (el.hasAttribute('data-auto-submit')) {
       const form = el.form || el.closest('form');
       if (form) form.submit();
+      return;
+    }
+    if (el.hasAttribute('data-call')) {
+      callPageFunction(el);
       return;
     }
     /* data-action 在 change 上只处理勾选类动作 */

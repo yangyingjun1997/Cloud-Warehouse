@@ -5,7 +5,7 @@
 
 {% block content %}
   {# 筛选栏样式已统一到 web_base.html 的 .filter-compact 全局规则，此处不再重复 #}
-  <style>
+  <style nonce="{{ csp_nonce }}">
     /* 批量审批样式 */
     .batch-toolbar {
       display: flex;
@@ -122,13 +122,13 @@
         <div class="batch-toolbar">
           <label class="batch-select-all"><input type="checkbox" id="select-all-tasks"> 全选</label>
           <span id="selected-task-count">已选 0 项</span>
-          <button type="button" class="button button-secondary button-sm" onclick="showBatchDialog('approve')">批量批准</button>
-          <button type="button" class="button button-secondary button-sm" onclick="showBatchDialog('reject')">批量拒绝</button>
+          <button type="button" class="button button-secondary button-sm" data-call="showBatchDialog" data-call-arg="approve">批量批准</button>
+          <button type="button" class="button button-secondary button-sm" data-call="showBatchDialog" data-call-arg="reject">批量拒绝</button>
         </div>
         <div class="task-list">
           {% for task in pending_tasks %}
           <div class="task-row task-row-rich task-row-selectable">
-            <label class="task-checkbox"><input type="checkbox" name="task_checkbox" value="{{ task.id }}" onchange="updateSelectedCount()"></label>
+            <label class="task-checkbox"><input type="checkbox" name="task_checkbox" value="{{ task.id }}" data-call="updateSelectedCount"></label>
             <a class="task-content" href="{% url 'workflow_detail' task.request.id %}">
               <span><strong>{{ task.request.get_request_type_display }} · {{ task.request.request_no }}</strong>{% if task.request.inventory_no %}<small class="code">出入库单：{{ task.request.inventory_no }}</small>{% endif %}<small>申请人：{{ task.request.applicant.username|default:'未指定申请人' }} · 申请日期：{{ task.request.application_date|date:'Y-m-d' }} · 归还日期：{{ task.request.expected_return_date|date:'Y-m-d'|default:'-' }}{% if task.assigned_to %} · 指定给我{% endif %}</small><small>物品：{% for line in task.request.lines.all %}{% if line.asset %}{{ line.asset.name }}{% else %}{{ line.stock_item.name }} x {{ line.quantity }}{% endif %}{% if not forloop.last %}；{% endif %}{% endfor %}</small><small>位置：{% for line in task.request.lines.all %}{% if line.asset %}{{ line.asset.warehouse.name|default:'未分配仓库' }} / {{ line.asset.location.code|default:'未分配库位' }}{% else %}{{ line.stock_item.warehouse.name|default:'未分配仓库' }} / {{ line.stock_item.location.code|default:'未分配库位' }}{% endif %}{% if not forloop.last %}；{% endif %}{% endfor %}</small><small>接收人：{{ task.request.recipient_name|default:'未填写' }}{% if task.request.usage_location %} · {{ task.request.usage_location }}{% endif %}</small></span>
               <span class="tag pending">待审批</span>
@@ -156,13 +156,13 @@
       <p style="font-size:13px;color:var(--muted);margin:0 0 10px">将为选中的 <span id="batch-dialog-count">0</span> 条申请统一填写审批意见：</p>
       <textarea id="batch-comment-text" placeholder="审批意见（可选）"></textarea>
       <div class="batch-dialog-actions">
-        <button type="button" class="button button-secondary" onclick="closeBatchDialog()">取消</button>
-        <button type="button" class="button button-primary" onclick="submitBatchAction()">确认</button>
+        <button type="button" class="button button-secondary" data-call="closeBatchDialog">取消</button>
+        <button type="button" class="button button-primary" data-call="submitBatchAction">确认</button>
       </div>
     </div>
   </div>
 
-  <script>
+  <script nonce="{{ csp_nonce }}">
     // 使用事件委托，HTMX 替换 #approval-results 后仍能正常全选和计数。
     document.addEventListener('change', function(event) {
       if (event.target.id === 'select-all-tasks') {

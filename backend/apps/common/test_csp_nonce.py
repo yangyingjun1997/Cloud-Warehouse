@@ -41,31 +41,45 @@ class CspPolicyTests(SimpleTestCase):
                       'CSP 头应包含 nonce 源')
 
     def test_all_inline_scripts_have_nonce(self):
+        """必须扫描所有子目录：登录页在 registration/、审批页在 workflow/、
+        打印页在 admin/inventory/asset/，只扫 templates/*.html 会漏掉它们
+        （2026-11-23 因此导致登录页白板）。"""
         problems = []
-        for tpl in self.templates.glob('*.html'):
+        count = 0
+        for tpl in self.templates.rglob('*.html'):
+            count += 1
             text = tpl.read_text(encoding='utf-8', errors='replace')
             for match in re.finditer(r'<script(?![^>]*\bsrc=)(?![^>]*\bnonce=)[^>]*>', text):
-                problems.append(f'{tpl.name}: {match.group(0)[:60]}')
+                problems.append(f'{tpl.relative_to(self.templates)}: {match.group(0)[:60]}')
+        self.assertGreater(count, 50, '模板扫描数量异常，可能未递归子目录')
         self.assertEqual(problems, [], f'内联 script 缺少 nonce: {problems}')
 
     def test_all_inline_styles_have_nonce(self):
         problems = []
-        for tpl in self.templates.glob('*.html'):
+        for tpl in self.templates.rglob('*.html'):
             text = tpl.read_text(encoding='utf-8', errors='replace')
             for match in re.finditer(r'<style(?![^>]*\bnonce=)[^>]*>', text):
-                problems.append(f'{tpl.name}: {match.group(0)[:60]}')
+                problems.append(f'{tpl.relative_to(self.templates)}: {match.group(0)[:60]}')
         self.assertEqual(problems, [], f'内联 style 缺少 nonce: {problems}')
 
     def test_no_inline_event_handlers_remain(self):
         """onclick/onsubmit/onchange 等内联事件在无 unsafe-inline 时会被浏览器拦，
         必须全部改为 data-* 由 ui-actions.js 处理。"""
         problems = []
-        for tpl in self.templates.glob('*.html'):
+        for tpl in self.templates.rglob('*.html'):
             text = tpl.read_text(encoding='utf-8', errors='replace')
             for match in re.finditer(r'\son(?:click|submit|change|load|error)="', text):
                 line = text[:match.start()].count('\n') + 1
-                problems.append(f'{tpl.name}:{line}')
+                problems.append(f'{tpl.relative_to(self.templates)}:{line}')
         self.assertEqual(problems, [], f'仍存在内联事件属性: {problems}')
+
+    def test_login_page_templates_covered(self):
+        """登录页是独立基模板，不在 web_base 继承链内，需单独确认。"""
+        login_base = self.templates / 'registration' / 'login_base.html'
+        self.assertTrue(login_base.exists())
+        text = login_base.read_text(encoding='utf-8')
+        self.assertIn('nonce="{{ csp_nonce }}"', text,
+                      '登录页基模板的内联 style 必须带 nonce，否则样式被 CSP 拦成白板')
 
     def test_ui_actions_script_exists_and_is_loaded(self):
         script = (
