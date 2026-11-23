@@ -21,9 +21,12 @@ from django.utils import timezone
 
 from apps.inventory.models import Asset
 
-# 可选的提前提醒天数
-WARRANTY_WARNING_DAYS = (30, 60, 90)
-DEFAULT_WARNING_DAYS = 60
+# 可选的提前提醒天数。
+# 2026-11-23 实测：线上 29 件带质保日的资产最早也要 321 天后才到期，
+# 只给 30/60/90 天窗口的话页面永远是空的，用户会以为功能坏了。
+# 因此把窗口上限拉到 365 天，默认 90 天（够走完一次续保或采购流程）。
+WARRANTY_WARNING_DAYS = (30, 60, 90, 180, 365)
+DEFAULT_WARNING_DAYS = 90
 
 
 def warranty_expiring_queryset(days=DEFAULT_WARNING_DAYS, *, include_expired=True):

@@ -58,8 +58,9 @@ class WarrantyServiceTests(TestCase):
         cls.sold = make('AST-WR-8', 10, status=Asset.Status.SOLD)
 
     def test_default_window(self):
-        self.assertEqual(DEFAULT_WARNING_DAYS, 60)
-        self.assertIn(60, WARRANTY_WARNING_DAYS)
+        self.assertEqual(DEFAULT_WARNING_DAYS, 90)
+        self.assertIn(90, WARRANTY_WARNING_DAYS)
+        self.assertIn(365, WARRANTY_WARNING_DAYS, '窗口上限应覆盖一年期质保')
 
     def test_expired_included(self):
         codes = set(warranty_expiring_queryset(60).values_list('system_asset_no', flat=True))
@@ -92,7 +93,7 @@ class WarrantyServiceTests(TestCase):
 
     def test_invalid_window_falls_back(self):
         codes = set(warranty_expiring_queryset(7).values_list('system_asset_no', flat=True))
-        codes_default = set(warranty_expiring_queryset(60).values_list('system_asset_no', flat=True))
+        codes_default = set(warranty_expiring_queryset(DEFAULT_WARNING_DAYS).values_list('system_asset_no', flat=True))
         self.assertEqual(codes, codes_default, '非法窗口应回落到默认值')
 
     def test_days_left(self):
