@@ -172,11 +172,7 @@ class WarehouseViewSet(AuditedModelViewSet):
         return [IsSystemAdministrator()]
 
     def _assert_deletable(self, instance):
-        # 仓库被资产/耗材/库位引用时硬删会造成静默数据损坏：
-        # Asset.warehouse 是 SET_NULL（资产凭空失去仓库归属），
-        # Location.warehouse 是 CASCADE（库位被物理删除，编码永久丢失），
-        # 两者都不会写资产履历，事后无法追溯。此处在删除前统一拦截。
-        # 模型层的 CASCADE→PROTECT 迁移另行处理（见 REVIEW_REPORT P1-02）。
+        # 保留显式业务提示，模型层 PROTECT 同时覆盖直接 ORM、admin 和其他服务入口。
         assets = Asset.objects.filter(warehouse=instance).count()
         stock_items = StockItem.objects.filter(warehouse=instance).count()
         locations = Location.objects.filter(warehouse=instance).count()

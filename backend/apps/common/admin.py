@@ -1,4 +1,8 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.db.models.deletion import ProtectedError
+from django.shortcuts import redirect
 
 from .audit import form_change_data, record_operation
 from .models import (
@@ -37,18 +41,51 @@ class ChineseModelAdmin(admin.ModelAdmin):
             )
 
     def delete_model(self, request, obj):
-        if not isinstance(obj, OperationAuditLog):
-            record_operation(
-                request.user,
-                f'{obj._meta.model_name}_admin_deleted',
-                obj,
-                summary=f'通过管理后台删除{obj._meta.verbose_name} {obj}',
-            )
-        super().delete_model(request, obj)
+        label = obj._meta.verbose_name
+        summary = f'通过管理后台删除{label} {obj}'
+        before = {
+            field.attname: self._audit_value(getattr(obj, field.attname, None))
+            for field in obj._meta.concrete_fields
+        }
+        try:
+            with transaction.atomic():
+                if not isinstance(obj, OperationAuditLog):
+                    record_operation(
+                        request.user,
+                        f'{obj._meta.model_name}_admin_deleted',
+                        obj,
+                        summary=summary,
+                        before=before,
+                    )
+                super().delete_model(request, obj)
+        except ProtectedError as exc:
+            raise ValidationError(
+                f'{label}仍被业务数据引用，不能删除。请改用「停用」，'
+                f'或先解除引用后再试。'
+            ) from exc
+
+    @staticmethod
+    def _audit_value(value):
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        return str(value)
 
     def delete_queryset(self, request, queryset):
-        for obj in queryset.iterator():
-            self.delete_model(request, obj)
+        try:
+            with transaction.atomic():
+                for obj in queryset.iterator():
+                    self.delete_model(request, obj)
+        except ValidationError as exc:
+            self.message_user(request, str(exc), messages.ERROR)
+
+    def delete_view(self, request, object_id, extra_context=None):
+        try:
+            return super().delete_view(request, object_id, extra_context)
+        except ValidationError as exc:
+            self.message_user(request, str(exc), messages.ERROR)
+            return redirect(
+                f'admin:{self.opts.app_label}_{self.opts.model_name}_changelist'
+            )
 
 
 admin.site.site_header = '售后仓库管理系统'

@@ -60,6 +60,10 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument('--actor', default='admin')
+        parser.add_argument(
+            '--approver', default='',
+            help='可选审批账号。未指定时自动选择另一名活跃超级管理员。',
+        )
         parser.add_argument('--confirm', required=True)
         parser.add_argument(
             '--rollback', action='store_true',
@@ -72,6 +76,17 @@ class Command(BaseCommand):
         actor = get_user_model().objects.filter(username=options['actor'], is_superuser=True).first()
         if actor is None:
             raise CommandError('未找到指定超级管理员。')
+        approver = actor
+        if options['approver']:
+            approver = get_user_model().objects.filter(
+                username=options['approver'], is_superuser=True, is_active=True,
+            ).first()
+            if approver is None:
+                raise CommandError('未找到指定审批超级管理员。')
+        else:
+            approver = get_user_model().objects.filter(
+                is_superuser=True, is_active=True,
+            ).exclude(pk=actor.pk).order_by('pk').first() or actor
         active_assembly_links = AssetAssemblyLink.objects.filter(removed_at__isnull=True)
         assets = list(
             Asset.objects.filter(
@@ -90,10 +105,10 @@ class Command(BaseCommand):
         with transaction.atomic():
             quick_asset, approval_asset, rejection_asset = assets
             self._quick_borrow_and_return(quick_asset, actor)
-            self._approve_process_and_return(approval_asset, actor)
-            self._reject_request(rejection_asset, actor)
+            self._approve_process_and_return(approval_asset, actor, approver)
+            self._reject_request(rejection_asset, actor, approver)
             self._maintenance_round_trip(rejection_asset, actor)
-            self._extended_rollback_smoke(actor)
+            self._extended_rollback_smoke(actor, approver)
 
             self.stdout.write(self.style.SUCCESS(
                 '业务冒烟通过：快速借出/归还、申请审批出库、审批驳回、维修回库、'
@@ -107,7 +122,7 @@ class Command(BaseCommand):
                 transaction.set_rollback(True)
                 self.stdout.write(self.style.SUCCESS('回滚模式已启用，本次冒烟产生的数据不会保留。'))
 
-    def _extended_rollback_smoke(self, actor):
+    def _extended_rollback_smoke(self, actor, approver):
         """扩展链路使用独立保存点，成功后也不在任何环境留下 QA 数据。"""
         with transaction.atomic():
             suffix = uuid4().hex[:8].upper()
@@ -133,7 +148,7 @@ class Command(BaseCommand):
                 warehouse=warehouse, location=location, quantity=5, unit='件',
             )
 
-            self._purchase_receipt(stock, actor)
+            self._purchase_receipt(stock, actor, approver)
             self._inventory_check_adjustment(stock, actor)
             self._import_and_rollback(
                 actor=actor, warehouse=warehouse, location=location,
@@ -145,7 +160,7 @@ class Command(BaseCommand):
             )
             transaction.set_rollback(True)
 
-    def _purchase_receipt(self, stock, actor):
+    def _purchase_receipt(self, stock, actor, approver):
         before_quantity = stock.quantity
         purchase_request = PurchaseRequest.objects.create(
             applicant=actor,
@@ -162,7 +177,7 @@ class Command(BaseCommand):
             reference_unit_cost='10.00',
             supplier_snapshot='冒烟供应商',
         )
-        approve_purchase_request(purchase_request, actor, '服务器冒烟审批采购')
+        approve_purchase_request(purchase_request, approver, '服务器冒烟审批采购')
         order = create_purchase_order(purchase_request, actor)
         place_purchase_order(order, actor, timezone.localdate() + timedelta(days=1), '服务器冒烟下达')
         receipt = receive_purchase_order(
@@ -333,7 +348,7 @@ class Command(BaseCommand):
         self._assert(asset.status == Asset.Status.IN_STOCK, '快速归还后状态错误。')
 
     @transaction.atomic
-    def _approve_process_and_return(self, asset, actor):
+    def _approve_process_and_return(self, asset, actor, approver):
         request_obj = self._request(WorkflowRequest.RequestType.BORROW, actor)
         request_obj.lines.create(asset=asset, quantity=1)
         submit_request(request_obj, actor)
@@ -344,7 +359,7 @@ class Command(BaseCommand):
             ).exists(),
             '申请提交后未建立库存预占。',
         )
-        approve_request(request_obj, actor, '服务器冒烟审批通过')
+        approve_request(request_obj, approver, '服务器冒烟审批通过')
         process_request(request_obj, actor, '服务器冒烟出库')
         request_obj.refresh_from_db()
         asset.refresh_from_db()
@@ -364,11 +379,11 @@ class Command(BaseCommand):
         self._assert(asset.status == Asset.Status.IN_STOCK, '审批出库后的归还失败。')
 
     @transaction.atomic
-    def _reject_request(self, asset, actor):
+    def _reject_request(self, asset, actor, approver):
         request_obj = self._request(WorkflowRequest.RequestType.BORROW, actor)
         request_obj.lines.create(asset=asset, quantity=1)
         submit_request(request_obj, actor)
-        reject_request(request_obj, actor, '服务器冒烟：资料不完整')
+        reject_request(request_obj, approver, '服务器冒烟：资料不完整')
         request_obj.refresh_from_db()
         asset.refresh_from_db()
         self._assert(request_obj.status == WorkflowRequest.Status.REJECTED, '审批驳回状态错误。')

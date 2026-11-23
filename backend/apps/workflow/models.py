@@ -57,8 +57,8 @@ class WorkflowRequest(UUIDModel, TimeStampedModel):
         blank=True,
         related_name='designated_workflow_requests',
     )
-    target_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='incoming_requests')
-    target_location = models.ForeignKey(Location, on_delete=models.SET_NULL, null=True, blank=True, related_name='incoming_requests')
+    target_warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, null=True, blank=True, related_name='incoming_requests')
+    target_location = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True, related_name='incoming_requests')
     recipient_name = models.CharField(max_length=120, blank=True, default='')
     # 接收人若是系统内账号，用外键关联以便追溯；外部人员只填 recipient_name 并打标记。
     recipient = models.ForeignKey(
@@ -753,8 +753,8 @@ class InventoryTransaction(UUIDModel, TimeStampedModel):
     asset_status_after = models.CharField(max_length=32, blank=True, default='')
     stock_quantity_before = models.PositiveIntegerField(null=True, blank=True)
     stock_quantity_after = models.PositiveIntegerField(null=True, blank=True)
-    source_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='outgoing_transactions')
-    target_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='incoming_transactions')
+    source_warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, null=True, blank=True, related_name='outgoing_transactions')
+    target_warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, null=True, blank=True, related_name='incoming_transactions')
     holder_name = models.CharField(max_length=120, blank=True, default='')
     holder_company = models.CharField(max_length=120, blank=True, default='')
     holder_phone = models.CharField(max_length=32, blank=True, default='')

@@ -199,6 +199,8 @@ sudo bash deploy/ubuntu22/install.sh --host <SERVER_IP>
 
 构建脚本默认要求 Git 工作区干净，确保包名和 manifest 能准确对应提交。仅紧急调试可显式增加
 `-AllowDirty`；此时包名会自动包含 `dirty` 和内容哈希，不得作为正式发布版本。
+
+发布前可运行 `bash deploy/ubuntu22/check-all.sh`。该门禁覆盖 Django 检查、迁移漂移、部署脚本语法、Bandit 和 pip-audit。安全工具缺失时默认失败，平台确实无法安装时才显式使用 `--allow-missing-security-tools` 并保留豁免记录。
 安装完成后，发布版本、Git revision、脏工作区标记和源内容 SHA-256 会写入
 `/opt/after-sales-warehouse/current/release-info`，可通过
 `sudo /usr/local/sbin/after-sales-warehouse-status` 查看。手工源码部署缺少 manifest 时会明确显示
@@ -222,6 +224,8 @@ sudo bash deploy/ubuntu22/install.sh --host <SERVER_IP> --import-sqlite
 ```
 
 > 仅在首次部署时执行，已有数据的服务器**绝对不要**重复执行。
+
+`--import-sqlite` 使用服务器数据目录下的私有临时目录，导出文件仅允许仓库用户读取，导入完成或失败后都会清理。
 
 ### 离线更新（服务器无法访问软件源时）
 
@@ -261,9 +265,12 @@ sudo /usr/local/sbin/after-sales-warehouse-concurrency-test
 
 # 回滚到上一个版本
 sudo /usr/local/sbin/after-sales-warehouse-rollback --list
+sudo /usr/local/sbin/after-sales-warehouse-rollback previous
 ```
 
 业务冒烟覆盖快速出入库、申请审批、维修回库、采购到货、盘点修正、V3 导入撤销和离线幂等/冲突。必须保留 `--rollback`；服务器已存在业务数据时禁止用持久写入模式执行。
+
+程序回滚会先检查目标 release 的迁移元数据，并用目标代码执行只读 `showmigrations --plan`。存在未应用迁移或缺少迁移元数据时会停止切换，历史 release 只有完成人工 schema 兼容确认后才可追加 `--allow-unknown-schema`。数据库和 schema 仍需通过正式恢复流程处理。
 
 轻量只读 HTTP 基线可从开发机执行，不提交任何表单：
 

@@ -4,6 +4,92 @@
 
 ## Unreleased
 
+### 2026-11-23 M19 P1-01 主数据删除保护
+
+- 将 `Location.warehouse`、资产和耗材的仓库/库位归属，以及申请、库存流水、盘点扫描和盘点调整中的仓库/库位历史引用统一改为 `PROTECT`，直接 ORM 删除不能再静默删除库位或清空资产归属。
+- 改进通用 Django admin 删除流程。在同一事务写入删除前完整字段快照并保留真实对象 ID，受保护删除回滚且不产生孤儿审计，批量删除遇到保护错误时整体回滚。API 原有业务引用提示继续保留。
+- 新增主数据删除专项覆盖 API、admin 单删、admin 批量删、直接 ORM、历史引用和删除审计。专项 `11/11`，Django 全量 `807/807` 通过，8 项 PostgreSQL 专项跳过，系统检查、迁移漂移和差异格式检查通过。
+- 现场 PostgreSQL 迁移、NUC 快照、部署、健康检查和真实数据回归尚未执行。首次全量测试因 Windows 默认临时目录 ACL 失败，改用工作区受控临时目录后通过。
+
+### 2026-11-23 M19 P2-13 回滚 schema 兼容门禁
+
+- 发布安装在迁移完成后记录 `database_migration_check` 和迁移状态摘要到 `release-info`，迁移状态读取失败或仍有未应用迁移时停止发布。
+- 回滚前要求目标 release 具备迁移元数据，并用目标 release 的 Django 代码执行只读 `showmigrations --plan`。存在未应用迁移时拒绝切换，缺少历史元数据时默认拒绝，可由完成人工兼容确认的运维显式使用 `--allow-unknown-schema`。
+- 新增部署安全静态测试，部署脚本 `bash -n` 通过。真实 PostgreSQL 数据迁移、代码回切和恢复演练尚未执行。
+
+### 2026-11-23 M19 P2-06 发布安全门禁
+
+- `check-all.sh` 纳入全部 Ubuntu 部署脚本 `bash -n`、Bandit SAST 和 pip-audit 依赖审计。Bandit/pip-audit 缺失时默认失败，只有显式传入 `--allow-missing-security-tools` 才记录平台豁免。
+- `security-check.sh` 对 pip-audit 缺失或发现漏洞改为阻断，支持通过 `ALLOW_MISSING_SECURITY_TOOLS=1` 记录人工豁免。测试临时目录改为唯一目录并由退出 trap 清理。
+- 部署安全专项 `14/14` 通过，两个脚本 Bash 语法检查通过。当前本机通过显式豁免运行 check-all 时，Django 和依赖检查受 WSL/Python 环境差异影响失败，该结果不作为发布通过证据。
+
+### 2026-11-23 M19 P2-09 SQLite 一次性导入临时文件
+
+- `install.sh --import-sqlite` 改用 `$DATA_DIR/sqlite-import.XXXXXX` 私有临时目录，目录权限 700，导出文件权限 600，不再使用固定 `/tmp/after-sales-warehouse-initial.json`。
+- 导出失败、loaddata 失败或候选发布失败时统一清理临时目录，导入成功后立即删除。新增部署安全专项覆盖固定路径、权限、umask 和失败清理。
+- 真实首次部署、PostgreSQL 导入和中断恢复仍未执行。
+
+### 2026-11-23 第一轮全景审查
+
+- 新增 `REVIEW_REPORT_1.md`，记录当前提交基线、工作区和 NUC release 三态、模块边界、核心调用链、数据流、部署拓扑、测试证据、P0/P1/P2 问题、六角色评审和可执行改进顺序。
+- 本轮只读复核在本机完成 Django 全量 `797/797`、8 项 SQLite 不适用专项跳过、系统检查、迁移漂移、`pip check`、JavaScript 语法和本机 HTTP 冒烟。未连接 NUC，未修改业务代码、生产数据库或生产配置。
+- 记录未关闭风险：主数据删除模型层约束、报表全量物化、发布脚本安全门禁、开发配置误用和本机 SQLite 未应用 19 个迁移。Bandit、pip-audit、PostgreSQL、真实浏览器和设备验收本轮未执行。
+
+### 2026-11-23 第二轮删除与容量复核
+
+- 只读确认 `WarehouseAdmin` 和 `LocationAdmin` 继承通用删除逻辑，模型仍使用 `CASCADE/SET_NULL`。API 的删除保护不能覆盖 admin 和直接 ORM 路径，P1 风险继续保留。
+- 定位供应商价格、供应商对账、呆滞库存和报表总览的全量物化点，补充 P2-04 容量风险证据。当前没有 PostgreSQL 大数据量实测，不记录性能通过结论。
+- 删除和部署专项测试共 `16/16` 通过。未修改业务代码、未连接 NUC、未执行迁移或部署。
+
+### 2026-11-23 第三轮 admin 与索引复核
+
+- 使用临时 Django 测试数据库直接调用注册的 `WarehouseAdmin.delete_model()`，探针 `1/1` 复现了在用仓库删除、库位级联删除、资产仓库/库位置空和删除审计写入。测试文件执行后已删除。
+- 只读清点确认 `PurchaseOrderLine`、`PurchaseReceiptLine` 无自定义索引，供应商价格与对账查询存在跨表连接和排序。PostgreSQL 计划与容量压测仍未执行。
+- 未修改业务代码、未连接 NUC、未执行迁移或部署。P1-01 由源码推断升级为临时数据库已实证。
+
+### 2026-11-23 第四轮发布与迁移复核
+
+- 只读确认本机 SQLite 有 19 个未应用迁移，迁移目录包含 18 个 `RunPython` 数据迁移，部分逆向为空操作。未执行迁移。
+- 确认 `check-all.sh` 未纳入 shell/Bandit/pip-audit 严格门禁，`security-check.sh` 对 pip-audit 只告警；P2-06 证据升级。
+- 确认 `install.sh --import-sqlite` 使用固定 `/tmp/after-sales-warehouse-initial.json`，P2-09 证据升级；回滚脚本明确只回滚代码，不回滚数据库，新增 P2-13。
+- 未修改业务代码、未连接 NUC、未执行迁移、构建或部署。
+
+### 2026-11-23 第五轮空库迁移演练
+
+- 在隔离临时 SQLite 数据库中执行完整迁移链和 `manage.py check`，迁移成功且系统检查无问题。现有 `runtime-data/db.sqlite3` 未修改。
+- 临时探针第一次因 Django 连接仍打开而清理失败，进程退出后已删除数据库和探针文件。该结果只证明空库迁移可执行，不代表 PostgreSQL 真实数据升级或回滚通过。
+- 未修改业务代码、未连接 NUC、未执行 PostgreSQL 迁移或部署。
+
+### 2026-11-23 第六轮 PostgreSQL 验收准备
+
+- 本机未发现 PostgreSQL 客户端、容器运行时或 `pg_isready`，PostgreSQL 专项 `8/8` 明确跳过。
+- 静态复核 `run-concurrency-tests.sh` 的 PostgreSQL 限制、隔离测试库、临时 `CREATEDB` 权限和退出清理逻辑。
+- 在 `REVIEW_REPORT_1.md` 建立 NUC/PostgreSQL 迁移、并发、业务冒烟、恢复、回切和健康检查验收矩阵。未连接 NUC、未执行部署或生产数据库写入。
+
+### 2026-11-23 第七轮鉴权与响应安全复核
+
+- 静态对照页面路由、视图装饰器和 API 权限，未发现新的未鉴权业务页面。健康检查、Service Worker 和账号申请保持公开入口。
+- 缓存头、CSP、Permissions Policy、Service Worker、扫码脚本更新和离线清理专项 `10/10` 通过。
+- 新增 P2-14：CSP 仍允许 `unsafe-inline`，后续需迁移内联脚本/样式或采用 nonce/hash。未修改业务代码、未连接 NUC、未部署。
+
+### 2026-11-23 第八轮媒体与上传边界复核
+
+- 复核归档附件的 Nginx 拦截、Django 下载权限和上传校验。专项在可写临时目录重跑为 `63/63` 通过。
+- P2-10 证据升级：普通 `/media/` 直接映射，资产照片 URL 与归档附件的授权边界不同，是否收紧待业务确认。
+- 新增 P2-15：资产生命周期页面仍显示单文件 20 MB，后端和 Nginx 实际限制已为 100 MB。
+- 未修改业务代码、未连接 NUC、未访问生产媒体或部署。
+
+### 2026-11-23 第九轮敏感信息与通知复核
+
+- 复核令牌、认证审计、DingTalk outbox 和异常日志，未发现明文密码、Token、Secret 或完整 Webhook 写入路径。
+- 新增待业务确认 P2-16：账号申请通知将姓名、完整手机号和申请说明同时写入站内通知与 DingTalk outbox，个人通知失败时可能回退群通知。
+- 未修改业务代码、未发送第三方通知、未连接 NUC 或部署。
+
+### 2026-11-23 第十轮问题登记收口
+
+- 汇总并去重当前有效问题，形成 P1-01、P2-04、P2-06、P2-09、P2-10、P2-13、P2-14、P2-15、P2-16 的统一登记和修复顺序。
+- 确认当前没有新增可证实 P0。未修改业务代码、未连接 NUC、未部署。后续等待用户确认“开始修复”或恢复现场连接后执行 PostgreSQL/设备验收。
+
 ### 2026-11-20 第十二轮复盘：4 个 P1 与 3 个 P2 修复
 
 > 全部改动仅本地代码 + 自动化验证，**未部署、未连接生产库**。

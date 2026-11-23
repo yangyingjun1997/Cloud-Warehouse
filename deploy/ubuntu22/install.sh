@@ -266,6 +266,8 @@ SAFE_RELEASE_VERSION="$(printf '%s' "$RELEASE_VERSION" | tr -c 'A-Za-z0-9._-' '-
 CANDIDATE_DIR="$RELEASE_ROOT/${RELEASE_STAMP}-${SAFE_RELEASE_VERSION}"
 PREVIOUS_RELEASE=""
 RELEASE_SWITCHED=0
+SQLITE_IMPORT_DIR=""
+SQLITE_IMPORT_FILE=""
 
 # Preserve the old in-place layout as the first selectable atomic release.
 if [[ ! -L "$CURRENT_LINK" && -f "$APP_DIR/backend/manage.py" && -x "$APP_DIR/venv/bin/python" ]]; then
@@ -303,6 +305,9 @@ deployment_failed() {
   fi
   if [[ -d "$CANDIDATE_DIR" && "$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)" != "$CANDIDATE_DIR" ]]; then
     rm -rf "$CANDIDATE_DIR"
+  fi
+  if [[ -n "$SQLITE_IMPORT_DIR" && -d "$SQLITE_IMPORT_DIR" ]]; then
+    rm -rf "$SQLITE_IMPORT_DIR"
   fi
   exit "$status"
 }
@@ -461,7 +466,20 @@ ln -sfn "$ENV_FILE" "$CANDIDATE_DIR/backend/.env"
 
 if [[ $IMPORT_SQLITE -eq 1 && -f "$SOURCE_BACKEND/db.sqlite3" && ! -f "$DATA_DIR/.sqlite-imported" ]]; then
   echo "Exporting existing SQLite data for one-time PostgreSQL import..."
-  DB_ENGINE=django.db.backends.sqlite3 DB_NAME="$SOURCE_BACKEND/db.sqlite3" "$CANDIDATE_DIR/venv/bin/python" "$CANDIDATE_DIR/backend/manage.py" dumpdata --natural-foreign --natural-primary --exclude contenttypes --exclude auth.Permission --exclude sessions > /tmp/after-sales-warehouse-initial.json
+  SQLITE_IMPORT_DIR="$(mktemp -d "$DATA_DIR/sqlite-import.XXXXXX")"
+  chown "$APP_USER:$APP_GROUP" "$SQLITE_IMPORT_DIR"
+  chmod 700 "$SQLITE_IMPORT_DIR"
+  SQLITE_IMPORT_FILE="$SQLITE_IMPORT_DIR/initial.json"
+  install -o "$APP_USER" -g "$APP_GROUP" -m 600 /dev/null "$SQLITE_IMPORT_FILE"
+  previous_umask="$(umask)"
+  umask 077
+  if ! DB_ENGINE=django.db.backends.sqlite3 DB_NAME="$SOURCE_BACKEND/db.sqlite3" "$CANDIDATE_DIR/venv/bin/python" "$CANDIDATE_DIR/backend/manage.py" dumpdata --natural-foreign --natural-primary --exclude contenttypes --exclude auth.Permission --exclude sessions > "$SQLITE_IMPORT_FILE"; then
+    umask "$previous_umask"
+    echo "[错误] SQLite 数据导出失败，发布已停止。" >&2
+    exit 1
+  fi
+  umask "$previous_umask"
+  chmod 600 "$SQLITE_IMPORT_FILE"
 fi
 
 install -d -o "$APP_USER" -g "$APP_GROUP" -m 755 "$CANDIDATE_DIR/static"
@@ -470,10 +488,23 @@ sudo -u "$APP_USER" "$CANDIDATE_DIR/venv/bin/python" "$CANDIDATE_DIR/backend/man
 sudo -u "$APP_USER" "$CANDIDATE_DIR/venv/bin/python" "$CANDIDATE_DIR/backend/manage.py" migrate --plan
 sudo -u "$APP_USER" env STATIC_ROOT="$CANDIDATE_DIR/static" "$CANDIDATE_DIR/venv/bin/python" "$CANDIDATE_DIR/backend/manage.py" collectstatic --noinput
 sudo -u "$APP_USER" "$CANDIDATE_DIR/venv/bin/python" "$CANDIDATE_DIR/backend/manage.py" migrate --noinput
-if [[ -f /tmp/after-sales-warehouse-initial.json && ! -f "$DATA_DIR/.sqlite-imported" ]]; then
-  sudo -u "$APP_USER" "$CANDIDATE_DIR/venv/bin/python" "$CANDIDATE_DIR/backend/manage.py" loaddata /tmp/after-sales-warehouse-initial.json
+MIGRATION_STATE_FILE="$CANDIDATE_DIR/.migration-state"
+if ! sudo -u "$APP_USER" "$CANDIDATE_DIR/venv/bin/python" "$CANDIDATE_DIR/backend/manage.py" showmigrations --plan > "$MIGRATION_STATE_FILE"; then
+  echo "[错误] 无法读取迁移状态，发布已停止。" >&2
+  exit 1
+fi
+if grep -q '^\[ \]' "$MIGRATION_STATE_FILE"; then
+  echo "[错误] 迁移完成后仍存在未应用迁移，发布已停止。" >&2
+  rm -f "$MIGRATION_STATE_FILE"
+  exit 1
+fi
+MIGRATION_STATE_SHA256="$(sha256sum "$MIGRATION_STATE_FILE" | awk '{print $1}')"
+rm -f "$MIGRATION_STATE_FILE"
+if [[ -n "$SQLITE_IMPORT_DIR" && -f "$SQLITE_IMPORT_FILE" && ! -f "$DATA_DIR/.sqlite-imported" ]]; then
+  sudo -u "$APP_USER" "$CANDIDATE_DIR/venv/bin/python" "$CANDIDATE_DIR/backend/manage.py" loaddata "$SQLITE_IMPORT_FILE"
   touch "$DATA_DIR/.sqlite-imported"
-  rm -f /tmp/after-sales-warehouse-initial.json
+  rm -rf "$SQLITE_IMPORT_DIR"
+  SQLITE_IMPORT_DIR=""
 fi
 
 cat > "$CANDIDATE_DIR/release-info" <<EOF
@@ -487,6 +518,8 @@ working_tree_dirty=$WORKING_TREE_DIRTY
 source_content_sha256=$SOURCE_CONTENT_SHA256
 previous_release=$PREVIOUS_RELEASE
 database_snapshot=required_before_migrate
+database_migration_check=passed
+database_migration_state_sha256=$MIGRATION_STATE_SHA256
 EOF
 chown "$APP_USER:$APP_GROUP" "$CANDIDATE_DIR/release-info"
 

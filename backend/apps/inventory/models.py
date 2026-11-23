@@ -126,7 +126,7 @@ class Warehouse(UUIDModel, TimeStampedModel):
 
 
 class Location(UUIDModel, TimeStampedModel):
-    warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE, related_name='locations')
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name='locations')
     name = models.CharField(max_length=120)
     code = models.CharField(max_length=50)
     description = models.CharField(max_length=255, blank=True, default='')
@@ -549,8 +549,8 @@ class Asset(UUIDModel, TimeStampedModel):
         blank=True,
         related_name='assets',
     )
-    warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True)
-    location = models.ForeignKey(Location, on_delete=models.SET_NULL, null=True, blank=True)
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, null=True, blank=True)
+    location = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True)
     current_holder = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     external_holder_name = models.CharField(max_length=120, blank=True, default='')
     external_holder_company = models.CharField(max_length=120, blank=True, default='')
@@ -1256,8 +1256,8 @@ class StockItem(UUIDModel, TimeStampedModel):
         blank=True,
         related_name='stock_items',
     )
-    warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True)
-    location = models.ForeignKey(Location, on_delete=models.SET_NULL, null=True, blank=True)
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, null=True, blank=True)
+    location = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True)
 
     class Meta:
         ordering = ['name']
@@ -1500,8 +1500,8 @@ class InventoryCheckScan(UUIDModel, TimeStampedModel):
     quantity = models.PositiveIntegerField(default=1)
     result = models.CharField(max_length=24, choices=Result.choices)
     operator = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='inventory_check_scans')
-    observed_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='inventory_check_scans')
-    observed_location = models.ForeignKey(Location, on_delete=models.SET_NULL, null=True, blank=True, related_name='inventory_check_scans')
+    observed_warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, null=True, blank=True, related_name='inventory_check_scans')
+    observed_location = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True, related_name='inventory_check_scans')
     note = models.CharField(max_length=255, blank=True, default='')
 
     class Meta:
@@ -1526,10 +1526,10 @@ class InventoryCheckAdjustment(UUIDModel, TimeStampedModel):
     after_quantity = models.PositiveIntegerField(null=True, blank=True)
     before_status = models.CharField(max_length=32, blank=True, default='')
     after_status = models.CharField(max_length=32, blank=True, default='')
-    before_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='before_inventory_check_adjustments')
-    after_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='after_inventory_check_adjustments')
-    before_location = models.ForeignKey(Location, on_delete=models.SET_NULL, null=True, blank=True, related_name='before_inventory_check_adjustments')
-    after_location = models.ForeignKey(Location, on_delete=models.SET_NULL, null=True, blank=True, related_name='after_inventory_check_adjustments')
+    before_warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, null=True, blank=True, related_name='before_inventory_check_adjustments')
+    after_warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, null=True, blank=True, related_name='after_inventory_check_adjustments')
+    before_location = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True, related_name='before_inventory_check_adjustments')
+    after_location = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True, related_name='after_inventory_check_adjustments')
     reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='inventory_check_adjustments')
     review_note = models.TextField(blank=True, default='')
     executed_at = models.DateTimeField(null=True, blank=True)

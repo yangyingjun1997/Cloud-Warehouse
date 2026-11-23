@@ -8,6 +8,7 @@ ENV_FILE="$BACKEND_DIR/.env"
 PYTHON="$APP_DIR/current/venv/bin/python"
 ERRORS=0
 WARNINGS=0
+ALLOW_MISSING_SECURITY_TOOLS="${ALLOW_MISSING_SECURITY_TOOLS:-0}"
 
 ok() { printf '[通过] %s\n' "$1"; }
 warn() { printf '[提醒] %s\n' "$1"; WARNINGS=$((WARNINGS + 1)); }
@@ -86,9 +87,11 @@ fi
 if [[ -x "$PYTHON" ]] && "$PYTHON" -m pip --version >/dev/null 2>&1; then
   "$PYTHON" -m pip check && ok 'pip check 通过。' || fail 'pip check 发现依赖冲突。'
   if "$PYTHON" -m pip show pip-audit >/dev/null 2>&1; then
-    "$PYTHON" -m pip_audit || warn 'pip-audit 发现需要评估的依赖漏洞。'
+    "$PYTHON" -m pip_audit && ok 'pip-audit 未发现已知漏洞。' || fail 'pip-audit 发现依赖漏洞。'
+  elif [[ "$ALLOW_MISSING_SECURITY_TOOLS" == "1" ]]; then
+    warn '未安装 pip-audit，已通过 ALLOW_MISSING_SECURITY_TOOLS 显式豁免。'
   else
-    warn '未安装 pip-audit；如需联网漏洞扫描，可后续单独安装执行。'
+    fail '未安装 pip-audit，无法完成依赖漏洞门禁。'
   fi
 else
   fail "当前 release 的 Python 环境中未找到 pip。"

@@ -1,8 +1,113 @@
 # Project Status
 
-更新时间：2026-11-20
+更新时间：2026-11-23
+
+### 2026-11-23 M19 P1-01 修复进展
+
+- **三态基线**：Git 已提交基线仍为 `73958d65939c7f77bdb27cff947b3cad35fa7452`；本轮未提交文件包含既有审查记录以及本轮 P1-01 修改的 `backend/apps/common/admin.py`、`backend/apps/inventory/models.py`、`backend/apps/inventory/views.py`、`backend/apps/inventory/test_master_data_delete.py`、`backend/apps/inventory/migrations/0032_protect_master_data_references.py`、`backend/apps/workflow/models.py`、`backend/apps/workflow/migrations/0023_protect_master_data_references.py`；NUC SSH 仍认证失败，实际运行 release **未复核**。
+- **代码实现**：已将仓库、库位、资产/耗材归属、申请目标仓库/库位、库存流水仓库和盘点观察/调整历史的删除策略收紧为 `PROTECT`。通用 admin 删除在同一事务写入删除前快照并保留真实对象 ID，受保护删除回滚且不写孤儿审计，批量删除失败整体回滚。API 原有引用检查继续保留并与模型层兜底配合。
+- **自动化通过**：专项 `apps.inventory.test_master_data_delete` **11/11**；Django 全量 **807/807 通过，8 项 PostgreSQL 专项跳过**，使用工作区受控临时目录 `runtime-data/review-tmp`；`manage.py check`、`makemigrations --check --dry-run` 和 `git diff --check` 通过。首次全量运行因 Windows 默认临时目录 ACL 失败，切换受控目录后重跑通过。
+- **现场验收和部署**：未执行。未连接 NUC、未执行 PostgreSQL 数据迁移、未修改生产数据库或配置。真实 PostgreSQL 外键迁移、既有引用盘点、部署快照、健康检查和回滚验证仍待后续授权与现场连接。
+- **问题状态**：P1-01 的代码与 SQLite 自动化验收完成，现场/部署状态仍未完成。P2-13、P2-06、P2-09、P2-04 及待业务确认项按 M19 原顺序保留。
+
+### 2026-11-23 M19 P2-13 回滚兼容门禁
+
+- **代码实现**：安装脚本在迁移后记录迁移检查标记和状态摘要；回滚脚本在备份和切换前检查目标 release 元数据，并执行目标代码的只读 `showmigrations --plan`。缺少元数据或存在未应用迁移时默认停止，人工确认后可显式使用 `--allow-unknown-schema`。
+- **自动化通过**：部署安全专项 **13/13**，`bash -n deploy/ubuntu22/install.sh` 和 `bash -n deploy/ubuntu22/rollback.sh` 通过，`git diff --check` 通过。
+- **现场验收和部署**：未执行。真实 PostgreSQL 迁移、回切兼容性、数据库恢复和 NUC 部署仍未验证。
+
+### 2026-11-23 M19 P2-06 发布安全门禁
+
+- **代码实现**：`check-all.sh` 已纳入部署目录 Bash 语法、Bandit 和 pip-audit，工具缺失默认失败，仅显式参数允许平台豁免。`security-check.sh` 对 pip-audit 缺失或漏洞改为阻断，测试临时目录使用唯一目录并退出清理。
+- **自动化通过**：部署安全专项 **14/14**，`bash -n` 已覆盖 install、rollback、check-all、security-check 等脚本，`git diff --check` 通过。
+- **环境记录**：在 Windows 调用 Bash 运行 `check-all.sh --fast --allow-missing-security-tools` 时，系统 Python/路径与本机 Django 虚拟环境不一致，`manage.py check`、迁移漂移和 pip check 失败。该命令结果记为环境失败，未作为发布通过证据。
+- **现场验收和部署**：未执行。NUC 安全巡检、Bandit、pip-audit 和发布门禁现场结果仍待连接服务器后复核。
+
+### 2026-11-23 M19 P2-09 SQLite 一次性导入临时文件
+
+- **代码实现**：`--import-sqlite` 使用数据目录下的私有临时目录，目录 700、导出文件 600，失败路径由发布 trap 清理，成功导入后立即删除，不再写固定 `/tmp` 文件。
+- **自动化通过**：部署安全专项新增导入文件生命周期检查，当前专项 **15/15**，Bash 语法和差异检查通过。
+- **现场验收和部署**：未执行。真实首次部署、PostgreSQL 导入、进程中断和恢复演练仍待验证。
 
 本文档是项目当前状态的唯一事实来源。旧计划、旧验收报告和聊天记录不得覆盖这里的结论。
+
+### 2026-11-23 第一轮全景审查：代码地图与本机回归
+
+- **版本三态**：本轮最终读取的 Git 已提交基线为 `73958d65939c7f77bdb27cff947b3cad35fa7452`；本轮新增审查记录为 `REVIEW_REPORT_1.md`，状态和变更记录也有本轮审查摘要；NUC SSH 返回 `Permission denied (publickey,password)`，实际运行 release **未复核**。
+- **本机回归**：Python 3.12.10；Django 全量 **797/797 通过，8 项跳过**；`manage.py check`、迁移漂移、`pip check`、`git diff --check` 和 JavaScript 语法检查通过。本机 HTTP `/health/`、`/login/`、`/sw.js` 返回 200。
+- **环境风险**：开发服务器提示本机 SQLite 有 19 个未应用迁移，未执行迁移。`check --deploy` 报告 6 项本地开发配置警告。Bandit、pip-audit 和 WSL shell 语法检查因当前环境不可用未执行。
+- **本轮审查结论**：未发现新增可证实 P0。优先待处理为主数据删除的模型层 `CASCADE/SET_NULL` 仍可绕过 ViewSet 守卫、报表和供应商路径全量物化、`check-all.sh` 未纳入 shell 与安全门禁、开发环境示例误用于生产的配置风险。详细调用链、证据等级、六角色意见和下一步见 `REVIEW_REPORT_1.md`。
+- **状态独立性**：代码实现、自动化通过、现场验收、部署仍分别记录。本轮只完成代码审查和本机自动化，未完成 NUC 部署、PostgreSQL 专项、真实浏览器、iPhone、DS3678、ZT610 或恢复演练。
+
+### 2026-11-23 第二轮复核：删除跨入口与报表容量
+
+- **版本三态**：Git 已提交基线仍为 `73958d65939c7f77bdb27cff947b3cad35fa7452`；本轮未提交文件为 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT_1.md`，均属于审查记录；NUC SSH 认证失败，实际运行 release **未复核**。
+- **专项测试**：`apps.inventory.test_master_data_delete` 与 `apps.common.test_deployment_security` 共 **16/16 通过**。测试数据库为临时 SQLite，已销毁。
+- **新增证据**：`WarehouseAdmin`、`LocationAdmin` 未覆盖删除方法，继承通用 admin 直接删除行为；模型元数据确认 `Location.warehouse=CASCADE`、`Asset.warehouse/location=SET_NULL`。API 守卫不能覆盖 admin 或直接 ORM 路径，P1-02 风险升级为跨入口未关闭。
+- **容量复核**：供应商价格、供应商对账和呆滞库存存在全量 Python 物化，呆滞库存分页发生在物化之后；采购明细没有供应商/日期组合索引。当前仅有代码证据，未执行 PostgreSQL 大数据量压测，继续列为 P2-04。
+- **代码实现 / 自动化通过 / 现场验收 / 部署**：本轮没有修改业务代码，专项自动化通过，现场验收和部署未执行。
+
+### 2026-11-23 第三轮复核：admin 删除实证与查询索引
+
+- **版本三态**：Git 已提交基线仍为 `73958d65939c7f77bdb27cff947b3cad35fa7452`；本地未提交仍为 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT_1.md`；NUC SSH 认证失败，实际运行 release **未复核**。
+- **P1 实证**：临时 Django 测试数据库执行 admin `WarehouseAdmin.delete_model()` 探针 **1/1 通过**。在用仓库被删除，库位因 `CASCADE` 被删除，资产仓库和库位因 `SET_NULL` 被清空，并生成 `warehouse_admin_deleted` 审计记录。临时测试文件已删除。
+- **容量证据**：`PurchaseOrderLine` 和 `PurchaseReceiptLine` 没有自定义索引；供应商价格和对账 SQL 包含跨表连接、订单状态过滤和排序，视图仍做全量 Python 物化。尚未执行 PostgreSQL `EXPLAIN ANALYZE` 或压力测试。
+- **状态独立性**：本轮没有业务代码实现，探针自动化通过，现场验收和部署未执行。P1-01 升级为已实证跨入口数据完整性缺陷，P2-04 保持待 PostgreSQL 容量验证。
+
+### 2026-11-23 第四轮复核：发布门禁、迁移链与回滚边界
+
+- **版本三态**：Git 已提交基线仍为 `73958d65939c7f77bdb27cff947b3cad35fa7452`；本地未提交仍为 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT_1.md`；NUC SSH 认证失败，实际运行 release **未复核**。
+- **迁移状态**：当前本机 SQLite `showmigrations --plan` 显示 **19 个未应用迁移**。迁移目录共 87 个文件，静态发现 18 个 `RunPython` 数据迁移，部分逆向为空操作。未执行迁移。
+- **发布门禁**：`check-all.sh` 未执行 shell 语法、Bandit、pip-audit，也不清理 `.test-run-temp`；`security-check.sh` 对缺少或发现 pip-audit 问题只告警。P2-06 证据升级。
+- **一次性导入**：`install.sh --import-sqlite` 仍将完整 dump 写入固定 `/tmp/after-sales-warehouse-initial.json`，失败清理和权限隔离不足，P2-09 证据升级。
+- **回滚边界**：`rollback.sh` 只切换代码 release，不回滚 PostgreSQL。迁移后的旧代码兼容性没有自动检查，新增 P2-13。
+- **代码实现 / 自动化通过 / 现场验收 / 部署**：本轮没有修改业务代码，完成只读静态复核，Linux/PostgreSQL/NUC/设备验收和部署均未执行。
+
+### 2026-11-23 第五轮复核：空库迁移链演练
+
+- **版本三态**：Git 已提交基线仍为 `73958d65939c7f77bdb27cff947b3cad35fa7452`；本地未提交仍为 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT_1.md`；NUC SSH 认证失败，实际运行 release **未复核**。
+- **隔离演练**：新建临时 SQLite 数据库执行完整 `migrate --noinput` 和 `manage.py check`，迁移链应用成功，system check 无问题。临时数据库和探针文件已删除。
+- **清理记录**：探针第一次因 Django 连接尚未关闭而清理失败，进程退出后完成手动清理。该环境性事件不影响迁移成功结论。
+- **边界**：空 SQLite 通过不能替代真实 PostgreSQL 数据升级、锁等待、失败恢复和代码回切验证，P2-13 保持未关闭。
+
+### 2026-11-23 第六轮复核：PostgreSQL 隔离验收准备
+
+- **版本三态**：Git 已提交基线仍为 `73958d65939c7f77bdb27cff947b3cad35fa7452`；本地未提交仍为 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT_1.md`；NUC SSH 认证失败，实际运行 release **未复核**。
+- **PostgreSQL 能力**：本机没有 `psql`、`pg_dump`、`pg_isready`、Docker 或 Podman。PostgreSQL 专项执行结果为 **8/8 skipped**，原因是当前连接为 SQLite。
+- **脚本边界**：`run-concurrency-tests.sh` 已静态确认只允许 PostgreSQL、使用 `test_<DB_NAME>`、临时授予并恢复 `CREATEDB`、退出清理测试库。未在现场执行。
+- **验收矩阵**：已在 `REVIEW_REPORT_1.md` 建立 release-info、快照、迁移、并发、业务冒烟、恢复、回切和服务健康的执行顺序与通过标准。
+- **状态独立性**：本轮没有业务代码实现，测试明确跳过，现场验收和部署未执行。
+
+### 2026-11-23 第七轮复核：页面鉴权与响应安全边界
+
+- **版本三态**：Git 已提交基线仍为 `73958d65939c7f77bdb27cff947b3cad35fa7452`；本地未提交仍为 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT_1.md`；NUC SSH 认证失败，实际运行 release **未复核**。
+- **鉴权矩阵**：页面业务入口均有 `login_required` 或 `role_required`，公开入口限定为登录、账号申请、健康检查和 Service Worker。资产 API 普通登录用户使用最小公共序列化器，生命周期接口要求仓库业务权限。
+- **响应安全**：缓存、CSP、Permissions Policy、Service Worker 和离线清理专项 **10/10 通过**。退出登录仅 POST 执行状态变化。
+- **新增 P2-14**：CSP 仍使用 `script-src/style-src 'unsafe-inline'`，页面存在大量内联脚本和样式，需后续按页面迁移到 nonce/hash 或静态资源。
+- **状态独立性**：本轮未修改业务代码，自动化专项通过，真实浏览器、现场验收和部署未执行。
+
+### 2026-11-23 第八轮复核：媒体、附件和上传边界
+
+- **版本三态**：Git 已提交基线仍为 `73958d65939c7f77bdb27cff947b3cad35fa7452`；本地未提交仍为 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT_1.md`；NUC SSH 认证失败，实际运行 release **未复核**。
+- **附件边界**：归档附件由 Nginx 拦截直链并经 Django 仓库业务权限下载，图片和通用附件校验逻辑已覆盖。
+- **资产照片风险**：普通 `/media/` 仍由 Nginx 直接映射，`AssetPublicSerializer` 对已登录用户返回 `photo_url`。P2-10 升级为资产照片访问边界待业务确认。
+- **上传专项**：第一次运行受 Windows 临时目录 ACL 影响，改用 `runtime-data/review-tmp` 后同一专项 **63/63 通过**。后端和 Nginx 上限为 100 MB，但页面仍写 20 MB。
+- **新增 P2-15**：`asset_lifecycle.html` 上传提示与实际 100 MB 限制不一致。
+- **状态独立性**：本轮没有业务代码实现，专项重跑通过，生产媒体、NUC、浏览器和部署验收未执行。
+
+### 2026-11-23 第九轮复核：敏感信息与第三方通知
+
+- **版本三态**：Git 已提交基线仍为 `73958d65939c7f77bdb27cff947b3cad35fa7452`；本地未提交仍为 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT_1.md`；NUC SSH 认证失败，实际运行 release **未复核**。
+- **敏感字段**：令牌只保存哈希，安全审计使用摘要，DingTalk access token 不写日志。本轮文档敏感模式扫描未发现密码、Token、Secret 或完整 Webhook。
+- **待确认 P2-16**：账号申请通知正文包含完整姓名、手机号和申请说明，站内通知与 DingTalk outbox 共用正文，个人通知失败时可能回退到群通知。需确认群内是否允许完整手机号外发。
+- **状态独立性**：本轮未修改业务代码、未发送第三方通知、未连接 NUC 或部署。
+
+### 2026-11-23 第十轮复核：问题去重与修复优先级
+
+- **版本三态**：Git 已提交基线仍为 `73958d65939c7f77bdb27cff947b3cad35fa7452`；本地未提交仍为 `CHANGELOG.md`、`PROJECT_STATUS.md`、`REVIEW_REPORT_1.md`；NUC SSH 认证失败，实际运行 release **未复核**。
+- **当前有效问题**：P1-01 已完成本地代码和 SQLite 自动化修复，现场 PostgreSQL/部署仍待验证；P2-04 容量、P2-06 发布门禁、P2-09 导入临时文件、P2-10 媒体边界、P2-13 回滚兼容、P2-14 CSP、P2-15 上传文案、P2-16 通知外发仍按 `REVIEW_REPORT_1.md` 第 19 节登记。
+- **优先级**：先完成 P1-01 的 PostgreSQL/部署验收，再处理 P2-13/P2-06/P2-09，随后 P2-04，最后处理政策确认和体验加固项。
+- **总体状态**：本轮已完成 P1-01 业务代码实现和本机自动化，当前没有新增可证实 P0。PostgreSQL、NUC、浏览器、设备和部署仍未验证。
 
 ### 2026-11-20 第十二轮复盘：4 个 P1 + 3 个 P2 已修（代码/自动化完成，未部署）
 
@@ -30,13 +135,16 @@
   P2-02 停用仓库/库位仍可写入（新增 `_assert_active_location`，只拦新写入不卡在途单）、
   P2-03 `ProtectedError` 抛 500 且留孤儿审计（改事务化 + 转 400 + 写删除前快照）。
 
-- **尚未关闭（下轮优先）**：
-  1. **P1-02 的模型层迁移**：`Location.warehouse` 仍是 `CASCADE`、`Asset.warehouse` 仍是
-     `SET_NULL`，仅靠 ViewSet 守卫；后台 admin 或其他代码路径删除仓库仍可绕过。
-  2. **P2-04** 报表/供应商价格无上限物化（未压测）；
-  3. **P2-06** `check-all.sh` 未纳入 shell 语法/Bandit/pip-audit；
-  4. **P2-09** 4 个用例依赖 `tempfile` 默认清理，受限 ACL 环境假失败；
-  5. **P2-10** 资产照片经公开 `/media/` 可匿名访问（需业务确认是否收紧）。
+- **当前有效问题登记**：当前编号以 2026-11-23 第十轮统一问题表为准。历史轮次曾将主数据删除模型层风险记为 P1-02，当前统一登记为 P1-01。
+  1. **P1-01** 主数据删除跨 admin/API/ORM 边界问题已完成本地模型与 admin 修复和 11 项专项回归，真实 PostgreSQL 迁移与部署验收待完成。
+  2. **P2-04** 报表和供应商路径全量 Python 物化，尚无 PostgreSQL 容量基线。
+  3. **P2-06** 发布安全门禁未严格阻断 shell、Bandit、pip-audit 和工具缺失。
+  4. **P2-09** SQLite 一次性导入使用固定 `/tmp` 文件，失败清理和权限隔离不足。
+  5. **P2-10** 资产照片与归档附件的媒体授权边界不一致，待业务确认。
+  6. **P2-13** 已加入迁移元数据和回滚前只读迁移门禁，真实 PostgreSQL 回切与恢复演练仍待验证。
+  7. **P2-14** CSP 仍允许 `unsafe-inline`。
+  8. **P2-15** 上传页面提示 20 MB，实际限制为 100 MB。
+  9. **P2-16** 账号申请通知可能把手机号和申请说明外发到 DingTalk 群，待业务确认。
 
 - **未执行（不得视为通过）**：PostgreSQL 并发 8 项、真实浏览器 E2E、DS3678 扫码、
   ZT610 60×40 mm 走纸、NUC 部署与 `/health/` 冒烟、恢复演练实跑。

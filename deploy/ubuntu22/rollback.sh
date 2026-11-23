@@ -15,10 +15,12 @@ Usage:
   sudo after-sales-warehouse-rollback --list
   sudo after-sales-warehouse-rollback previous
   sudo after-sales-warehouse-rollback <release-directory-name>
+  sudo after-sales-warehouse-rollback <release-directory-name> --allow-unknown-schema
 
 说明：
   该命令只原子切换已构建完成的程序 release，不回滚 PostgreSQL 数据或 schema。
-  目标 release 必须与当前数据库结构兼容；否则应走正式数据恢复流程。
+  目标 release 必须与当前数据库结构兼容；历史 release 缺少迁移元数据时默认拒绝，
+  只有完成人工兼容确认后才允许使用 --allow-unknown-schema。
 EOF
 }
 
@@ -30,6 +32,15 @@ fi
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
   exit 0
+fi
+
+ALLOW_UNKNOWN_SCHEMA=0
+if [[ "${2:-}" == "--allow-unknown-schema" ]]; then
+  ALLOW_UNKNOWN_SCHEMA=1
+  set -- "$1"
+elif [[ "${1:-}" == "--allow-unknown-schema" ]]; then
+  echo "--allow-unknown-schema 必须跟在目标 release 后。" >&2
+  exit 2
 fi
 
 release_is_complete() {
@@ -79,6 +90,35 @@ if [[ "$TARGET_DIR" == "$CURRENT_RELEASE" ]]; then
   echo "目标已是当前 release，无需切换。"
   exit 0
 fi
+
+check_release_schema_compatibility() {
+  local release_dir="$1" migration_check migration_state_sha256 plan_file
+  migration_check="$(awk -F= '$1 == "database_migration_check" { print $2; exit }' "$release_dir/release-info")"
+  migration_state_sha256="$(awk -F= '$1 == "database_migration_state_sha256" { print $2; exit }' "$release_dir/release-info")"
+  if [[ "$migration_check" != "passed" || -z "$migration_state_sha256" ]]; then
+    if [[ $ALLOW_UNKNOWN_SCHEMA -ne 1 ]]; then
+      echo "目标 release 缺少已验证的迁移元数据，已拒绝回滚。" >&2
+      echo "完成人工兼容确认后，可使用 --allow-unknown-schema 重试。" >&2
+      return 1
+    fi
+    echo "警告：目标 release 的迁移元数据未知，继续前请确认 schema 兼容性。" >&2
+  fi
+
+  plan_file="$(mktemp "$DATA_DIR/rollback-migration-plan.XXXXXX")"
+  if ! sudo -u "$APP_USER" "$release_dir/venv/bin/python" "$release_dir/backend/manage.py" showmigrations --plan > "$plan_file"; then
+    rm -f "$plan_file"
+    echo "目标 release 无法读取当前数据库迁移状态，已拒绝回滚。" >&2
+    return 1
+  fi
+  if grep -q '^\[ \]' "$plan_file"; then
+    rm -f "$plan_file"
+    echo "目标 release 需要当前数据库未应用的迁移，已拒绝回滚。" >&2
+    return 1
+  fi
+  rm -f "$plan_file"
+}
+
+check_release_schema_compatibility "$TARGET_DIR"
 
 if [[ -x "$BACKUP_COMMAND" ]]; then
   echo "回滚前执行数据库和媒体备份..."

@@ -91,6 +91,47 @@ class DeploymentFailClosedTests(SimpleTestCase):
         self.assertIn('restore_current()', rollback)
         self.assertNotIn('rm -rf "$BACKEND_DIR"', rollback)
 
+    def test_rollback_requires_schema_compatibility_before_switch(self):
+        deploy_dir = self.repository_root / 'deploy' / 'ubuntu22'
+        rollback = (deploy_dir / 'rollback.sh').read_text(encoding='utf-8')
+        install = (deploy_dir / 'install.sh').read_text(encoding='utf-8')
+
+        self.assertIn('check_release_schema_compatibility "$TARGET_DIR"', rollback)
+        self.assertIn('showmigrations --plan', rollback)
+        self.assertIn('database_migration_check', rollback)
+        self.assertIn('--allow-unknown-schema', rollback)
+        self.assertLess(
+            rollback.index('check_release_schema_compatibility "$TARGET_DIR"'),
+            rollback.index('mv -Tf "$APP_DIR/current.next" "$CURRENT_LINK"'),
+        )
+        self.assertIn('database_migration_check=passed', install)
+        self.assertIn('database_migration_state_sha256=', install)
+        self.assertIn('showmigrations --plan', install)
+
+    def test_local_gate_runs_shell_and_security_scans_fail_closed(self):
+        deploy_dir = self.repository_root / 'deploy' / 'ubuntu22'
+        check_all = (deploy_dir / 'check-all.sh').read_text(encoding='utf-8')
+        security_check = (deploy_dir / 'security-check.sh').read_text(encoding='utf-8')
+
+        self.assertIn('bash -n', check_all)
+        self.assertIn('-m bandit', check_all)
+        self.assertIn('-m pip_audit', check_all)
+        self.assertIn('trap cleanup EXIT', check_all)
+        self.assertIn('--allow-missing-security-tools', check_all)
+        self.assertIn("fail '未安装 pip-audit", security_check)
+        self.assertIn("fail 'pip-audit 发现依赖漏洞", security_check)
+        self.assertIn('ALLOW_MISSING_SECURITY_TOOLS', security_check)
+
+    def test_sqlite_import_uses_private_cleaned_up_files(self):
+        install = self.install_script
+
+        self.assertNotIn('/tmp/after-sales-warehouse-initial.json', install)
+        self.assertIn('mktemp -d "$DATA_DIR/sqlite-import.', install)
+        self.assertIn('chmod 700 "$SQLITE_IMPORT_DIR"', install)
+        self.assertIn('install -o "$APP_USER" -g "$APP_GROUP" -m 600', install)
+        self.assertIn('umask 077', install)
+        self.assertIn('rm -rf "$SQLITE_IMPORT_DIR"', install)
+
 
 class RestoreDrillFormatTests(SimpleTestCase):
     """恢复演练脚本必须跟得上 backup.sh 的实际产物格式。
