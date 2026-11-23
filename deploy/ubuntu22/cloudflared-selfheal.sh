@@ -87,8 +87,12 @@ if [[ "$DNS_OK" == "0" ]]; then
   FAILS_DNS=$((FAILS_DNS + 1))
   echo "$FAILS_DNS" > "$STATE_FILE"
   echo "DNS 仍不可用（连续 ${FAILS_DNS} 次）。"
+  # 2026-11-23 停用钉钉推送（用户要求）：
+  # 公司内网 DNS（10.10.5.3/10.10.5.4）间歇超时是常态，cloudflared 会自动恢复。
+  # 近 3 天触发了 9 次「DNS 持续故障」告警，全是噪音。改为只记 journal 日志。
+  # 自愈动作（重启 systemd-resolved、清缓存、必要时重启 cloudflared）全部保留。
   if [[ "$FAILS_DNS" -ge 3 ]]; then
-    notify '售后仓库 DNS 持续故障' "主机：$(hostname)  \n时间：$(date --iso-8601=seconds)  \n连续 ${FAILS_DNS} 次无法解析 argotunnel.com，域名访问会中断。  \n\n排查：\n\`resolvectl status\`\n\`systemctl status systemd-resolved\`\n\`getent ahostsv4 region1.v2.argotunnel.com\`\n\n内网 IP 访问不受影响。"
+    echo "DNS 连续 ${FAILS_DNS} 次不可用（已停用钉钉告警）。"
   fi
   exit 0
 fi
@@ -140,6 +144,9 @@ FAILS=$((FAILS + 1))
 echo "$FAILS" > "$STATE_FILE"
 echo "重启后仍无连接（连续失败 ${FAILS} 次）。"
 
+# 2026-11-23 停用钉钉推送，原因同上方 DNS 分支：
+# 这类告警与内网 DNS 抖动高度相关，且隧道通常能自行恢复，属噪音。
+# 「隧道已自动恢复」那条仍保留（好消息 + 每天最多一次）。
 if [[ "$FAILS" -ge 3 ]]; then
-  notify '售后仓库隧道持续无法连接' "主机：$(hostname)  \n时间：$(date --iso-8601=seconds)  \n连续 ${FAILS} 次自愈失败，cloudflared 无法建立边缘连接。  \n\n排查：\n\`sudo journalctl -u cloudflared -n 100\`\n\`getent ahostsv4 region1.v2.argotunnel.com\`\n\n若 DNS 解析失败，说明当前网络无法解析 Cloudflare 隧道域名。"
+  echo "隧道连续 ${FAILS} 次无法连接（已停用钉钉告警）。"
 fi
