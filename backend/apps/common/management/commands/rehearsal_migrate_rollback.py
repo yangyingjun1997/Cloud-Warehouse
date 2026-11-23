@@ -152,27 +152,51 @@ class Command(BaseCommand):
 
         call_command('migrate', verbosity=0, interactive=False)
 
+        # 关键：migrate 全部应用后，migration_plan(leaf_nodes) 返回空列表
+        # （因为没有「待应用」的迁移）。要拿到「已应用」的迁移，必须从
+        # loader.applied_migrations 取，再按依赖顺序排列。
         executor = MigrationExecutor(connections['default'])
-        plan = executor.migration_plan(executor.loader.graph.leaf_nodes())
-        ordered = [migration for migration, backwards in plan if not backwards]
+        loader = executor.loader
+        applied = set(loader.applied_migrations.keys())
+        # graph.forwards_plan 给出某节点的正向依赖顺序；用全部叶节点合并去重
+        ordered = []
+        seen = set()
+        for leaf in loader.graph.leaf_nodes():
+            for node in loader.graph.forwards_plan(leaf):
+                if node in applied and node not in seen:
+                    seen.add(node)
+                    ordered.append(loader.graph.nodes[node])
+
         if max_steps:
             ordered = ordered[-max_steps:]
 
-        self.stdout.write(f'共 {len(ordered)} 个迁移待演练回退。\n')
+        self.stdout.write(f'共 {len(ordered)} 个已应用迁移待演练回退。\n')
+        if not ordered:
+            self.stdout.write(self.style.WARNING(
+                '没有取到已应用迁移，演练无法进行（请检查数据库连接与迁移表）。'
+            ))
+            return 1
 
         reversible = 0
         irreversible = []
         for index, migration in enumerate(ordered, start=1):
             label = f'{migration.app_label}.{migration.name}'
-            # 该迁移的直接父节点集合；没有父节点则回退到该 app 空状态
-            parents = list(migration.parents) if migration.parents else [
-                (migration.app_label, None)
-            ]
+            node = (migration.app_label, migration.name)
+            # 从 migration graph 取该节点的直接父节点。
+            # Migration 对象本身没有 parents 属性，依赖关系在 loader.graph 里。
+            executor = MigrationExecutor(connections['default'])
+            graph = executor.loader.graph
+            parents = list(graph.node_map[node].parents) if node in graph.node_map else []
+            if not parents:
+                # 首个迁移没有父节点，回退到该 app 的空状态
+                back_targets = [(migration.app_label, None)]
+            else:
+                back_targets = parents
 
             try:
                 # 1) 回退到父节点（即撤销这一条迁移）
                 executor = MigrationExecutor(connections['default'])
-                executor.migrate(parents)
+                executor.migrate(back_targets)
                 # 2) 重新向前应用这一条，确认回退后仍能重建
                 executor = MigrationExecutor(connections['default'])
                 executor.migrate([(migration.app_label, migration.name)])
