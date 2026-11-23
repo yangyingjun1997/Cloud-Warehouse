@@ -4,6 +4,140 @@
 
 ## Unreleased
 
+### 2026-11-23 上传前安全审计与仓库清理
+
+- 审计发现两个 `rehearsal-check-*/rehearsal.sqlite3` 被误提交（各约 2MB，
+  82 张空表结构、0 行业务数据），来源是迁移演练验证脚本用
+  `tempfile.mkdtemp()` 生成后落在仓库根目录。已 `git rm --cached` 并从工作区删除。
+- `.gitignore` 重写：原文件中文注释乱码、规则有缺口。补齐 `*.sqlite3`、
+  `*.log`、`rehearsal-check-*/`、`.test-run-temp.*`、`app.env` 等规则。
+- 逐项核实「硬编码密码/密钥」告警：199 处为测试夹具口令（`Pw#2026aa` 等），
+  2 处为 README 占位符（`YourQaPassword123`），5 处非测试非文档的均为
+  运行时动态生成（`openssl rand`、`guid`）或中文占位文本。**无真实凭据入库。**
+- 内网 IP `192.168.123.101` 共 32 处，均为文档说明、部署示例和内部工具默认值，
+  属 192.168 私有地址段，不构成泄露。
+- 已跟踪文件无 `.env`（仅两个 `.env.example`）、无数据库、无备份、无日志，
+  总计 7.8 MB，无超过 5MB 的大文件。
+
+### 2026-11-23 离线队列敏感字段不落盘（R10-P2-04）
+
+- 离线队列原先把整张表单原样存进 IndexedDB，含接收人姓名、手机号、
+  外部持有人、申请原因与备注。IndexedDB 明文可读，条目保留 7 天，
+  共用电脑或设备送修时可被翻出。涉及快速出入库、新建申请、盘点三个页面。
+- `offline.js` 新增 `SENSITIVE_FIELD_PATTERNS` 与字段分流：敏感字段不入队，
+  只记录 `omittedFields` 名字；含敏感字段的记录强制关闭自动同步
+  （缺字段提交必然失败，还可能产生半截单据）。
+- 用户提示改为「为避免在本机留存接收人姓名、电话等信息，这部分内容未保存」。
+- 新增 9 例测试锁住该约定。
+
+### 2026-11-23 check-all 三处误报修复
+
+服务器实跑 `check-all.sh --fast` 时发现它把环境问题报成代码问题：
+
+- **Python 选错解释器**：脚本只找 `.venv/`，而服务器 release 里是 `venv/`（无点），
+  回退到系统 Python 3.10（项目要求 3.11+），导致 `makemigrations` 与 `pip check`
+  全部失败并被误报成「有模型改动未生成迁移」「存在依赖冲突」。
+  改为依次探测 `.venv/`、`venv/`，并新增版本检查，低于 3.11 明确告警。
+- **Bandit 误判阻断**：bandit 只要有任意 finding（含 Low）就返回非零，
+  实际 0 High / 2 Medium / 302 Low 被报成「发现阻断项」。
+  改用 JSON 输出按严重级别判定，只把 HIGH 当阻断。
+- **pip-audit 审计对象错误**：原命令审当前 venv（独立工具环境里审的是工具自身依赖），
+  改为审 `requirements-linux.txt`，即服务器实际安装的版本集合。
+
+另新增「前端 JS 语法」检查（`node --check`），防止 JS 错误让离线队列、
+事件委托在浏览器里静默失效。
+
+### 2026-11-23 依赖锁一致性校验
+
+- 新增 `backend/scripts/check_requirements_consistency.py`：校验
+  `requirements.txt` 的直接依赖被 lock 或 linux 文件覆盖、linux 文件必须
+  引用 lock、服务器专用包必须固定版本；`--venv` 模式额外比对已装版本。
+- 接入 `check-all.sh`。首次运行即发现 `gunicorn` 在 `requirements.txt` 声明
+  但未在任何固定版本中覆盖——服务器必需的包缺固定版本。
+- 新增 9 例测试，含两个反向用例证明校验器能真正检出漂移。
+
+### 2026-11-23 迁移回滚演练（R10-P2-13）
+
+- 新增 `rehearsal_migrate_rollback` 管理命令：在独立 PostgreSQL 库上逐个
+  「回退一步再重新应用」，找出不可回退的迁移。库名必须以 `_rehearsal` 结尾，
+  与生产库同名或前缀不符直接拒绝；演练库由命令自行创建与清理。
+- 生产演练（95 个迁移）结论：**不能把 `migrate` 回退当生产回切手段**。
+  两类失败：同进程连续反向迁移触发 PostgreSQL `pending trigger events`；
+  早期迁移把可空字段改回非空时已有 NULL 数据阻止回退。
+  正确流程是「恢复发布前快照 → 切回旧 release → 验证」。
+  结论已写入 `PROGRAM_STANDARDS.md`。
+- 演练全程未影响生产库：迁移数、资产数、表数在演练前后一致。
+
+### 2026-11-23 资产持有人批量补录
+
+- 线上 636 件资产中 261 件状态为「已借出/已领用/内部借用」，
+  但 `current_holder` 与 `external_holder_name` 全为空——导入时只填状态未填持有人。
+- 新增 `apps/inventory/holder_import.py` 与 `import_asset_holders` 命令：
+  按 `system_asset_no` 匹配补录持有人，只改持有人与部门，
+  不碰状态/仓库/库位/金额；姓名匹配要求全库唯一，有歧义拒绝；
+  每行独立事务、逐行审计、支持 `--dry-run`。
+- 新增 `apps/inventory/borrow_health.py` 识别「借出但无持有人」的孤儿资产，
+  接入催办命令输出与工作台提示条。
+- 新增 36 例测试。
+
+### 2026-11-23 资产质保到期提醒
+
+- 636 件资产中 29 件带质保日，此前没有任何「即将过保」入口。
+- 新增 `/warehouse/warranty/` 页面、`warranty_services.py` 与工作台指标卡。
+  窗口可选 30/60/90/180/365 天，默认 90 天（实测最早到期在 321 天后，
+  原 60 天窗口永远为空）。排除报废/售出/退供应商/停用资产。
+- 新增 15 例测试。
+
+### 2026-11-23 权限组 13 → 4 角色聚合
+
+- 13 个细粒度权限组对 4 个账号的系统是纯负担（一个仓库员要勾 5-8 个组）。
+- 保留细粒度组作为「能力标签」，新增 4 个角色组聚合：
+  `warehouse_role_viewer`（报表+财务）、`warehouse_role_editor`（录入类 6 项）、
+  `warehouse_role_operator`（出入库+台账校正）、`warehouse_role_approver`（审批+账号开通）。
+- 谓词函数改为「角色组 或 原能力组」任一命中即通过，权限语义不变，
+  老账号零迁移，角色之间不越权。
+- `warehouse_staff` 不再分配（线上 0 人），保留常量兼容历史账号。
+- 新增 16 例测试，其中包含「持有角色组 == 持有其聚合的全部能力组」的等价性断言。
+
+### 2026-11-23 采购走 ERP（隐藏采购申请入口）
+
+- 用户决策：采购走 ERP，系统只做实物到货后的一次入库。
+- 按 B1 方案只改导航与文案，不动模型与服务：主导航「采购与报表」落地页
+  改为采购订单列表，隐藏「采购申请」标签页，页面内 4 处申请入口
+  改为入库语境文案。保留 URL 兼容旧书签。
+- 保留到货登记（`PurchaseReceipt`）作为入库通道——它支持部分到货、
+  逐件录 SN/资产编码、幂等键防重放，并生成正规入库单与库存流水。
+- 保留 3 个供应商报表（价格历史、对账、到货汇总）。
+
+### 2026-11-23 CSP 去掉 unsafe-inline（nonce 方案）
+
+- 过去 `script-src`/`style-src` 都带 `'unsafe-inline'`，等于拆掉 XSS 防线的一大半。
+- `SecurityHeadersMiddleware` 每请求用 `secrets.token_urlsafe` 生成 nonce，
+  写进 CSP 头；context processor 把 nonce 传给模板。
+- 57 个模板的内联 `<script>`/`<style>` 全部加 `nonce="{{ csp_nonce }}"`。
+- 35 处内联事件属性（onclick/onsubmit/onchange）改为声明式 data 属性，
+  新增 `ui-actions.js` 用捕获阶段事件委托接管，**破坏性操作的二次确认全部保留**。
+- 教训：首次改造只扫描 `templates/*.html`，漏掉 `registration/login_base.html`
+  等子目录，导致登录页样式被 CSP 拦成白板。测试已改为递归扫描全部 57 个模板
+  并断言数量下限。
+
+### 2026-11-23 通知脱敏与上传文案对齐
+
+- 账号申请通知原先把「联系电话」和「申请说明」原样拼进钉钉消息。
+  手机号属个人敏感信息，申请人填写时未预期被转发到第三方 IM。
+  改为：站内通知保留完整信息（需登录且有审批权限），钉钉只发概要。
+- `asset_lifecycle.html` 写「单个文件最大 20 MB」，实际图片 10MB、附件 100MB；
+  `lifecycle_services` 又单独对图片放宽到 20MB。统一为图片 ≤10MB、附件 ≤100MB。
+
+### 2026-11-23 部署脚本修复
+
+- `install.sh` 原先只 rsync `backend/`，release 目录里没有 `deploy/`，
+  导致部署后无法用本版本自己的安全检查与回滚脚本复核。已同步 `deploy/`。
+- 修复 `cloudflared-selfheal` 告警策略时踩坑：第一次只改服务器上
+  `/usr/local/sbin/` 的脚本，下次部署被 `install.sh` 从
+  `deploy/ubuntu22/cloudflared-selfheal.sh` 重新安装覆盖，改动等于没做。
+  已改为修改仓库源文件并加 8 例测试锁住。
+
 ### 2026-11-23 M19 P1-01 主数据删除保护
 
 - 将 `Location.warehouse`、资产和耗材的仓库/库位归属，以及申请、库存流水、盘点扫描和盘点调整中的仓库/库位历史引用统一改为 `PROTECT`，直接 ORM 删除不能再静默删除库位或清空资产归属。

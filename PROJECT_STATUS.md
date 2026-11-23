@@ -2,16 +2,16 @@
 # 机器可读状态块（2026-11-23 加入）
 # 目的：接手者 3 秒内知道「当前停在哪」，不必读完 690 行正文。
 # 更新规则：每次部署或状态变更后同步此块；正文可以落后，此块不能落后。
-git_base: fb8f368
-working_tree: clean
-release_deployed: 20261123-172150-fb8f368
+git_base: 7fbd89f
+working_tree: dirty（上传前审计的 .gitignore / CHANGELOG / 文档）
+release_deployed: 20261123-175416-7fbd89f
 release_working_tree_dirty: false
-tests: 921 passed / 8 skipped
+tests: 938 passed / 8 skipped
 migrations_applied: [inventory.0032, workflow.0022, workflow.0023]
 blocking: []
-open_issues: [R12-P2-10, R10-P2-04]
+open_issues: [R12-P2-10]
 issue_index: ISSUES.md
-updated: 2026-11-23T17:30+08:00
+updated: 2026-11-23T18:10+08:00
 ---
 
 # Project Status

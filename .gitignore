@@ -1,73 +1,86 @@
-# ---- 数据库与业务数据（绝不入库） ----
+# ── 数据库与业务数据（绝不入库）────────────────────────────────
 backend/db.sqlite3
 backend/db.sqlite3.*
+*.sqlite3
+*.sqlite3-journal
+*.sqlite
 backend/backups/
 backend/media/
 backend/staticfiles/
+/backups/
+runtime-data/
 
-# ---- Python ----
+# ── 业务数据文件（真实客户/库存/供应商数据，绝不入库）──────────
+*.xlsx
+import_output/
+*清单.txt
+*明细*.xlsx
+仓库导入模板.xlsx
+
+# ── Python ──────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
 .pytest_cache/
 
-# ---- 虚拟环境 ----
+# ── 虚拟环境 ────────────────────────────────────────────────────
 .venv/
 .venv*/
 venv/
 
-# ---- 前端构建 ----
+# ── 前端构建 ────────────────────────────────────────────────────
 node_modules/
 dist/
 
-# ---- 环境变量与密钥 ----
+# ── 环境变量与密钥 ──────────────────────────────────────────────
 .env
 .env.*
 !.env.example
+app.env
 
-# ---- 部署产物 ----
+# ── 部署产物 ────────────────────────────────────────────────────
 after-sales-warehouse-*.zip
 release-*.tar.gz
 *.sha256
 
-# ---- 本地测试临时目录 ----
+# ── 本地测试临时目录 ────────────────────────────────────────────
+# rehearsal-check-* 是验证迁移演练时 tempfile.mkdtemp() 生成的目录，
+# 里面是整个 schema 的空 SQLite（约 2MB），曾因落在仓库根目录被误提交。
 backend/.test-tmp/
 .test-run-temp/
+.test-run-temp.*/
+.test-diag/
+rehearsal-check-*/
+capacity-check-*/
+dast-check-*/
 
-# ---- pip 中断残留（安装被取消时会留在仓库根） ----
+# ── pip 中断残留（安装被取消时会留在仓库根）────────────────────
 pip-metadata-*/
 pip-unpack-*/
 pip-install-*/
 pip-build-tracker-*/
 pip-ephem-wheel-cache-*/
 
-# ---- 工具运行产物 ----
+# ── 日志与工具运行产物 ──────────────────────────────────────────
+*.log
+logs/
 artifacts/
 .worktmp/
-runtime-data/
-/tmp????????
+/tmp????
 /tools/label_printer_client/build/
 /tools/label_printer_client/*.spec
 
-# ---- IDE / 系统 ----
+# ── IDE / 系统 ──────────────────────────────────────────────────
 .idea/
 .vscode/
 *.swp
 .DS_Store
 Thumbs.db
 
-# ---- 项目内部协作数据（非代码资产） ----
+# ── 项目内部协作数据（非代码资产）──────────────────────────────
 .codebuddy/
 
-# ---- 内部工具与文档（含内网拓扑/历史运维记录，不入库） ----
+# ── 内部工具与文档（含内网拓扑与历史运维记录，不入库）───────────
 tools-private/
 docs-internal/
-
-# ---- 业务数据文件（真实客户/库存/供应商数据，绝不入库） ----
-/backups/
-*.xlsx
-import_output/
-*清单.txt
-*明细*.xlsx
-仓库导入模板.xlsx
