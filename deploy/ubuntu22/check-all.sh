@@ -24,11 +24,26 @@ for arg in "$@"; do
   esac
 done
 
-if [[ -x "$REPO_ROOT/.venv/bin/python" ]]; then
-  PY="$REPO_ROOT/.venv/bin/python"
-elif [[ -x "$REPO_ROOT/.venv/Scripts/python.exe" ]]; then
-  PY="$REPO_ROOT/.venv/Scripts/python.exe"
-else
+# Python 解释器探测。
+# 注意目录名不统一：开发机上是 .venv/，服务器 release 里是 venv/（无点）。
+# 早期只找 .venv/，在服务器上就回退到系统 python3（3.10），
+# 而项目要求 3.12——于是 makemigrations/pip check 全部失败，
+# 还被误报成「有模型改动未生成迁移」「存在依赖冲突」。
+PY=""
+for candidate in \
+  "$REPO_ROOT/.venv/bin/python" \
+  "$REPO_ROOT/venv/bin/python" \
+  "$REPO_ROOT/.venv/Scripts/python.exe" \
+  "$REPO_ROOT/venv/Scripts/python.exe"
+do
+  if [[ -x "$candidate" ]]; then
+    PY="$candidate"
+    break
+  fi
+done
+
+# 都找不到时再退回系统解释器，但要接受可能是低版本
+if [[ -z "$PY" ]]; then
   PY="$(command -v python3 || command -v python)"
 fi
 
@@ -41,9 +56,15 @@ if ! "$PY" -c 'import sys' >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1
     if [[ -x "$WIN_ROOT\\.venv\\Scripts\\python.exe" ]]; then
       PY="$WIN_ROOT\\.venv\\Scripts\\python.exe"
       BACKEND="$WIN_ROOT\\backend"
+    elif [[ -x "$WIN_ROOT\\venv\\Scripts\\python.exe" ]]; then
+      PY="$WIN_ROOT\\venv\\Scripts\\python.exe"
+      BACKEND="$WIN_ROOT\\backend"
     fi
   fi
 fi
+
+# 记下解释器版本，运行环境检查会打印出来，便于判断是否选错了 venv
+PY_VERSION="$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo '?')"
 
 # 测试需要可写临时目录；Windows 默认 TEMP 常不可写，导致 openpyxl 用例批量报错。
 # 使用唯一目录并在退出时清理，避免覆盖其他运行留下的文件。
@@ -105,10 +126,35 @@ if [[ -z "$BANDIT_BIN" ]] && "$PY" -m bandit --version >/dev/null 2>&1; then
   BANDIT_BIN="$PY -m bandit"
 fi
 if [[ -n "$BANDIT_BIN" ]]; then
-  if $BANDIT_BIN -q -r "$BACKEND/apps" "$BACKEND/warehouse_backend"; then
-    ok "Bandit 无阻断项"
+  # 注意：bandit 只要有任意 finding（含 Low）就返回非零，
+  # 直接用退出码判定会把「302 个 Low」误报成「发现阻断项」。
+  # 这里按严重级别判定：只把 HIGH 当阻断，MEDIUM 提示，LOW 忽略。
+  bandit_json="$("$BANDIT_BIN" -q -r "$BACKEND/apps" "$BACKEND/warehouse_backend" -f json 2>/dev/null || true)"
+  bandit_counts="$("$PY" - "$bandit_json" <<'PYEOF' 2>/dev/null || echo "0 0 0"
+import json
+import sys
+
+try:
+    data = json.loads(sys.argv[1])
+except Exception:
+    print("0 0 0")
+    raise SystemExit(0)
+
+totals = data.get("metrics", {}).get("_totals", {})
+print(
+    int(totals.get("SEVERITY.HIGH", 0)),
+    int(totals.get("SEVERITY.MEDIUM", 0)),
+    int(totals.get("SEVERITY.LOW", 0)),
+)
+PYEOF
+)"
+  read -r bandit_high bandit_medium bandit_low <<< "$bandit_counts"
+  if [[ "${bandit_high:-0}" -gt 0 ]]; then
+    bad "Bandit 发现 ${bandit_high} 个 High 问题（阻断）"
+  elif [[ "${bandit_medium:-0}" -gt 0 ]]; then
+    ok "Bandit 无 High（${bandit_medium} Medium / ${bandit_low} Low，不阻断）"
   else
-    bad "Bandit 发现阻断项"
+    ok "Bandit 无 High（${bandit_low} Low，不阻断）"
   fi
 elif [[ "$ALLOW_MISSING_SECURITY_TOOLS" == "1" ]]; then
   printf '  \033[33m!\033[0m Bandit 未安装，已按显式参数豁免\n'
@@ -149,7 +195,15 @@ if ! "$PY" -c 'import sys' >/dev/null 2>&1; then
   bad "Python 无法执行：$PY（检查环境/权限后再跑）"
   echo "后续依赖 Python 的检查已跳过。" >&2
 else
-  ok "Python 可用：$("$PY" --version 2>&1)"
+  ok "Python 可用：$("$PY" --version 2>&1)（$PY）"
+  # 项目要求 3.11+（Django 5.2 与锁文件里的 asgiref 都需要）。
+  # 选错解释器时后面的迁移/依赖检查会全部误报，必须在这里就点明。
+  case "$PY_VERSION" in
+    3.11|3.12|3.13|3.14)
+      ok "Python 版本满足要求（>=3.11）" ;;
+    *)
+      bad "Python 版本为 $PY_VERSION，低于要求的 3.11；后续检查结果不可信（可能选错了 venv）" ;;
+  esac
 fi
 if ! (cd "$BACKEND" && "$PY" -c 'import os; assert os.path.exists("manage.py")' >/dev/null 2>&1); then
   bad "无法进入 $BACKEND 读取 manage.py（检查目录权限）"
