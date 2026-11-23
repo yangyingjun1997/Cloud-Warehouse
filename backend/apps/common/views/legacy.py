@@ -27,7 +27,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from io import BytesIO
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 from decimal import Decimal
 from urllib.parse import quote, urlencode
 
@@ -2296,7 +2296,17 @@ def purchase_order_detail(request, order_id):
                     if profiles:
                         asset_profiles[str(line.id)] = profiles
                 received_date = request.POST.get('received_date', '').strip()
-                receive_purchase_order(
+                # 幂等键：前端每次渲染到货表单时生成一个 UUID。响应丢失后
+                # 用户重试、或双击提交时，同一键只生成一张到货单，避免重复入库。
+                raw_operation_id = request.POST.get('client_operation_id', '').strip()
+                client_operation_id = None
+                if raw_operation_id:
+                    try:
+                        client_operation_id = UUID(raw_operation_id)
+                    except (TypeError, ValueError) as exc:
+                        # 令牌损坏时不能静默当"无键"处理，否则会退化成可重放。
+                        raise WorkflowError('到货登记令牌格式不正确，请刷新页面后重试。') from exc
+                receipt = receive_purchase_order(
                     order,
                     request.user,
                     quantities,
@@ -2305,8 +2315,12 @@ def purchase_order_detail(request, order_id):
                     date.fromisoformat(received_date) if received_date else None,
                     request.POST.get('receipt_note', ''),
                     asset_profiles=asset_profiles,
+                    client_operation_id=client_operation_id,
                 )
-                messages.success(request, '到货已登记，库存和入库流水已更新。')
+                if getattr(receipt, 'client_operation_id', None) and receipt.receipt_no:
+                    messages.success(request, f'到货已登记（{receipt.receipt_no}），库存和入库流水已更新。')
+                else:
+                    messages.success(request, '到货已登记，库存和入库流水已更新。')
             elif action == 'complete_profiles':
                 from apps.workflow.services import bulk_update_asset_profiles
                 upload = request.FILES.get('profile_file')
@@ -2333,6 +2347,9 @@ def purchase_order_detail(request, order_id):
         'can_place': can_manage_inventory(request.user) and order.status == PurchaseOrder.Status.DRAFT,
         'can_cancel': can_manage_inventory(request.user) and order.status in {PurchaseOrder.Status.DRAFT, PurchaseOrder.Status.ORDERED},
         'can_receive': can_execute_inventory(request.user) and order.status in {PurchaseOrder.Status.ORDERED, PurchaseOrder.Status.PARTIAL_RECEIVED},
+        # 幂等键：每次渲染到货表单生成一个新的 UUID。用户在同一次页面停留里
+        # 重复提交（双击、超时重试）会复用同一个键，从而只生成一张到货单。
+        'receive_operation_id': uuid4(),
         'user_can_use_admin': is_system_administrator(request.user),
         'user_is_operator': True,
         'user_is_system_admin': is_system_administrator(request.user),
@@ -4569,7 +4586,18 @@ def transaction_export(request):
     response['Content-Disposition'] = 'attachment; filename="inventory-transactions.csv"'
     response.write('\ufeff')
     writer = csv.writer(response)
-    writer.writerow(['出入库单号', '关联申请单', '申请日期', '出入库日期', '系统操作时间', '处理类型', '物品编码', '物品名称', '数量', '项目编号', '工单编号', '资产状态变化', '库存数量变化', '来源仓库', '目标仓库', '接收人', '接收单位', '执行人', '处理说明'] if not can_view_financials(request.user) else ['出入库单号', '关联申请单', '申请日期', '出入库日期', '系统操作时间', '处理类型', '物品编码', '物品名称', '数量', '库存成本价值（元）', '项目编号', '工单编号', '资产状态变化', '库存数量变化', '来源仓库', '目标仓库', '接收人', '接收单位', '执行人', '处理说明'])
+    # 成本列必须由表头和数据行共用同一个开关。
+    # 历史缺陷：表头按权限分支、数据行却无条件写 item.cost_amount，
+    # 导致无财务权限的账号虽然看不到「库存成本价值」表头，仍能读到每行成本值，
+    # 而且列数错位（成本被下游当成「项目编号」解析）。
+    show_financials = can_view_financials(request.user)
+    header = ['出入库单号', '关联申请单', '申请日期', '出入库日期', '系统操作时间', '处理类型',
+              '物品编码', '物品名称', '数量']
+    if show_financials:
+        header.append('库存成本价值（元）')
+    header += ['项目编号', '工单编号', '资产状态变化', '库存数量变化', '来源仓库', '目标仓库',
+               '接收人', '接收单位', '执行人', '处理说明']
+    writer.writerow(header)
     transactions = InventoryTransaction.objects.select_related('request', 'asset', 'stock_item', 'source_warehouse', 'target_warehouse', 'actor').order_by('-created_at')
     query = request.GET.get('q', '').strip()
     if query:
@@ -4603,17 +4631,22 @@ def transaction_export(request):
     if request.GET.get('work_order_no'): transactions = transactions.filter(work_order_no__icontains=request.GET['work_order_no'])
     action_labels = dict(WorkflowRequest.RequestType.choices)
     for item in transactions.iterator():
-        writer.writerow(_csv_safe([
+        values = [
             item.request.inventory_no or '', item.request.request_no, item.request.application_date.isoformat(), item.business_date.isoformat(),
             timezone.localtime(item.created_at).strftime('%Y-%m-%d %H:%M:%S'),
             action_labels.get(item.action, item.action), item.asset.asset_code if item.asset else item.stock_item.code,
             item.asset.name if item.asset else item.stock_item.name, item.quantity,
-            item.cost_amount or '', item.project_code, item.work_order_no,
+        ]
+        if show_financials:
+            values.append(item.cost_amount or '')
+        values += [
+            item.project_code, item.work_order_no,
             f'{item.asset_status_before} -> {item.asset_status_after}' if item.asset else '',
             f'{item.stock_quantity_before} -> {item.stock_quantity_after}' if item.stock_item else '',
             item.source_warehouse.name if item.source_warehouse else '', item.target_warehouse.name if item.target_warehouse else '',
             item.holder_name, item.holder_company, item.actor.username if item.actor else '', item.comment,
-        ]))
+        ]
+        writer.writerow(_csv_safe(values))
     return response
 
 

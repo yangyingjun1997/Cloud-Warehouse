@@ -3,10 +3,12 @@ from io import BytesIO
 import qrcode
 from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
-from django.db import models
+from django.db import models, transaction
+from django.db.models.deletion import ProtectedError
 from django.http import HttpResponse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -123,13 +125,44 @@ class AuditedModelViewSet(viewsets.ModelViewSet):
         )
 
     def perform_destroy(self, instance):
-        record_operation(
-            self.request.user,
-            f'{instance._meta.model_name}_deleted',
-            instance,
-            summary=f'通过接口删除{instance._meta.verbose_name} {instance}',
-        )
-        instance.delete()
+        # 审计与删除必须在同一事务里：历史实现先写审计再 delete()，
+        # 一旦 delete() 因 PROTECT 外键抛 ProtectedError，就会留下
+        # 「已删除」但对象仍在的孤儿审计行，破坏审计可信度。
+        label = instance._meta.verbose_name
+        self._assert_deletable(instance)
+        try:
+            with transaction.atomic():
+                record_operation(
+                    self.request.user,
+                    f'{instance._meta.model_name}_deleted',
+                    instance,
+                    summary=f'通过接口删除{label} {instance}',
+                    before=self._instance_snapshot(instance),
+                )
+                instance.delete()
+        except ProtectedError as exc:
+            # DRF 的 ValidationError 会转成 400；Django 的会变成 500。
+            raise DRFValidationError(
+                f'{label}已被业务数据引用，不能删除。请改用「停用」，'
+                f'或先解除引用后再试。'
+            ) from exc
+
+    def _assert_deletable(self, instance):
+        """删除前的业务引用检查。
+
+        子类覆盖本方法，在真正 delete() 之前拦下会破坏台账一致性的删除。
+        默认不检查——Django 的 PROTECT 外键仍会在下方兜底。
+        """
+
+    def _instance_snapshot(self, instance):
+        """删除前的字段快照，用于审计追溯（不含文件与二进制字段）。"""
+        snapshot = {}
+        for field in instance._meta.concrete_fields:
+            value = getattr(instance, field.attname, None)
+            if value is not None and not isinstance(value, (str, int, float, bool)):
+                value = str(value)
+            snapshot[field.attname] = value
+        return snapshot
 
 
 class WarehouseViewSet(AuditedModelViewSet):
@@ -138,12 +171,36 @@ class WarehouseViewSet(AuditedModelViewSet):
     def get_permissions(self):
         return [IsSystemAdministrator()]
 
+    def _assert_deletable(self, instance):
+        # 仓库被资产/耗材/库位引用时硬删会造成静默数据损坏：
+        # Asset.warehouse 是 SET_NULL（资产凭空失去仓库归属），
+        # Location.warehouse 是 CASCADE（库位被物理删除，编码永久丢失），
+        # 两者都不会写资产履历，事后无法追溯。此处在删除前统一拦截。
+        # 模型层的 CASCADE→PROTECT 迁移另行处理（见 REVIEW_REPORT P1-02）。
+        assets = Asset.objects.filter(warehouse=instance).count()
+        stock_items = StockItem.objects.filter(warehouse=instance).count()
+        locations = Location.objects.filter(warehouse=instance).count()
+        if assets or stock_items or locations:
+            raise DRFValidationError(
+                f'仓库「{instance.name}」仍被引用：资产 {assets} 件、耗材配件 {stock_items} 项、'
+                f'库位 {locations} 个。为避免资产失去仓库归属，请改用「停用」而不是删除。'
+            )
+
 
 class LocationViewSet(AuditedModelViewSet):
     queryset = Location.objects.select_related('warehouse').all()
     serializer_class = LocationSerializer
     def get_permissions(self):
         return [IsSystemAdministrator()]
+
+    def _assert_deletable(self, instance):
+        assets = Asset.objects.filter(location=instance).count()
+        stock_items = StockItem.objects.filter(location=instance).count()
+        if assets or stock_items:
+            raise DRFValidationError(
+                f'库位「{instance.name}」仍被引用：资产 {assets} 件、耗材配件 {stock_items} 项。'
+                f'请先把这些物品移到其他库位，或改用「停用」。'
+            )
 
 
 class CategoryViewSet(AuditedModelViewSet):
@@ -225,7 +282,13 @@ class AssetViewSet(AuditedModelViewSet):
         return AssetSerializer
 
     def get_permissions(self):
-        if self.action in {'list', 'retrieve', 'lookup', 'search', 'qr_code', 'lifecycle'}:
+        if self.action == 'lifecycle':
+            # 履历含维修备注、供应商与联系人信息，只在仓库业务角色内可见。
+            # 历史缺陷：它与 list/retrieve 一起被归入 IsAuthenticated，
+            # 导致任意登录员工都能读到完整履历，与页面侧
+            # asset_lifecycle 使用的 is_warehouse_operator 判定不一致。
+            return [IsWarehouseOperator()]
+        if self.action in {'list', 'retrieve', 'lookup', 'search', 'qr_code'}:
             return [IsAuthenticated()]
         return [IsInventoryEditor()]
 

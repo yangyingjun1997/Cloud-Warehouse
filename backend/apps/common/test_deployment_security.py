@@ -90,3 +90,55 @@ class DeploymentFailClosedTests(SimpleTestCase):
         self.assertIn('mv -Tf "$APP_DIR/current.next" "$CURRENT_LINK"', rollback)
         self.assertIn('restore_current()', rollback)
         self.assertNotIn('rm -rf "$BACKEND_DIR"', rollback)
+
+
+class RestoreDrillFormatTests(SimpleTestCase):
+    """恢复演练脚本必须跟得上 backup.sh 的实际产物格式。
+
+    历史缺陷：backup.sh 早已改为 media-snapshots 硬链接增量，不再生成
+    media.tar.gz，但 restore-drill.sh 仍要求该文件，导致演练在恢复数据库
+    之前就必然失败——灾难恢复能力实际为零验证。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        deploy_dir = Path(__file__).resolve().parents[3] / 'deploy' / 'ubuntu22'
+        cls.drill = (deploy_dir / 'restore-drill.sh').read_text(encoding='utf-8')
+        cls.backup = (deploy_dir / 'backup.sh').read_text(encoding='utf-8')
+
+    @staticmethod
+    def _code_lines(script):
+        """只保留非注释、非空行；历史缺陷通常写在注释里，不能被误判为代码依赖。"""
+        return [
+            line for line in script.splitlines()
+            if line.strip() and not line.lstrip().startswith('#')
+        ]
+
+    def test_backup_no_longer_produces_media_tarball(self):
+        """前提校验：如果 backup.sh 又开始生成 media.tar.gz，本测试需要同步更新。"""
+        code = '\n'.join(self._code_lines(self.backup))
+        self.assertNotIn('tar -czf', code)
+        self.assertIn('media-snapshots', code)
+
+    def test_drill_does_not_require_media_tarball(self):
+        code = '\n'.join(self._code_lines(self.drill))
+        self.assertNotIn('media.tar.gz', code, '恢复演练不应再依赖已废弃的 media.tar.gz')
+
+    def test_drill_reads_media_snapshots(self):
+        self.assertIn('media-snapshots', self.drill)
+
+    def test_drill_checks_database_checksum_selectively(self):
+        """SHA256SUMS 里媒体路径被 backup.sh 改写过，不能整份 --check。"""
+        self.assertIn('database.dump', self.drill)
+        self.assertIn('sha256sum', self.drill)
+        self.assertNotIn('sha256sum --check SHA256SUMS', self.drill)
+
+    def test_drill_cleans_up_partial_test_database(self):
+        """恢复失败时必须清理半成品临时库，否则下次演练会误判。"""
+        self.assertIn('trap cleanup EXIT', self.drill)
+        self.assertIn('dropdb --if-exists "$TEST_DB"', self.drill)
+
+    def test_drill_refuses_production_database(self):
+        self.assertIn('warehouse_restore_drill', self.drill)
+        self.assertIn('不能是生产数据库', self.drill)

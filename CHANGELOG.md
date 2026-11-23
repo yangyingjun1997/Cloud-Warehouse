@@ -4,6 +4,65 @@
 
 ## Unreleased
 
+### 2026-11-20 第十二轮复盘：4 个 P1 与 3 个 P2 修复
+
+> 全部改动仅本地代码 + 自动化验证，**未部署、未连接生产库**。
+> 代码实现与自动化通过为已完成；现场验收与部署为未完成。
+
+- **P1-01 成本导出越权（已修复）**。`transaction_export()` 表头按财务权限分支，
+  数据行却无条件写 `item.cost_amount`，导致无财务权限的报表岗仍能读到每行成本，
+  且列数错位（成本被下游当「项目编号」解析）。修复：表头与数据行共用同一
+  `show_financials` 开关。原测试只断言表头不含「库存成本价值」且未造数据，
+  因此从未覆盖数据行；新增 `TransactionExportCostLeakTests` 3 例，显式断言
+  数值不出现、列数与表头一致、财务账号仍能看到成本。已在回退源码上验证
+  新用例确实失败（2 例 FAIL）。
+
+- **P1-02 删除主数据致资产静默脱仓（已修复）**。`WarehouseViewSet` /
+  `LocationViewSet` 硬删时，`Asset.warehouse/location` 是 `SET_NULL`、
+  `Location.warehouse` 是 `CASCADE`，删仓库会让资产凭空失去归属、库位被物理删除，
+  且不写任何资产履历（探针实测 204 + warehouse_id/location_id 变 NULL + 库位消失）。
+  修复：`AuditedModelViewSet` 新增 `_assert_deletable()` 钩子，两个 ViewSet 覆盖它，
+  在仍有资产/耗材/库位引用时返回 400 并提示改用「停用」。
+  **模型层 `CASCADE→PROTECT` 迁移尚未做**，见 `REVIEW_REPORT.md` P1-02 修复建议。
+
+- **P1-03 采购到货无幂等键（已修复）**。`receive_purchase_order` 只校验订单状态，
+  部分到货时订单仍是 `PARTIAL_RECEIVED`，同参数重放会二次入库（探针实测 12 → 14，
+  2 张到货单、2 条流水）。修复：`PurchaseReceipt` 新增 `client_operation_id`
+  （迁移 `0022`，`(order, client_operation_id)` 条件唯一约束），服务层在持有订单行锁后
+  先查幂等键命中并返回既有回执；到货表单新增隐藏令牌（每次渲染生成 UUID），
+  视图中损坏令牌直接报业务错误而不是退化为无键。新增专项 4 例。
+
+- **P1-04 恢复演练脚本失效（已修复）**。`backup.sh` 已改为 `media-snapshots`
+  硬链接增量，不再生成 `media.tar.gz`，但 `restore-drill.sh` 仍要求该文件，
+  演练在恢复数据库前必然 exit 2——灾难恢复能力实际为零验证。同时 `SHA256SUMS`
+  的媒体路径被改写成 `<stamp>/media/...`，与真实快照路径不一致，整份
+  `sha256sum --check` 也会失败。修复：改为只校验 `database.dump` 那一行、
+  从清单注释定位媒体快照并抽样可读性、恢复失败 `trap` 清理半成品临时库、
+  增加资产/审计行数读取校验。新增 `RestoreDrillFormatTests` 6 例静态防回退；
+  23 个部署脚本 `bash -n` 全部通过。**脚本未在真实 Linux+PostgreSQL 上实跑**。
+
+- **P2-01 资产履历 API 越权（已修复）**。`assets/{id}/lifecycle/` 与 list/retrieve
+  共用 `IsAuthenticated`，任意登录员工可读完整履历（探针实测 200，响应含内部
+  维修备注与手机号），与页面侧 `is_warehouse_operator` 判定不一致。修复：
+  该 action 单独使用 `IsWarehouseOperator`。新增 3 例（员工 403、匿名拒绝、仓库角色 200）。
+
+- **P2-02 停用仓库/库位仍可写入（已修复）**。服务层只校验「库位属于仓库」，
+  `is_active` 只在表单 queryset 过滤。修复：新增 `_assert_active_location()`，
+  仅对**新写入**生效（`submit_request`、`quick_process_request`、`receive_purchase_order`），
+  `process_request` 执行已审批在途单据时保持宽松，避免管理员一停用库位就卡死在途单。
+  新增专项 4 例。
+
+- **P2-03 PROTECT 删除抛 500 且留孤儿审计（已修复）**。`perform_destroy`
+  先写审计再 `delete()`，两者无事务；命中 `PROTECT` 时 `ProtectedError` 冒出视图
+  （生产 500），审计表留下「已删除」但对象仍在的记录。修复：包 `transaction.atomic`、
+  捕获 `ProtectedError` 转 DRF 400、审计移至删除成功之后并写入删除前字段快照。
+  新增 `test_master_data_delete.py` 4 例。
+
+- **测试环境说明**：本轮首次全量运行出现 4 个 `PermissionError`，根因是 DSH
+  文件沙箱给临时目录继承了 `Everyone:(DENY)(DC)` ACL，`tempfile.mkdtemp()` 建出的目录
+  无法写入/清理（`common/tests.py:2253/2284/2362/2393`）。放开沙箱后同一批用例 9/9 通过，
+  属环境限制而非代码缺陷；已作为 P2-09 记录，建议改用 `ignore_cleanup_errors=True`。
+
 ### 2026-11-19 ~ 2026-11-20 依赖安全、权限收紧与表单语义修正
 
 - **P1-01 依赖版本三套漂移（已修复并部署）**。本机 venv 为 Django 5.2.9 / DRF 3.16.1 / Pillow 12.3.0，

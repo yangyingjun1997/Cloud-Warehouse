@@ -44,15 +44,6 @@ def is_system_account(user):
     return any(username.startswith(prefix) for prefix in SYSTEM_ACCOUNT_PREFIXES)
 
 
-def system_account_usernames_for_exclusion():
-    """返回用于数据库查询的排除清单（精确匹配部分）。
-
-    前缀匹配无法用单个 exclude 表达，因此调用方除了用本函数返回的精确清单，
-    还会叠加一次 Python 层过滤（见 exclude_system_accounts）。
-    """
-    return tuple(SYSTEM_ACCOUNT_USERNAMES)
-
-
 def exclude_system_accounts(queryset):
     """从用户查询集里剔除系统维护账号。
 

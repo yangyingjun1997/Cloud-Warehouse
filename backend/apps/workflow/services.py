@@ -406,9 +406,29 @@ def _recipient_snapshot(request_obj):
     return request_obj.applicant.get_username() if request_obj.applicant else '', request_obj.department.name if request_obj.department else '', ''
 
 
-def _validate_target_location(request_obj):
+def _assert_active_location(warehouse, location, *, label='目标'):
+    """写入前校验仓库与库位均处于启用状态。
+
+    历史实现只校验「库位属于仓库」，停用状态只在表单 queryset 里过滤，
+    服务层没有兜底。旧书签、离线队列或直接调用 API 的请求仍可把库存
+    写进已停用的位置，导致停用语义失效、盘点口径出现盲区。
+    """
+    if warehouse is not None and not getattr(warehouse, 'is_active', True):
+        raise WorkflowError(f'{label}仓库「{warehouse.name}」已停用，不能写入新的出入库记录。')
+    if location is not None and not getattr(location, 'is_active', True):
+        raise WorkflowError(f'{label}库位「{location.name}」已停用，不能写入新的出入库记录。')
+
+
+def _validate_target_location(request_obj, *, require_active=False):
     if request_obj.target_location_id and request_obj.target_warehouse_id and request_obj.target_location.warehouse_id != request_obj.target_warehouse_id:
         raise WorkflowError('目标库位不属于目标仓库。')
+    # 只在「新建/提交」这类新增写入时要求启用；process_request 是执行
+    # 已经审批通过的在途单据，若在此拦截，管理员一停用库位就会让在途单据
+    # 永远卡死。停用语义应作用于新单，不应追溯阻断已批准的业务。
+    if require_active:
+        _assert_active_location(
+            request_obj.target_warehouse, request_obj.target_location,
+        )
 
 
 def _validate_line(line, request_obj):
@@ -452,7 +472,7 @@ def submit_request(request_obj: WorkflowRequest, actor, comment=''):
             raise WorkflowError('出库申请必须填写使用地点。')
     if request_obj.designated_approver and not can_approve_workflow(request_obj.designated_approver):
         raise WorkflowError('指定审批人不具备审批处理权限。')
-    _validate_target_location(request_obj)
+    _validate_target_location(request_obj, require_active=True)
     for line in request_obj.lines.select_related('asset', 'stock_item'):
         _validate_line(line, request_obj)
         if line.asset and request_obj.request_type in OUTBOUND_REQUEST_TYPES:
@@ -1065,7 +1085,7 @@ def quick_process_request(request_obj: WorkflowRequest, actor, comment='', trans
     if not request_obj.contact_source.strip():
         raise WorkflowError('请填写外部沟通来源。')
     request_obj.transaction_date = _business_date(transaction_date, request_obj.transaction_date)
-    _validate_target_location(request_obj)
+    _validate_target_location(request_obj, require_active=True)
     if not request_obj.inventory_no:
         request_obj.inventory_no = build_daily_code('IO', request_obj.transaction_date)
     request_obj.save(update_fields=['inventory_no', 'transaction_date', 'updated_at'])
@@ -1563,16 +1583,26 @@ def _validate_asset_profile_uniqueness(profiles):
 
 
 @transaction.atomic
-def receive_purchase_order(order, actor, quantities, warehouse, location, received_date=None, note='', asset_profiles=None):
+def receive_purchase_order(order, actor, quantities, warehouse, location, received_date=None, note='', asset_profiles=None, client_operation_id=None):
     """登记一次到货，支持部分到货，并生成正式采购入库单和库存流水。
 
     asset_profiles：可选，{str(order_line_id): [ {serial_number, asset_code, manufacturer_barcode,
     manufacturer, model}, ... ]}，资产类明细按本次到货数量逐件补充资料；列表长度必须等于该行的
     本次到货数量。SN/ERP 资产编码会做批次内与台账全局去重校验，冲突则整批拒绝。
+
+    client_operation_id：可选幂等键（UUID）。同一订单 + 同一键重复提交时，
+    直接返回首次生成的回执，不再增加库存。用于响应丢失后的重试与双击提交。
     """
     if not can_execute_inventory(actor):
         raise WorkflowError('只有具备出入库执行权限的账号可以登记采购到货。')
     order = PurchaseOrder.objects.select_for_update(of=('self',)).select_related('purchase_request').get(pk=order.pk)
+    if client_operation_id:
+        existing = PurchaseReceipt.objects.filter(
+            order=order, client_operation_id=client_operation_id,
+        ).first()
+        if existing is not None:
+            # 幂等命中：订单锁已持有，重复提交不产生任何新的库存写入。
+            return existing
     if order.status not in {PurchaseOrder.Status.ORDERED, PurchaseOrder.Status.PARTIAL_RECEIVED}:
         raise WorkflowError('只有已下达或部分到货的采购订单可以登记到货。')
     warehouse = Warehouse.objects.filter(pk=getattr(warehouse, 'pk', warehouse)).first()
@@ -1581,6 +1611,7 @@ def receive_purchase_order(order, actor, quantities, warehouse, location, receiv
         raise WorkflowError('到货入库必须选择仓库和库位。')
     if location.warehouse_id != warehouse.id:
         raise WorkflowError('所选库位不属于所选仓库。')
+    _assert_active_location(warehouse, location, label='入库')
     lines = list(
         order.lines.select_for_update(of=('self',))
         .select_related('item_type', 'stock_item')
@@ -1636,6 +1667,7 @@ def receive_purchase_order(order, actor, quantities, warehouse, location, receiv
         received_by=actor,
         received_date=received_date,
         note=note.strip(),
+        client_operation_id=client_operation_id,
     )
     for line, quantity in selected:
         line_before = line.received_quantity

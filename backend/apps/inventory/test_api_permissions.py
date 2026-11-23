@@ -6,7 +6,7 @@ from rest_framework.test import APIClient
 from apps.common.testing.fixtures import WarehouseTestFixture
 from apps.workflow.models import InventoryTransaction, WorkflowRequest
 
-from .models import StockItem
+from .models import AssetLifecycleEvent, StockItem
 
 
 class FinancialApiFieldPermissionTests(WarehouseTestFixture, TestCase):
@@ -90,3 +90,44 @@ class AssetPhotoPermissionTests(WarehouseTestFixture, TestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         asset.refresh_from_db()
         self.assertFalse(asset.photo_url)
+
+
+class AssetLifecyclePermissionTests(WarehouseTestFixture, TestCase):
+    """回归 P2：履历 API 只对仓库业务角色开放。
+
+    履历里包含维修备注、供应商报价和联系人信息，普通员工不应读到；
+    该接口此前与 list/retrieve 共用 IsAuthenticated，与页面侧
+    is_warehouse_operator 的判定不一致。
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.asset = self.make_asset()
+        AssetLifecycleEvent.objects.create(
+            asset=self.asset,
+            event_type=AssetLifecycleEvent.EventType.NOTE,
+            title='内部备注',
+            description='供应商报价 8888 元，联系人 13800000000',
+        )
+        self.operator = self.make_operator('lifecycle-operator')
+        self.employee = self.make_employee('lifecycle-employee')
+
+    def test_plain_employee_is_forbidden(self):
+        self.client.force_authenticate(user=self.employee)
+        response = self.client.get(f'/api/inventory/assets/{self.asset.id}/lifecycle/')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertNotIn('8888', response.content.decode('utf-8'))
+
+    def test_anonymous_is_rejected(self):
+        response = self.client.get(f'/api/inventory/assets/{self.asset.id}/lifecycle/')
+        self.assertIn(
+            response.status_code,
+            {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN},
+        )
+
+    def test_warehouse_operator_can_read_lifecycle(self):
+        self.client.force_authenticate(user=self.operator)
+        response = self.client.get(f'/api/inventory/assets/{self.asset.id}/lifecycle/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['system_asset_no'], self.asset.system_asset_no)
+        self.assertTrue(response.data['events'])

@@ -31,20 +31,6 @@ def normalize_identifier(value: str | None) -> str:
     return (value or '').strip().upper()
 
 
-def validate_code_segment(value: str, label: str) -> str:
-    value = normalize_identifier(value)
-    if not value or not re.fullmatch(r'[A-Z0-9]+', value):
-        raise AssetCodeError(f'{label}只能包含大写字母和数字。')
-    return value
-
-
-def build_asset_qr_payload(system_code: str) -> str:
-    code = normalize_identifier(system_code)
-    if not SYSTEM_CODE_PATTERN.fullmatch(code):
-        raise AssetCodeError('系统永久编号格式无效，无法生成二维码。')
-    return f'WMS2:A:{code}'
-
-
 def parse_asset_qr_payload(value: str) -> dict:
     raw = (value or '').strip()
     match = QR_V2_PATTERN.fullmatch(raw.upper())

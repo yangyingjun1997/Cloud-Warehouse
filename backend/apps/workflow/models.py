@@ -378,11 +378,24 @@ class PurchaseReceipt(UUIDModel, TimeStampedModel):
     received_by = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name='登记人', on_delete=models.PROTECT, related_name='purchase_receipts')
     received_date = models.DateField('到货日期', default=timezone.localdate)
     note = models.TextField('到货说明', blank=True, default='')
+    # 幂等键：前端每次打开到货表单生成一个 UUID，随请求提交。
+    # 响应丢失后用户重试、或双击提交时，同一个键只会生成一张到货单。
+    # 为空表示历史数据（迁移前的到货登记），不参与去重。
+    client_operation_id = models.UUIDField(
+        '客户端操作编号', null=True, blank=True, editable=False, db_index=True,
+    )
 
     class Meta:
         ordering = ['-created_at']
         verbose_name = '采购到货登记'
         verbose_name_plural = '采购到货登记'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['order', 'client_operation_id'],
+                condition=models.Q(client_operation_id__isnull=False),
+                name='unique_purchase_receipt_client_operation',
+            ),
+        ]
 
     def save(self, *args, **kwargs):
         if not self.receipt_no:
