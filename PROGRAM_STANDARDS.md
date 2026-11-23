@@ -83,3 +83,29 @@
 - 服务器更新必须保留数据库、媒体和 `/srv/after-sales-warehouse/app.env`；候选版本在独立 release 中完成依赖、检查和静态文件，再原子切换 `current`，健康失败恢复上一指针。
 - 已有 PostgreSQL 数据库的部署前快照失败时必须立即终止发布，禁止继续覆盖在线程序。
 - 正式发布目录和部署包禁止携带清库、重建数据库或强制重导历史基线的脚本。
+
+### 数据库回切必须用快照，不能靠迁移回退
+
+2026-11-23 在隔离库上做了全量迁移回滚演练（`rehearsal_migrate_rollback`），
+结论明确：
+
+- **不要把 `manage.py migrate <app> <旧版本>` 当作生产回切手段。**
+  本仓库 95 个迁移中，多处回退会失败：
+  - 早期迁移把可空字段改回非空时，已有 NULL 数据会阻止回退
+    （如 `common_apiaccesstoken.expires_at`）；
+  - 连续反向迁移会让 PostgreSQL 报
+    `cannot ALTER TABLE ... because it has pending trigger events`。
+- **正确回切流程**：发现问题 → 恢复发布前 PostgreSQL 快照 →
+  切回旧 release 指针 → 验证健康与业务数据。
+- `rollback.sh` 只负责代码符号链接切换，**不负责数据库结构回退**。
+  发布前快照是回切的唯一可靠依据，因此快照失败必须终止发布（见上一条）。
+- 新增迁移前先自问「这个迁移能否在保留数据的前提下回退」；
+  不能回退的迁移（删列、改类型、加非空约束）必须在 CHANGELOG 里标注。
+
+演练命令用法（必须在服务器上以 root 运行，库名须以 `_rehearsal` 结尾）：
+
+```bash
+sudo /opt/after-sales-warehouse/venv/bin/python manage.py \
+  rehearsal_migrate_rollback --database-rehearsal-name warehouse_rehearsal \
+  --max-steps 10
+```

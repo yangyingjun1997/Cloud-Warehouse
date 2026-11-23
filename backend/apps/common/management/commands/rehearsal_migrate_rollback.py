@@ -216,7 +216,15 @@ class Command(BaseCommand):
         if max_steps:
             ordered = ordered[-max_steps:]
 
-        self.stdout.write(f'共 {len(ordered)} 个已应用迁移待演练回退。\n')
+        self.stdout.write(f'共 {len(ordered)} 个已应用迁移待演练回退。')
+        self.stdout.write(
+            '说明：真实回切通常是「撤销最近几个迁移」，而不是把全部迁移逐条回退。'
+        )
+        self.stdout.write(
+            '注意：本演练在单个进程内连续回退，可能触发 PostgreSQL 的 '
+            '"pending trigger events"——那是同事务连锁回退造成的，'
+            '真实回切时每条 migrate 是独立事务，不会出现。\n'
+        )
         if not ordered:
             self.stdout.write(self.style.WARNING(
                 '没有取到已应用迁移，演练无法进行（请检查数据库连接与迁移表）。'
