@@ -156,6 +156,40 @@
     return [...new FormData(form)].map(([name, value]) => ({name, value: String(value)}));
   }
 
+  // 敏感字段不落盘（2026-11-23，R10-P2-04）。
+  //
+  // 离线队列把整张表单原样存进 IndexedDB，其中包括接收人姓名、手机号、
+  // 外部持有人、申请原因等个人信息。IndexedDB 是明文可读的：任何拿到这台
+  // 设备的人（共用电脑、维修、浏览器同步）都能翻出这些内容，而且条目会
+  // 保留 7 天。用户填这些字段时并没有预期它们被长期留在浏览器里。
+  //
+  // 处理：这些字段不入队，只记录「哪些字段被省略了」。同步时提示用户
+  // 重新打开页面补齐——丢失一次重填，好过把手机号留在公共电脑上。
+  const SENSITIVE_FIELD_PATTERNS = [
+    /^recipient_(name|phone|mobile|contact|company)$/i,
+    /^external_holder(_name|_company|_phone)?$/i,
+    /^(holder|holder_name|borrower|borrower_name)$/i,
+    /^(phone|mobile|contact_phone|contact_name)$/i,
+    /^(reason|note|remark|comment)$/i,
+  ];
+
+  function isSensitiveField(name) {
+    return SENSITIVE_FIELD_PATTERNS.some(pattern => pattern.test(name));
+  }
+
+  function splitSensitiveFields(fields) {
+    const safe = [];
+    const omitted = [];
+    for (const field of fields) {
+      if (isSensitiveField(field.name)) {
+        omitted.push(field.name);
+      } else {
+        safe.push(field);
+      }
+    }
+    return {safe, omitted};
+  }
+
   function csrfToken() {
     const match = document.cookie.match(/(?:^|; )csrftoken=([^;]*)/);
     return match ? decodeURIComponent(match[1]) : '';
@@ -191,8 +225,10 @@
 
   async function saveOfflineForm(form, action) {
     if (!currentUserId()) throw new Error('当前登录状态无法使用离线队列，请重新登录后重试。');
-    const fields = serializeForm(form);
-    if (!fields.some(field => field.name === 'action')) fields.push({name: 'action', value: action});
+    const allFields = serializeForm(form);
+    if (!allFields.some(field => field.name === 'action')) allFields.push({name: 'action', value: action});
+    // 敏感字段不入盘，只记录字段名，同步时提示重填
+    const {safe: fields, omitted: omittedFields} = splitSensitiveFields(allFields);
     const item = {
       status: 'pending',
       ownerUserId: currentUserId(),
@@ -204,7 +240,8 @@
       title: form.dataset.offlineTitle || document.title,
       action,
       fields,
-      autoSync: form.dataset.offlineAutoSync === 'true',
+      omittedFields,
+      autoSync: form.dataset.offlineAutoSync === 'true' && omittedFields.length === 0,
       syncUrl: form.dataset.offlineSyncUrl || form.action || window.location.href,
     };
     if (form.dataset.offlineMode === 'quick_inventory') {
@@ -214,6 +251,16 @@
     }
     await put(item);
     await updateIndicator();
+    if (omittedFields.length) {
+      // 含敏感字段时不允许自动同步：缺字段提交必然失败，还可能产生半截单据。
+      // 明确告知用户需要回到页面重填。
+      showStatus(
+        '当前网络不可用。为避免在本机留存接收人姓名、电话等信息，'
+        + '这部分内容未保存；联网后请重新打开页面填写并提交。',
+        'warning'
+      );
+      return;
+    }
     showStatus(
       item.autoSync ? '当前网络不可用，记录已保存到本机，联网后会自动同步。' : '当前网络不可用，内容已保存到本机；联网后请重新打开页面提交。',
       'success'

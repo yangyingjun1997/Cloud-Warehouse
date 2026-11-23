@@ -32,6 +32,19 @@ else
   PY="$(command -v python3 || command -v python)"
 fi
 
+# Windows 下用 Git Bash 时，REPO_ROOT 可能被算成 /mnt/d/...（WSL 风格），
+# 而该路径在本机 Git Bash 里不可访问，导致所有 Python 检查静默失败。
+# 这里探测一次：不可用则尝试换成 Windows 原生路径（cygpath），再不行才放弃。
+if ! "$PY" -c 'import sys' >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+  WIN_ROOT="$(cygpath -w "$REPO_ROOT" 2>/dev/null || true)"
+  if [[ -n "$WIN_ROOT" ]]; then
+    if [[ -x "$WIN_ROOT\\.venv\\Scripts\\python.exe" ]]; then
+      PY="$WIN_ROOT\\.venv\\Scripts\\python.exe"
+      BACKEND="$WIN_ROOT\\backend"
+    fi
+  fi
+fi
+
 # 测试需要可写临时目录；Windows 默认 TEMP 常不可写，导致 openpyxl 用例批量报错。
 # 使用唯一目录并在退出时清理，避免覆盖其他运行留下的文件。
 TEST_TMP="$(mktemp -d "$REPO_ROOT/.test-run-temp.XXXXXX")"
@@ -63,9 +76,36 @@ while IFS= read -r -d '' script; do
 done < <(find "$REPO_ROOT/deploy/ubuntu22" -maxdepth 1 -type f -name '*.sh' -print0 | sort -z)
 (( shell_failed == 0 )) || true
 
+# 前端 JS 语法（2026-11-23 新增）
+# 前端脚本出错不会让 Django 测试失败，但会让对应功能在浏览器里静默失效
+# （例如离线队列、事件委托）。有 node 就检查，没有则跳过并明确说明。
+if command -v node >/dev/null 2>&1; then
+  step "前端 JS 语法"
+  js_failed=0
+  while IFS= read -r -d '' jsfile; do
+    if node --check "$jsfile" >/dev/null 2>&1; then
+      ok "$(basename "$jsfile")"
+    else
+      bad "$(basename "$jsfile") 语法检查失败"
+      js_failed=1
+    fi
+  done < <(find "$REPO_ROOT/backend/apps" -type f -name '*.js' -not -path '*/vendor/*' -print0 | sort -z)
+  (( js_failed == 0 )) || true
+else
+  step "前端 JS 语法"
+  ok "未安装 node，跳过（仅影响本地检查，不影响部署）"
+fi
+
+# 安全工具可能装在独立 venv（如 /opt/security-tools-py312），
+# 因为系统 Python 版本低于依赖要求，无法装进应用 venv。
+# 早期只用 "$PY" -m bandit 判定，会把「独立 venv 里装了」误报成「未安装」。
 step "Bandit SAST"
-if "$PY" -m bandit --version >/dev/null 2>&1; then
-  if "$PY" -m bandit -q -r "$BACKEND/apps" "$BACKEND/warehouse_backend"; then
+BANDIT_BIN="$(command -v bandit 2>/dev/null || true)"
+if [[ -z "$BANDIT_BIN" ]] && "$PY" -m bandit --version >/dev/null 2>&1; then
+  BANDIT_BIN="$PY -m bandit"
+fi
+if [[ -n "$BANDIT_BIN" ]]; then
+  if $BANDIT_BIN -q -r "$BACKEND/apps" "$BACKEND/warehouse_backend"; then
     ok "Bandit 无阻断项"
   else
     bad "Bandit 发现阻断项"
@@ -77,8 +117,20 @@ else
 fi
 
 step "pip-audit 依赖审计"
-if "$PY" -m pip_audit --version >/dev/null 2>&1; then
-  if "$PY" -m pip_audit; then
+PIP_AUDIT_BIN="$(command -v pip-audit 2>/dev/null || true)"
+if [[ -z "$PIP_AUDIT_BIN" ]] && "$PY" -m pip_audit --version >/dev/null 2>&1; then
+  PIP_AUDIT_BIN="$PY -m pip_audit"
+fi
+if [[ -n "$PIP_AUDIT_BIN" ]]; then
+  # 优先审锁文件：它才是服务器实际安装的版本集合。
+  # 直接跑 pip-audit 会审当前 venv，在独立工具环境里审的是工具自己的依赖。
+  if [[ -f "$BACKEND/requirements-linux.txt" ]]; then
+    if $PIP_AUDIT_BIN -r "$BACKEND/requirements-linux.txt"; then
+      ok "pip-audit 未发现已知漏洞（requirements-linux.txt）"
+    else
+      bad "pip-audit 发现依赖漏洞"
+    fi
+  elif $PIP_AUDIT_BIN; then
     ok "pip-audit 未发现已知漏洞"
   else
     bad "pip-audit 发现依赖漏洞"
@@ -89,15 +141,37 @@ else
   bad "pip-audit 未安装，无法完成安全门禁"
 fi
 
+# 前置：先确认 Python 与工作目录可用。
+# 否则后面每条检查都会失败，而失败原因被写成「有模型改动未生成迁移」
+# 「存在依赖冲突」——把环境问题误报成代码问题，会把人引到错误方向。
+step "运行环境"
+if ! "$PY" -c 'import sys' >/dev/null 2>&1; then
+  bad "Python 无法执行：$PY（检查环境/权限后再跑）"
+  echo "后续依赖 Python 的检查已跳过。" >&2
+else
+  ok "Python 可用：$("$PY" --version 2>&1)"
+fi
+if ! (cd "$BACKEND" && "$PY" -c 'import os; assert os.path.exists("manage.py")' >/dev/null 2>&1); then
+  bad "无法进入 $BACKEND 读取 manage.py（检查目录权限）"
+  BACKEND_UNUSABLE=1
+else
+  ok "后端目录可读"
+  BACKEND_UNUSABLE=0
+fi
+
 step "迁移漂移"
-if (cd "$BACKEND" && "$PY" manage.py makemigrations --check --dry-run >/dev/null 2>&1); then
+if [[ "${BACKEND_UNUSABLE:-0}" == "1" ]]; then
+  ok "跳过（后端目录不可用）"
+elif (cd "$BACKEND" && "$PY" manage.py makemigrations --check --dry-run >/dev/null 2>&1); then
   ok "无未生成的迁移"
 else
   bad "有模型改动未生成迁移"
 fi
 
 step "依赖一致性"
-if "$PY" -m pip check >/dev/null 2>&1; then
+if ! "$PY" -m pip --version >/dev/null 2>&1; then
+  ok "跳过（当前 Python 没有 pip）"
+elif "$PY" -m pip check >/dev/null 2>&1; then
   ok "pip check 无冲突"
 else
   bad "存在依赖冲突"
@@ -107,7 +181,9 @@ fi
 # 查不出「requirements.txt 改了范围却没重生 lock」这类漂移——
 # 那种情况本机能跑、服务器却装到不同版本。
 step "依赖锁一致性"
-if "$PY" "$BACKEND/scripts/check_requirements_consistency.py" >/dev/null 2>&1; then
+if ! "$PY" -c 'import sys' >/dev/null 2>&1; then
+  ok "跳过（Python 不可用）"
+elif "$PY" "$BACKEND/scripts/check_requirements_consistency.py" >/dev/null 2>&1; then
   ok "requirements 三个文件一致"
 else
   bad "requirements 文件不一致（改范围后需重生 lock）"
@@ -144,6 +220,13 @@ fi
 printf '\n'
 if [[ "$fail" == "0" ]]; then
   printf '\033[32m全部检查通过。\033[0m\n'
+elif [[ "${BACKEND_UNUSABLE:-0}" == "1" ]]; then
+  # 环境不可用时给出明确结论，避免把「跑不起来」误读成「代码有问题」。
+  printf '\033[31m运行环境不可用，检查未真正执行。\033[0m\n'
+  printf '  当前 shell 无法执行 %s 或读取 %s。\n' "$PY" "$BACKEND"
+  printf '  常见原因：Windows 下用 Git Bash 访问 /mnt/d/ 映射的目录会被拒绝；\n'
+  printf '  此时请改用 PowerShell 直接调用 .venv\\Scripts\\python.exe 执行各检查，\n'
+  printf '  或在 Linux 服务器上运行本脚本（生产环境即如此）。\n'
 else
   printf '\033[31m存在失败项，请修复后再提交。\033[0m\n'
 fi
