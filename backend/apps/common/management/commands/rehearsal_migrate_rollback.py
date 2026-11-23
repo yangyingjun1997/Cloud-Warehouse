@@ -94,7 +94,20 @@ class Command(BaseCommand):
     # 本机 pg_hba 对 local 连接用 peer 认证，postgres 系统用户免密即可管理。
     # 这样既不需要把超级用户密码写进环境变量或代码，也不需要放宽应用权限。
     def _run_psql_admin(self, sql):
+        """以 postgres 超级用户执行管理 SQL。
+
+        要求当前进程以 root 运行（演练是运维动作，不是业务命令）。
+        warehouse 应用账号既没有 CREATEDB 权限，也没有免密 sudo——
+        这两点都是刻意的安全配置，不应为演练放宽。
+        """
         import subprocess
+
+        if os.geteuid() != 0:
+            raise RuntimeError(
+                '演练需要创建/删除数据库，请以 root 运行：'
+                'sudo /opt/after-sales-warehouse/venv/bin/python manage.py '
+                'rehearsal_migrate_rollback --database-rehearsal-name <name>_rehearsal'
+            )
 
         result = subprocess.run(
             ['sudo', '-u', 'postgres', 'psql', '-v', 'ON_ERROR_STOP=1', '-tAc', sql],
